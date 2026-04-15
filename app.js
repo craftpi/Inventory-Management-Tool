@@ -51,6 +51,7 @@ async function handleLogin() {
     if (error) {
         if(errorMsg) errorMsg.style.display = 'block';
         if(loginButton) loginButton.innerText = "🔓 Entsperren";
+        console.error("Login-Fehler:", error.message);
     } else {
         if(errorMsg) errorMsg.style.display = 'none';
         document.getElementById('login-password').value = ''; 
@@ -72,7 +73,9 @@ async function ladeAlles() {
 }
 
 async function ladeLagerorte() {
-    const { data, error } = await dbClient.from('lagerorte').select('*');
+    const { data, error } = await dbClient.from('lagerorte').select('*').order('name');
+    if (error) { console.error("Fehler bei Lagerorten:", error); return; }
+    
     if (data) {
         const selectNeu = document.getElementById('new-ort');
         const selectEdit = document.getElementById('edit-ort');
@@ -107,7 +110,6 @@ function aktualisiereFilterDropdown(daten) {
     const kategorien = new Set();
     
     daten.forEach(zeile => {
-        // Falls die Kategorie existiert und nicht leer ist
         if (zeile.artikel && zeile.artikel.kategorie && zeile.artikel.kategorie.trim() !== '') {
             kategorien.add(zeile.artikel.kategorie);
         }
@@ -165,7 +167,7 @@ function tabelleAktualisieren(daten) {
             <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span>📁 ${gruppenName}</span>
-                    <span class="summen-badge" style="font-size:0.85em; background:#3498db; color:white; padding:4px 10px; border-radius:12px; font-weight:normal;">Gesamt: ${gruppenSummen[gruppenName]}</span>
+                    <span class="summen-badge">Gesamt: ${gruppenSummen[gruppenName]}</span>
                 </div>
             </td>
         `;
@@ -181,11 +183,11 @@ function tabelleAktualisieren(daten) {
                     if(event.target.tagName !== 'INPUT') { openEditModal(zeile.id); }
                 };
                 
-                let artikelZelle = index === 0 ? `<td style="padding-left: 25px; color: #333;">↳ <strong>${artikelName}</strong></td>` : `<td></td>`; 
+                let artikelZelle = index === 0 ? `<td style="padding-left: 15px; color: #333;">↳ <strong>${artikelName}</strong></td>` : `<td></td>`; 
                 tr.innerHTML = `
                     ${artikelZelle}
                     <td style="color: #666;">📍 ${zeile.lagerorte.name}</td>
-                    <td><input type="number" id="menge-${zeile.id}" class="menge-input" value="${zeile.menge}" onchange="speichereMenge(${zeile.id})" style="width:60px; text-align:center;"></td>
+                    <td><input type="number" id="menge-${zeile.id}" class="menge-input" value="${zeile.menge}" onchange="speichereMenge(${zeile.id})"></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -217,7 +219,6 @@ function openEditModal(bestandId) {
         document.getElementById('edit-artikel-id').value = zeile.artikel_id;
         document.getElementById('edit-name').value = zeile.artikel.name;
         
-        // Sicherstellen, dass das Feld im HTML existiert, bevor es gefüllt wird
         const katFeld = document.getElementById('edit-kategorie');
         if(katFeld) katFeld.value = zeile.artikel.kategorie || '';
         
@@ -249,17 +250,15 @@ async function speichereBearbeitung() {
         const neuerOrt = document.getElementById('edit-ort').value;
         const neueMenge = Number(document.getElementById('edit-menge').value);
 
-        // 1. Artikel updaten
         const { error: updateError } = await dbClient.from('artikel')
             .update({ name: neuerName, kategorie: neueKat, gruppe: neueGruppe })
             .eq('id', aId);
 
         if (updateError) {
             alert("Fehler beim Speichern der Kategorie: " + updateError.message);
-            return; // Bricht ab, wenn Supabase meckert
+            return; 
         }
 
-        // 2. Prüfen auf doppelte Einträge
         const { data: existierenderBestand } = await dbClient
             .from('bestand')
             .select('id, menge')
@@ -303,6 +302,7 @@ async function speichereMenge(bestandId) {
     }
 }
 
+// --- NEUER ARTIKEL ---
 function openModal() { document.getElementById('artikelModal').style.display = 'block'; }
 function closeModal() { document.getElementById('artikelModal').style.display = 'none'; }
 
@@ -318,22 +318,18 @@ async function artikelAnlegen() {
 
         if (!name) { alert("Bitte Name angeben!"); return; }
 
-        // Artikel in die Datenbank schreiben
         const { data: neuArt, error: artErr } = await dbClient.from('artikel')
             .insert([{ name: name, kategorie: kat, gruppe: gruppe }])
             .select();
         
         if (artErr) {
-            alert("Fehler beim Anlegen (Kategorie-Spalte vorhanden?): " + artErr.message);
-            console.error(artErr);
+            alert("Fehler beim Anlegen: " + artErr.message);
             return;
         }
 
-        // Bestand eintragen
         await dbClient.from('bestand').insert([{ artikel_id: neuArt[0].id, lagerort_id: ortId, menge: menge }]);
         closeModal(); 
         
-        // Felder leeren
         document.getElementById('new-name').value = '';
         if(katFeld) katFeld.value = '';
         document.getElementById('new-gruppe').value = '';
@@ -342,5 +338,24 @@ async function artikelAnlegen() {
         
     } catch (e) {
         console.error("Fehler beim Anlegen:", e);
+    }
+}
+
+// --- NEUER LAGERORT (Direkt aus der App) ---
+async function neuenLagerortAnlegen() {
+    const neuerOrt = prompt("Wie heißt der neue Lagerort? (z.B. Regal 4)");
+    
+    // Abbruch, wenn nichts eingegeben wurde
+    if (!neuerOrt || neuerOrt.trim() === "") return;
+
+    // In die Datenbank einfügen
+    const { data, error } = await dbClient.from('lagerorte').insert([{ name: neuerOrt.trim() }]).select();
+
+    if (error) {
+        alert("Fehler beim Anlegen des Lagerorts: " + error.message);
+        console.error(error);
+    } else {
+        // App neu laden, damit das Dropdown aktualisiert wird
+        ladeAlles(); 
     }
 }
