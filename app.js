@@ -11,7 +11,6 @@ let isEditMode = false;
 // --- AUTHENTIFIZIERUNG (Kugelsicher) ---
 console.log("App gestartet. Prüfe Login-Status...");
 
-// Warten, bis HTML fertig ist, dann ersten Check machen
 document.addEventListener('DOMContentLoaded', async () => {
     const { data: { session } } = await dbClient.auth.getSession();
     const overlay = document.getElementById('login-overlay');
@@ -24,7 +23,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// Reagieren auf Anmelden / Abmelden
 dbClient.auth.onAuthStateChange(async (event, session) => {
     const overlay = document.getElementById('login-overlay');
     
@@ -33,12 +31,10 @@ dbClient.auth.onAuthStateChange(async (event, session) => {
         ladeAlles();
     } else if (event === 'SIGNED_OUT') {
         if (overlay) overlay.style.display = 'flex';
-        
         const loginButton = document.querySelector('#login-overlay button');
         if (loginButton) loginButton.innerText = "🔓 Entsperren";
-        
         const tbody = document.getElementById('lager-tabelle');
-        if (tbody) tbody.innerHTML = ''; // Tabelle sicherheitshalber leeren
+        if (tbody) tbody.innerHTML = ''; 
     }
 });
 
@@ -96,7 +92,7 @@ async function ladeLagerorte() {
 async function ladeBestand() {
     const { data, error } = await dbClient
         .from('bestand')
-        // HIER KORRIGIERT: 'kategorie' wird aus der Datenbank geladen
+        // NEU: 'kategorie' wird hier ausgelesen
         .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie), lagerorte (id, name)`)
         .order('id', { ascending: true });
 
@@ -107,7 +103,7 @@ async function ladeBestand() {
     wendeFilterAn(); // Gefilterte Tabelle anzeigen
 }
 
-// --- FILTER LOGIK (Für das Kategorien-Dropdown) ---
+// --- NEU: FILTER LOGIK ---
 function aktualisiereFilterDropdown(daten) {
     const dropdown = document.getElementById('kategorie-filter');
     if (!dropdown) return;
@@ -115,6 +111,7 @@ function aktualisiereFilterDropdown(daten) {
     const aktuelleAuswahl = dropdown.value;
     const kategorien = new Set();
     
+    // Alle verfügbaren Kategorien finden
     daten.forEach(zeile => {
         if (zeile.artikel && zeile.artikel.kategorie) {
             kategorien.add(zeile.artikel.kategorie);
@@ -123,10 +120,12 @@ function aktualisiereFilterDropdown(daten) {
 
     dropdown.innerHTML = '<option value="ALLE">Alle Kategorien anzeigen</option>';
     
+    // Alphabetisch ins Menü eintragen
     Array.from(kategorien).sort().forEach(kat => {
         dropdown.add(new Option(kat, kat));
     });
 
+    // Vorherige Auswahl merken, wenn möglich
     if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) {
         dropdown.value = aktuelleAuswahl;
     }
@@ -208,10 +207,10 @@ function toggleEditMode() {
     
     if (isEditMode) {
         if(btn) { btn.innerText = "✏️ Bearbeiten: AN"; btn.style.backgroundColor = "#e67e22"; }
-        wendeFilterAn(); // HIER KORRIGIERT: Nutzt den Filter beim Neuzeichnen
+        wendeFilterAn(); 
     } else {
         if(btn) { btn.innerText = "✏️ Bearbeiten: AUS"; btn.style.backgroundColor = "#f39c12"; }
-        wendeFilterAn(); // HIER KORRIGIERT: Nutzt den Filter beim Neuzeichnen
+        wendeFilterAn();
     }
 }
 
@@ -224,10 +223,7 @@ function openEditModal(bestandId) {
         document.getElementById('edit-bestand-id').value = zeile.id;
         document.getElementById('edit-artikel-id').value = zeile.artikel_id;
         document.getElementById('edit-name').value = zeile.artikel.name;
-        // HIER KORRIGIERT: Kategorie wird beim Bearbeiten ins Feld geladen
-        if(document.getElementById('edit-kategorie')) {
-            document.getElementById('edit-kategorie').value = zeile.artikel.kategorie || '';
-        }
+        document.getElementById('edit-kategorie').value = zeile.artikel.kategorie || '';
         document.getElementById('edit-gruppe').value = zeile.artikel.gruppe || '';
         document.getElementById('edit-ort').value = zeile.lagerort_id;
         document.getElementById('edit-menge').value = zeile.menge;
@@ -242,19 +238,18 @@ function closeEditModal() {
     if(modal) modal.style.display = 'none'; 
 }
 
-// --- INTELLIGENTES SPEICHERN (Zusammenfassen) ---
+// --- INTELLIGENTES SPEICHERN ---
 async function speichereBearbeitung() {
     try {
         const bId = document.getElementById('edit-bestand-id').value;
         const aId = document.getElementById('edit-artikel-id').value;
         const neuerName = document.getElementById('edit-name').value;
-        // HIER KORRIGIERT: Kategorie wird beim Speichern ausgelesen
-        const neueKat = document.getElementById('edit-kategorie') ? document.getElementById('edit-kategorie').value : '';
+        const neueKat = document.getElementById('edit-kategorie').value;
         const neueGruppe = document.getElementById('edit-gruppe').value;
         const neuerOrt = document.getElementById('edit-ort').value;
         const neueMenge = Number(document.getElementById('edit-menge').value);
 
-        // 1. Artikel updaten (Name, KATEGORIE & Gruppe)
+        // 1. Artikel updaten (Name, Kategorie & Gruppe)
         await dbClient.from('artikel').update({ name: neuerName, kategorie: neueKat, gruppe: neueGruppe }).eq('id', aId);
 
         // 2. Prüfen, ob der Artikel am neuen Ort schon existiert
@@ -267,14 +262,10 @@ async function speichereBearbeitung() {
             .maybeSingle(); 
 
         if (existierenderBestand) {
-            // Artikel existiert -> Mengen addieren
             const gesamtMenge = Number(existierenderBestand.menge) + neueMenge;
             await dbClient.from('bestand').update({ menge: gesamtMenge }).eq('id', existierenderBestand.id);
-            // Alten Eintrag löschen
             await dbClient.from('bestand').delete().eq('id', bId);
-            console.log("Einträge wurden zusammengefasst!");
         } else {
-            // Artikel existiert dort noch nicht -> Normal verschieben
             await dbClient.from('bestand').update({ lagerort_id: neuerOrt, menge: neueMenge }).eq('id', bId);
         }
 
@@ -322,26 +313,22 @@ function closeModal() {
 async function artikelAnlegen() {
     try {
         const name = document.getElementById('new-name').value;
-        // HIER KORRIGIERT: Kategorie wird aus dem "Neuer Artikel"-Fenster ausgelesen
-        const kat = document.getElementById('new-kategorie') ? document.getElementById('new-kategorie').value : '';
+        const kat = document.getElementById('new-kategorie').value;
         const gruppe = document.getElementById('new-gruppe').value;
         const ortId = document.getElementById('new-ort').value; 
         const menge = document.getElementById('new-menge').value;
 
         if (!name) { alert("Bitte Name angeben!"); return; }
 
-        // HIER KORRIGIERT: Kategorie wird beim Erstellen mit an die DB geschickt
         const { data: neuArt, error: artErr } = await dbClient.from('artikel').insert([{ name: name, kategorie: kat, gruppe: gruppe }]).select();
         
         if (!artErr) {
             await dbClient.from('bestand').insert([{ artikel_id: neuArt[0].id, lagerort_id: ortId, menge: menge }]);
             closeModal(); 
             document.getElementById('new-name').value = '';
-            if(document.getElementById('new-kategorie')) document.getElementById('new-kategorie').value = '';
+            document.getElementById('new-kategorie').value = '';
             document.getElementById('new-gruppe').value = '';
             ladeAlles(); 
-        } else {
-            console.error("Datenbank-Fehler:", artErr);
         }
     } catch (e) {
         console.error("Fehler beim Anlegen:", e);
