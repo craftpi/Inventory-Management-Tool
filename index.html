@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vereinslager Verwaltung</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
+        th { background-color: #3498db; color: white; }
+        .btn { background-color: #3498db; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+        .btn:hover { background-color: #2980b9; }
+        .menge-input { width: 60px; padding: 4px; text-align: center; }
+        /* Der dunkle Hintergrund */
+        .modal {
+            display: none; 
+            position: fixed; 
+            z-index: 100; 
+            left: 0; top: 0; width: 100%; height: 100%; 
+            background-color: rgba(0,0,0,0.5); 
+        }
+
+        /* Das weiße Fenster in der Mitte */
+        .modal-content {
+            background-color: white;
+            margin: 10% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .modal-content h2 { margin-top: 0; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; box-sizing: border-box; }
+
+        .flex-buttons { display: flex; gap: 10px; margin-top: 20px; }
+        .btn-save { background-color: #27ae60; flex: 2; }
+        .btn-cancel { background-color: #e74c3c; flex: 1; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📦 Vereinslager</h1>
+    <button class="btn" style="margin-bottom: 20px; padding: 10px 20px;" onclick="openModal()">+ Neuer Artikel</button>
+
+    <div id="artikelModal" class="modal">
+        <div class="modal-content">
+            <h2>Neuer Artikel</h2>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="new-name" placeholder="z.B. Einmalhandschuhe Weiß">
+            </div>
+            <div class="form-group">
+                <label>Gruppe</label>
+                <input type="text" id="new-gruppe" placeholder="z.B. Einmalhandschuhe">
+            </div>
+            <div class="form-group">
+                <label>Lagerort (ID)</label>
+                <input type="number" id="new-ort" placeholder="1 für Helferkiste, 2 für Regal...">
+            </div>
+            <div class="form-group">
+                <label>Start-Menge</label>
+                <input type="number" id="new-menge" value="0">
+            </div>
+            <div class="flex-buttons">
+                <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
+                <button class="btn btn-cancel" onclick="closeModal()">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+    <p>Aktuelle Bestandsübersicht über alle Kisten und Regale.
+        Bitte Achtet auf eine saubere Sortierung nach den Veranstaltungen!
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Artikel</th>
+                <th>Lagerort</th>
+                <th>Menge</th>
+            </tr>
+        </thead>
+        <tbody id="lager-tabelle">
+            <tr><td colspan="4">Lade Daten aus dem Lager...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
