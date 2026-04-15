@@ -1,3 +1,36 @@
+// Am Anfang der app.js hinzufügen
+// Prüfen, ob User bereits eingeloggt ist
+dbClient.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_IN') {
+        document.getElementById('login-overlay').style.display = 'none';
+        ladeBestand(); // Erst jetzt Daten laden
+    } else if (event === 'SIGNED_OUT') {
+        document.getElementById('login-overlay').style.display = 'flex';
+    }
+});
+
+async function handleLogin() {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const errorMsg = document.getElementById('login-error');
+
+    const { error } = await dbClient.auth.signInWithPassword({
+        email: email,
+        password: password,
+    });
+
+    if (error) {
+        errorMsg.style.display = 'block';
+        console.error(error.message);
+    } else {
+        errorMsg.style.display = 'none';
+    }
+}
+
+// Optional: Logout Funktion
+async function handleLogout() {
+    await dbClient.auth.signOut();
+}
 // 1. Supabase konfigurieren
 const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';

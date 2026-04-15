@@ -45,7 +45,16 @@
     </style>
 </head>
 <body>
-
+<div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:white; z-index:9999; display:flex; align-items:center; justify-content:center;">
+    <div style="max-width:350px; width:90%; padding:30px; border:1px solid #ddd; border-radius:8px; text-align:center; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+        <h2>🔐 Lager-Zugang</h2>
+        <p>Bitte logge dich ein, um das Inventar zu sehen.</p>
+        <input type="email" id="login-email" placeholder="E-Mail (z.B. lager@verein.de)" style="width:100%; padding:10px; margin-bottom:10px;">
+        <input type="password" id="login-password" placeholder="Passwort" style="width:100%; padding:10px; margin-bottom:20px;">
+        <button class="btn" onclick="handleLogin()" style="width:100%; padding:12px;">Anmelden</button>
+        <p id="login-error" style="color:red; display:none; margin-top:15px;">Login fehlgeschlagen!</p>
+    </div>
+</div>
 <div class="container">
     <h1>📦 Vereinslager</h1>
     <button class="btn" style="margin-bottom: 20px; padding: 10px 20px;" onclick="openModal()">+ Neuer Artikel</button>
