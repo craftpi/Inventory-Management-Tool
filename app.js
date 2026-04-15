@@ -1,3 +1,8 @@
+// 1. Supabase konfigurieren
+const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
+
+const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Am Anfang der app.js hinzufügen
 // Prüfen, ob User bereits eingeloggt ist
 dbClient.auth.onAuthStateChange((event, session) => {
@@ -44,11 +49,6 @@ async function handleLogin() {
 async function handleLogout() {
     await dbClient.auth.signOut();
 }
-// 1. Supabase konfigurieren
-const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
-
-const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // 2. Daten laden (Jetzt mit der neuen Spalte 'gruppe')
 async function ladeBestand() {
