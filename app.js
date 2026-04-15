@@ -10,19 +10,32 @@ dbClient.auth.onAuthStateChange((event, session) => {
 });
 
 async function handleLogin() {
-    const email = document.getElementById('login-email').value;
+    // HIER TRÄGST DU DIE E-MAIL EIN, DIE DU IN SUPABASE ERSTELLT HAST
+    // Diese E-Mail ist im Hintergrund fest verdrahtet. Das ist sicher, 
+    // da ein Angreifer ohne das Passwort trotzdem nicht in die Datenbank kommt.
+    const versteckteEmail = 'lager@trisported.de'; 
+    
     const password = document.getElementById('login-password').value;
     const errorMsg = document.getElementById('login-error');
 
+    // Wir zeigen einen Lade-Text an
+    const loginButton = document.querySelector('#login-overlay button');
+    loginButton.innerText = "Prüfe...";
+
+    // Login-Anfrage an Supabase senden
     const { error } = await dbClient.auth.signInWithPassword({
-        email: email,
+        email: versteckteEmail,
         password: password,
     });
 
     if (error) {
+        // Bei falschem Passwort
         errorMsg.style.display = 'block';
-        console.error(error.message);
+        loginButton.innerText = "🔓 Entsperren";
+        console.error("Login-Fehler:", error.message);
     } else {
+        // Bei Erfolg wird das Overlay automatisch ausgeblendet
+        // (Das passiert durch den onAuthStateChange Block, den du schon hast)
         errorMsg.style.display = 'none';
     }
 }
