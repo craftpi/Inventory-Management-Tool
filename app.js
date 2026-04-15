@@ -3,62 +3,73 @@ const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
 
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-// Am Anfang der app.js hinzufügen
-// Prüfen, ob User bereits eingeloggt ist
-dbClient.auth.onAuthStateChange((event, session) => {
+
+// --- GLOBALE VARIABLEN ---
+let aktuelleDaten = [];
+let isEditMode = false;
+
+// --- AUTHENTIFIZIERUNG ---
+dbClient.auth.onAuthStateChange(async (event, session) => {
     if (event === 'SIGNED_IN') {
         document.getElementById('login-overlay').style.display = 'none';
-        ladeBestand(); // Erst jetzt Daten laden
+        await ladeLagerorte(); // NEU: Lädt zuerst die Dropdowns
+        ladeBestand();         // Dann die Tabelle laden
     } else if (event === 'SIGNED_OUT') {
         document.getElementById('login-overlay').style.display = 'flex';
     }
 });
 
 async function handleLogin() {
-    // HIER TRÄGST DU DIE E-MAIL EIN, DIE DU IN SUPABASE ERSTELLT HAST
-    // Diese E-Mail ist im Hintergrund fest verdrahtet. Das ist sicher, 
-    // da ein Angreifer ohne das Passwort trotzdem nicht in die Datenbank kommt.
     const versteckteEmail = 'lager@trisported.de'; 
-    
     const password = document.getElementById('login-password').value;
     const errorMsg = document.getElementById('login-error');
-
-    // Wir zeigen einen Lade-Text an
     const loginButton = document.querySelector('#login-overlay button');
+    
     loginButton.innerText = "Prüfe...";
 
-    // Login-Anfrage an Supabase senden
     const { error } = await dbClient.auth.signInWithPassword({
         email: versteckteEmail,
         password: password,
     });
 
     if (error) {
-        // Bei falschem Passwort
         errorMsg.style.display = 'block';
         loginButton.innerText = "🔓 Entsperren";
         console.error("Login-Fehler:", error.message);
     } else {
-        // Bei Erfolg wird das Overlay automatisch ausgeblendet
-        // (Das passiert durch den onAuthStateChange Block, den du schon hast)
         errorMsg.style.display = 'none';
     }
 }
 
-// Optional: Logout Funktion
 async function handleLogout() {
-    await dbClient.auth.signOut();
+    const { error } = await dbClient.auth.signOut();
+    if (error) console.error("Fehler beim Abmelden:", error.message);
 }
 
-// 2. Daten laden (Jetzt mit der neuen Spalte 'gruppe')
+// --- LAGERORTE FÜR DROPDOWNS LADEN ---
+async function ladeLagerorte() {
+    const { data, error } = await dbClient.from('lagerorte').select('*');
+    if (data) {
+        const selectNeu = document.getElementById('new-ort');
+        const selectEdit = document.getElementById('edit-ort');
+        if(selectNeu && selectEdit) {
+            selectNeu.innerHTML = ''; selectEdit.innerHTML = '';
+            data.forEach(ort => {
+                selectNeu.add(new Option(ort.name, ort.id));
+                selectEdit.add(new Option(ort.name, ort.id));
+            });
+        }
+    }
+}
+
+// --- DATEN LADEN ---
 async function ladeBestand() {
     const { data, error } = await dbClient
         .from('bestand')
         .select(`
-            id,
-            menge,
-            artikel (name, gruppe), 
-            lagerorte (name)
+            id, menge, artikel_id, lagerort_id,
+            artikel (id, name, gruppe), 
+            lagerorte (id, name)
         `)
         .order('id', { ascending: true });
 
@@ -67,62 +78,56 @@ async function ladeBestand() {
         return;
     }
 
+    aktuelleDaten = data; // Zwischenspeichern für den Edit-Modus
     tabelleAktualisieren(data);
 }
 
-// 3. Daten doppelt gruppieren und in die HTML-Tabelle schreiben
+// --- TABELLE AUFBAUEN & SUMMEN BERECHNEN ---
 function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
-    tbody.innerHTML = ''; // Tabelle leeren
+    tbody.innerHTML = ''; 
 
-    // --- NEU: Verschachteltes Sortieren (Gruppe -> Artikel) ---
     const gruppierteDaten = {};
+    const gruppenSummen = {}; // NEU: Zähler für die Gesamtmengen
     
     daten.forEach(zeile => {
         const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
         const artikelName = zeile.artikel.name;
         
-        // 1. Ebene: Gruppe anlegen, falls nicht existent
-        if (!gruppierteDaten[gruppenName]) {
-            gruppierteDaten[gruppenName] = {}; 
-        }
+        // Summe für diese Gruppe hochzählen
+        gruppenSummen[gruppenName] = (gruppenSummen[gruppenName] || 0) + Number(zeile.menge);
         
-        // 2. Ebene: Artikel in der Gruppe anlegen, falls nicht existent
-        if (!gruppierteDaten[gruppenName][artikelName]) {
-            gruppierteDaten[gruppenName][artikelName] = [];
-        }
-
-        // Den spezifischen Bestand (Lagerort + Menge) zum Artikel hinzufügen
+        if (!gruppierteDaten[gruppenName]) { gruppierteDaten[gruppenName] = {}; }
+        if (!gruppierteDaten[gruppenName][artikelName]) { gruppierteDaten[gruppenName][artikelName] = []; }
+        
         gruppierteDaten[gruppenName][artikelName].push(zeile); 
     });
 
-    // --- NEU: Tabelle aufbauen ---
     for (const [gruppenName, artikelObjekt] of Object.entries(gruppierteDaten)) {
         
-        // A) Die Gruppen-Überschrift (Ordner)
+        // Gruppen-Überschrift (Mit Gesamtmenge)
         const headerTr = document.createElement('tr');
         headerTr.innerHTML = `
-            <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding-top: 15px; font-size: 1.1em;">
-                📁 ${gruppenName}
+            <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>📁 ${gruppenName}</span>
+                    <span class="summen-badge">Gesamt: ${gruppenSummen[gruppenName]}</span>
+                </div>
             </td>
         `;
         tbody.appendChild(headerTr);
 
-        // B) ...dann gehen wir alle Artikel in dieser Gruppe durch
         for (const [artikelName, bestandsListe] of Object.entries(artikelObjekt)) {
-            
-            // C) ...und listen alle Orte auf, wo dieser Artikel liegt
             bestandsListe.forEach((zeile, index) => {
                 const tr = document.createElement('tr');
+                tr.className = "item-row"; 
                 
-                let artikelZelle = '';
-                // Nur beim ERSTEN Ort schreiben wir den Namen des Artikels hin
-                if (index === 0) {
-                    artikelZelle = `<td style="padding-left: 25px; color: #333;">↳ <strong>${artikelName}</strong></td>`;
-                } else {
-                    // Bei weiteren Orten lassen wir die Zelle einfach leer
-                    artikelZelle = `<td></td>`; 
-                }
+                // Klick auf die Zeile öffnet das Bearbeiten-Fenster (falls aktiv)
+                tr.onclick = (event) => {
+                    if(event.target.tagName !== 'INPUT') { openEditModal(zeile.id); }
+                };
+                
+                let artikelZelle = index === 0 ? `<td style="padding-left: 25px; color: #333;">↳ <strong>${artikelName}</strong></td>` : `<td></td>`; 
 
                 tr.innerHTML = `
                     ${artikelZelle}
@@ -140,77 +145,106 @@ function tabelleAktualisieren(daten) {
         }
     }
 }
-// 4. Neue Menge in der Datenbank speichern (Bleibt unverändert)
+
+// --- BEARBEITUNGS-MODUS STEUERUNG ---
+function toggleEditMode() {
+    isEditMode = !isEditMode;
+    const btn = document.getElementById('btn-edit-mode');
+    const tbody = document.getElementById('lager-tabelle');
+    
+    if (isEditMode) {
+        btn.innerText = "✏️ Bearbeiten: AN";
+        btn.style.backgroundColor = "#e67e22";
+        tbody.classList.add('edit-active');
+    } else {
+        btn.innerText = "✏️ Bearbeiten: AUS";
+        btn.style.backgroundColor = "#f39c12";
+        tbody.classList.remove('edit-active');
+    }
+}
+
+function openEditModal(bestandId) {
+    if (!isEditMode) return; 
+    
+    const zeile = aktuelleDaten.find(z => z.id === bestandId);
+    if (!zeile) return;
+
+    document.getElementById('edit-bestand-id').value = zeile.id;
+    document.getElementById('edit-artikel-id').value = zeile.artikel_id;
+    document.getElementById('edit-name').value = zeile.artikel.name;
+    document.getElementById('edit-gruppe').value = zeile.artikel.gruppe || '';
+    document.getElementById('edit-ort').value = zeile.lagerort_id;
+    document.getElementById('edit-menge').value = zeile.menge;
+
+    document.getElementById('editModal').style.display = 'block';
+}
+
+function closeEditModal() { document.getElementById('editModal').style.display = 'none'; }
+
+async function speichereBearbeitung() {
+    const bId = document.getElementById('edit-bestand-id').value;
+    const aId = document.getElementById('edit-artikel-id').value;
+    const neuerName = document.getElementById('edit-name').value;
+    const neueGruppe = document.getElementById('edit-gruppe').value;
+    const neuerOrt = document.getElementById('edit-ort').value;
+    const neueMenge = document.getElementById('edit-menge').value;
+
+    // Artikel und Bestand updaten
+    await dbClient.from('artikel').update({ name: neuerName, gruppe: neueGruppe }).eq('id', aId);
+    await dbClient.from('bestand').update({ lagerort_id: neuerOrt, menge: neueMenge }).eq('id', bId);
+
+    closeEditModal();
+    ladeBestand(); 
+}
+
+async function artikelLoeschen() {
+    if(confirm("Möchtest du diesen Eintrag wirklich komplett löschen?")) {
+        const bId = document.getElementById('edit-bestand-id').value;
+        await dbClient.from('bestand').delete().eq('id', bId);
+        closeEditModal();
+        ladeBestand();
+    }
+}
+
+// --- SCHNELLES SPEICHERN (Menge) ---
 async function speichereMenge(bestandId) {
     const inputFeld = document.getElementById(`menge-${bestandId}`);
-    const neueMenge = inputFeld.value;
-
     inputFeld.style.backgroundColor = '#fff3cd'; 
-
-    const { error } = await dbClient
-        .from('bestand')
-        .update({ menge: neueMenge })
-        .eq('id', bestandId);
-
-    if (error) {
-        console.error('Fehler beim Speichern:', error);
+    
+    const { error } = await dbClient.from('bestand').update({ menge: inputFeld.value }).eq('id', bestandId);
+    
+    if (error) { 
         inputFeld.style.backgroundColor = '#f8d7da'; 
     } else {
         inputFeld.style.backgroundColor = '#d4edda'; 
-        setTimeout(() => { inputFeld.style.backgroundColor = ''; }, 1000);
+        setTimeout(() => { 
+            inputFeld.style.backgroundColor = ''; 
+            ladeBestand(); // Lädt neu, um die Gruppen-Summe oben zu aktualisieren
+        }, 800); 
     }
 }
 
-document.addEventListener('DOMContentLoaded', ladeBestand);
+// --- MODAL STEUERUNG FÜR "NEUER ARTIKEL" ---
+function openModal() { document.getElementById('artikelModal').style.display = 'block'; }
+function closeModal() { document.getElementById('artikelModal').style.display = 'none'; }
 
-// Modal Steuerung
-function openModal() {
-    document.getElementById('artikelModal').style.display = 'block';
-}
-
-function closeModal() {
-    document.getElementById('artikelModal').style.display = 'none';
-    // Felder leeren
-    document.getElementById('new-name').value = '';
-    document.getElementById('new-gruppe').value = '';
-}
-
-// Neuen Artikel in die DB schreiben
 async function artikelAnlegen() {
     const name = document.getElementById('new-name').value;
     const gruppe = document.getElementById('new-gruppe').value;
-    const ortId = document.getElementById('new-ort').value;
+    const ortId = document.getElementById('new-ort').value; 
     const menge = document.getElementById('new-menge').value;
 
-    if (!name || !ortId) {
-        alert("Bitte Name und Lagerort-ID angeben!");
-        return;
-    }
+    if (!name) { alert("Bitte Name angeben!"); return; }
 
-    // SCHRITT 1: Artikel erstellen
-    const { data: neuArt, error: artErr } = await dbClient
-        .from('artikel')
-        .insert([{ name: name, gruppe: gruppe }])
-        .select();
-
-    if (artErr) {
-        console.error(artErr);
-        return;
-    }
-
-    // SCHRITT 2: Bestand verknüpfen (mit der ID des gerade erstellten Artikels)
-    const { error: bestErr } = await dbClient
-        .from('bestand')
-        .insert([{ 
-            artikel_id: neuArt[0].id, 
-            lagerort_id: ortId, 
-            menge: menge 
-        }]);
-
-    if (bestErr) {
-        console.error(bestErr);
+    const { data: neuArt, error: artErr } = await dbClient.from('artikel').insert([{ name: name, gruppe: gruppe }]).select();
+    
+    if (!artErr) {
+        await dbClient.from('bestand').insert([{ artikel_id: neuArt[0].id, lagerort_id: ortId, menge: menge }]);
+        closeModal(); 
+        document.getElementById('new-name').value = '';
+        document.getElementById('new-gruppe').value = '';
+        ladeBestand(); 
     } else {
-        closeModal();
-        ladeBestand(); // Tabelle neu laden, um den neuen Artikel zu sehen
+        console.error(artErr);
     }
 }

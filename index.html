@@ -42,6 +42,15 @@
         .flex-buttons { display: flex; gap: 10px; margin-top: 20px; }
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
+        /* Neu: Styling für das Dropdown-Menü */
+        .form-group select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+
+        /* Neu: Effekte, wenn der Bearbeitungsmodus AN ist */
+        .edit-active tr.item-row { cursor: pointer; transition: background-color 0.2s; }
+        .edit-active tr.item-row:hover { background-color: #e8f4fd !important; }
+
+        /* Die schicken Badges für die Gesamtmenge */
+        .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; }
     </style>
 </head>
 <body>
@@ -58,36 +67,44 @@
 </div>
 <div class="container">
     <h1>📦 Vereinslager</h1>
-    <button class="btn" style="margin-bottom: 20px; padding: 10px 20px;" onclick="openModal()">+ Neuer Artikel</button>
+    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+    <div>
+        <button class="btn" style="padding: 10px 20px;" onclick="openModal()">+ Neuer Artikel</button>
+        <button class="btn" id="btn-edit-mode" style="background-color: #f39c12; margin-left: 10px; padding: 10px 20px;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
+    </div>
+    <button class="btn" style="background-color: #e74c3c; padding: 10px 20px;" onclick="handleLogout()">🔒 Abmelden</button>
+</div>
 
-    <div id="artikelModal" class="modal">
-        <div class="modal-content">
-            <h2>Neuer Artikel</h2>
-            <div class="form-group">
-                <label>Name</label>
-                <input type="text" id="new-name" placeholder="z.B. Einmalhandschuhe Weiß">
-            </div>
-            <div class="form-group">
-                <label>Gruppe</label>
-                <input type="text" id="new-gruppe" placeholder="z.B. Einmalhandschuhe">
-            </div>
-            <div class="form-group">
-                <label>Lagerort (ID)</label>
-                <input type="number" id="new-ort" placeholder="1 für Helferkiste, 2 für Regal...">
-            </div>
-            <div class="form-group">
-                <label>Start-Menge</label>
-                <input type="number" id="new-menge" value="0">
-            </div>
-            <div class="flex-buttons">
-                <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
-                <button class="btn btn-cancel" onclick="closeModal()">Abbrechen</button>
-            </div>
+<div id="artikelModal" class="modal">
+    <div class="modal-content">
+        <h2>Neuer Artikel</h2>
+        <div class="form-group"><label>Name</label><input type="text" id="new-name" placeholder="z.B. Einmalhandschuhe Weiß"></div>
+        <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe" placeholder="z.B. Einmalhandschuhe"></div>
+        <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
+        <div class="form-group"><label>Start-Menge</label><input type="number" id="new-menge" value="0"></div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal()">Abbrechen</button>
         </div>
     </div>
-    <p>Aktuelle Bestandsübersicht über alle Kisten und Regale.
-        Bitte Achtet auf eine saubere Sortierung nach den Veranstaltungen!
-    </p>
+</div>
+
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h2>Artikel bearbeiten</h2>
+        <input type="hidden" id="edit-bestand-id">
+        <input type="hidden" id="edit-artikel-id">
+        <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
+        <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
+        <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
+        <div class="form-group"><label>Menge</label><input type="number" id="edit-menge"></div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeEditModal()">Abbrechen</button>
+        </div>
+        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Eintrag löschen</button>
+    </div>
+</div>
 
     <table>
         <thead>
