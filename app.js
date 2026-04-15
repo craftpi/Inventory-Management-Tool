@@ -4,26 +4,41 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Globale Variablen
+// --- GLOBALE VARIABLEN ---
 let aktuelleDaten = [];
 let isEditMode = false;
 
 // --- AUTHENTIFIZIERUNG (Kugelsicher) ---
 console.log("App gestartet. Prüfe Login-Status...");
 
-dbClient.auth.onAuthStateChange((event, session) => {
-    console.log("Supabase meldet:", event, "| Eingeloggt:", !!session);
-    
+// Warten, bis HTML fertig ist, dann ersten Check machen
+document.addEventListener('DOMContentLoaded', async () => {
+    const { data: { session } } = await dbClient.auth.getSession();
     const overlay = document.getElementById('login-overlay');
-    
+
     if (session) {
         if (overlay) overlay.style.display = 'none';
-        // Wenn eingeloggt, starte den Datenabruf
         ladeAlles();
     } else {
         if (overlay) overlay.style.display = 'flex';
+    }
+});
+
+// Reagieren auf Anmelden / Abmelden
+dbClient.auth.onAuthStateChange(async (event, session) => {
+    const overlay = document.getElementById('login-overlay');
+    
+    if (event === 'SIGNED_IN') {
+        if (overlay) overlay.style.display = 'none';
+        ladeAlles();
+    } else if (event === 'SIGNED_OUT') {
+        if (overlay) overlay.style.display = 'flex';
+        
         const loginButton = document.querySelector('#login-overlay button');
         if (loginButton) loginButton.innerText = "🔓 Entsperren";
+        
+        const tbody = document.getElementById('lager-tabelle');
+        if (tbody) tbody.innerHTML = ''; // Tabelle sicherheitshalber leeren
     }
 });
 
@@ -58,13 +73,8 @@ async function handleLogout() {
 // --- DATEN LADEN ---
 async function ladeAlles() {
     try {
-        console.log("Schritt 1: Lade Lagerorte (Dropdowns)...");
         await ladeLagerorte();
-        
-        console.log("Schritt 2: Lade Lagerbestand...");
         await ladeBestand();
-        
-        console.log("Erfolg: Alles fertig geladen!");
     } catch (fehler) {
         console.error("FEHLER BEIM LADEN:", fehler);
     }
@@ -78,7 +88,6 @@ async function ladeLagerorte() {
         const selectNeu = document.getElementById('new-ort');
         const selectEdit = document.getElementById('edit-ort');
         
-        // Verhindert Absturz, falls die Dropdowns im HTML fehlen
         if(selectNeu) { selectNeu.innerHTML = ''; data.forEach(o => selectNeu.add(new Option(o.name, o.id))); }
         if(selectEdit) { selectEdit.innerHTML = ''; data.forEach(o => selectEdit.add(new Option(o.name, o.id))); }
     }
@@ -99,20 +108,20 @@ async function ladeBestand() {
 // --- TABELLE AUFBAUEN ---
 function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
-    if (!tbody) { console.error("FEHLER: Finde <tbody id='lager-tabelle'> nicht im HTML!"); return; }
+    if (!tbody) return;
     
     tbody.innerHTML = ''; 
     const gruppierteDaten = {};
     const gruppenSummen = {}; 
     
     daten.forEach(zeile => {
-        // Sicherheits-Check, falls ein Artikel keinen Namen hat
         if (!zeile.artikel) return; 
 
         const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
         const artikelName = zeile.artikel.name;
         
         gruppenSummen[gruppenName] = (gruppenSummen[gruppenName] || 0) + Number(zeile.menge);
+        
         if (!gruppierteDaten[gruppenName]) { gruppierteDaten[gruppenName] = {}; }
         if (!gruppierteDaten[gruppenName][artikelName]) { gruppierteDaten[gruppenName][artikelName] = []; }
         gruppierteDaten[gruppenName][artikelName].push(zeile); 
@@ -124,7 +133,7 @@ function tabelleAktualisieren(daten) {
             <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span>📁 ${gruppenName}</span>
-                    <span class="summen-badge" style="font-size:0.85em; background:#3498db; color:white; padding:4px 10px; border-radius:12px;">Gesamt: ${gruppenSummen[gruppenName]}</span>
+                    <span class="summen-badge" style="font-size:0.85em; background:#3498db; color:white; padding:4px 10px; border-radius:12px; font-weight:normal;">Gesamt: ${gruppenSummen[gruppenName]}</span>
                 </div>
             </td>
         `;
@@ -158,8 +167,9 @@ function toggleEditMode() {
     const btn = document.getElementById('btn-edit-mode');
     
     if (isEditMode) {
+        // HIER WAR DER FEHLER: Text von 'Aktiviert' zu 'Bearbeiten' korrigiert
         if(btn) { btn.innerText = "✏️ Bearbeiten: AN"; btn.style.backgroundColor = "#e67e22"; }
-        ladeBestand(); // Lädt neu, um die Mauszeiger (Pointer) anzupassen
+        ladeBestand(); // Lädt neu, um die Mauszeiger anzupassen
     } else {
         if(btn) { btn.innerText = "✏️ Bearbeiten: AUS"; btn.style.backgroundColor = "#f39c12"; }
         ladeBestand();
@@ -171,7 +181,6 @@ function openEditModal(bestandId) {
     const zeile = aktuelleDaten.find(z => z.id === bestandId);
     if (!zeile) return;
 
-    // Versuche Felder zu füllen. Wenn eines fehlt, gibt es keinen harten Absturz mehr.
     try {
         document.getElementById('edit-bestand-id').value = zeile.id;
         document.getElementById('edit-artikel-id').value = zeile.artikel_id;
@@ -182,7 +191,6 @@ function openEditModal(bestandId) {
         document.getElementById('editModal').style.display = 'block';
     } catch (e) {
         console.error("FEHLER: HTML für Bearbeiten-Fenster fehlt oder ist fehlerhaft!", e);
-        alert("Das Bearbeitungsfenster konnte nicht geöffnet werden. Fehlt HTML-Code?");
     }
 }
 
@@ -191,6 +199,7 @@ function closeEditModal() {
     if(modal) modal.style.display = 'none'; 
 }
 
+// --- INTELLIGENTES SPEICHERN (Zusammenfassen) ---
 async function speichereBearbeitung() {
     try {
         const bId = document.getElementById('edit-bestand-id').value;
@@ -198,18 +207,41 @@ async function speichereBearbeitung() {
         const neuerName = document.getElementById('edit-name').value;
         const neueGruppe = document.getElementById('edit-gruppe').value;
         const neuerOrt = document.getElementById('edit-ort').value;
-        const neueMenge = document.getElementById('edit-menge').value;
+        const neueMenge = Number(document.getElementById('edit-menge').value);
 
+        // 1. Artikel updaten (Name & Gruppe)
         await dbClient.from('artikel').update({ name: neuerName, gruppe: neueGruppe }).eq('id', aId);
-        await dbClient.from('bestand').update({ lagerort_id: neuerOrt, menge: neueMenge }).eq('id', bId);
+
+        // 2. Prüfen, ob der Artikel am neuen Ort schon existiert
+        const { data: existierenderBestand } = await dbClient
+            .from('bestand')
+            .select('id, menge')
+            .eq('artikel_id', aId)
+            .eq('lagerort_id', neuerOrt)
+            .neq('id', bId) 
+            .maybeSingle(); 
+
+        if (existierenderBestand) {
+            // Artikel existiert -> Mengen addieren
+            const gesamtMenge = Number(existierenderBestand.menge) + neueMenge;
+            await dbClient.from('bestand').update({ menge: gesamtMenge }).eq('id', existierenderBestand.id);
+            // Alten Eintrag löschen
+            await dbClient.from('bestand').delete().eq('id', bId);
+            console.log("Einträge wurden zusammengefasst!");
+        } else {
+            // Artikel existiert dort noch nicht -> Normal verschieben
+            await dbClient.from('bestand').update({ lagerort_id: neuerOrt, menge: neueMenge }).eq('id', bId);
+        }
 
         closeEditModal();
         ladeAlles(); 
-    } catch(e) { console.error("Fehler beim Speichern der Bearbeitung:", e); }
+    } catch(e) { 
+        console.error("Fehler beim Speichern der Bearbeitung:", e); 
+    }
 }
 
 async function artikelLoeschen() {
-    if(confirm("Eintrag löschen?")) {
+    if(confirm("Diesen Eintrag wirklich löschen?")) {
         const bId = document.getElementById('edit-bestand-id').value;
         await dbClient.from('bestand').delete().eq('id', bId);
         closeEditModal();
@@ -217,7 +249,7 @@ async function artikelLoeschen() {
     }
 }
 
-// --- MENGE SPEICHERN ---
+// --- SCHNELLE MENGENÄNDERUNG ---
 async function speichereMenge(bestandId) {
     const inputFeld = document.getElementById(`menge-${bestandId}`);
     if(inputFeld) inputFeld.style.backgroundColor = '#fff3cd'; 
