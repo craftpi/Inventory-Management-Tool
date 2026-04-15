@@ -96,13 +96,53 @@ async function ladeLagerorte() {
 async function ladeBestand() {
     const { data, error } = await dbClient
         .from('bestand')
-        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe), lagerorte (id, name)`)
+        // HIER KORRIGIERT: 'kategorie' wird aus der Datenbank geladen
+        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie), lagerorte (id, name)`)
         .order('id', { ascending: true });
 
     if (error) { console.error('Fehler bei Bestand:', error); return; }
 
     aktuelleDaten = data || []; 
-    tabelleAktualisieren(aktuelleDaten);
+    aktualisiereFilterDropdown(aktuelleDaten); // Dropdown Menü aufbauen
+    wendeFilterAn(); // Gefilterte Tabelle anzeigen
+}
+
+// --- FILTER LOGIK (Für das Kategorien-Dropdown) ---
+function aktualisiereFilterDropdown(daten) {
+    const dropdown = document.getElementById('kategorie-filter');
+    if (!dropdown) return;
+
+    const aktuelleAuswahl = dropdown.value;
+    const kategorien = new Set();
+    
+    daten.forEach(zeile => {
+        if (zeile.artikel && zeile.artikel.kategorie) {
+            kategorien.add(zeile.artikel.kategorie);
+        }
+    });
+
+    dropdown.innerHTML = '<option value="ALLE">Alle Kategorien anzeigen</option>';
+    
+    Array.from(kategorien).sort().forEach(kat => {
+        dropdown.add(new Option(kat, kat));
+    });
+
+    if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) {
+        dropdown.value = aktuelleAuswahl;
+    }
+}
+
+function wendeFilterAn() {
+    const filterWert = document.getElementById('kategorie-filter')?.value || 'ALLE';
+    let gefilterteDaten = aktuelleDaten;
+
+    if (filterWert !== 'ALLE') {
+        gefilterteDaten = aktuelleDaten.filter(zeile => 
+            zeile.artikel && zeile.artikel.kategorie === filterWert
+        );
+    }
+    
+    tabelleAktualisieren(gefilterteDaten);
 }
 
 // --- TABELLE AUFBAUEN ---
@@ -167,12 +207,11 @@ function toggleEditMode() {
     const btn = document.getElementById('btn-edit-mode');
     
     if (isEditMode) {
-        // HIER WAR DER FEHLER: Text von 'Aktiviert' zu 'Bearbeiten' korrigiert
         if(btn) { btn.innerText = "✏️ Bearbeiten: AN"; btn.style.backgroundColor = "#e67e22"; }
-        ladeBestand(); // Lädt neu, um die Mauszeiger anzupassen
+        wendeFilterAn(); // HIER KORRIGIERT: Nutzt den Filter beim Neuzeichnen
     } else {
         if(btn) { btn.innerText = "✏️ Bearbeiten: AUS"; btn.style.backgroundColor = "#f39c12"; }
-        ladeBestand();
+        wendeFilterAn(); // HIER KORRIGIERT: Nutzt den Filter beim Neuzeichnen
     }
 }
 
@@ -185,6 +224,10 @@ function openEditModal(bestandId) {
         document.getElementById('edit-bestand-id').value = zeile.id;
         document.getElementById('edit-artikel-id').value = zeile.artikel_id;
         document.getElementById('edit-name').value = zeile.artikel.name;
+        // HIER KORRIGIERT: Kategorie wird beim Bearbeiten ins Feld geladen
+        if(document.getElementById('edit-kategorie')) {
+            document.getElementById('edit-kategorie').value = zeile.artikel.kategorie || '';
+        }
         document.getElementById('edit-gruppe').value = zeile.artikel.gruppe || '';
         document.getElementById('edit-ort').value = zeile.lagerort_id;
         document.getElementById('edit-menge').value = zeile.menge;
@@ -205,12 +248,14 @@ async function speichereBearbeitung() {
         const bId = document.getElementById('edit-bestand-id').value;
         const aId = document.getElementById('edit-artikel-id').value;
         const neuerName = document.getElementById('edit-name').value;
+        // HIER KORRIGIERT: Kategorie wird beim Speichern ausgelesen
+        const neueKat = document.getElementById('edit-kategorie') ? document.getElementById('edit-kategorie').value : '';
         const neueGruppe = document.getElementById('edit-gruppe').value;
         const neuerOrt = document.getElementById('edit-ort').value;
         const neueMenge = Number(document.getElementById('edit-menge').value);
 
-        // 1. Artikel updaten (Name & Gruppe)
-        await dbClient.from('artikel').update({ name: neuerName, gruppe: neueGruppe }).eq('id', aId);
+        // 1. Artikel updaten (Name, KATEGORIE & Gruppe)
+        await dbClient.from('artikel').update({ name: neuerName, kategorie: neueKat, gruppe: neueGruppe }).eq('id', aId);
 
         // 2. Prüfen, ob der Artikel am neuen Ort schon existiert
         const { data: existierenderBestand } = await dbClient
@@ -277,20 +322,26 @@ function closeModal() {
 async function artikelAnlegen() {
     try {
         const name = document.getElementById('new-name').value;
+        // HIER KORRIGIERT: Kategorie wird aus dem "Neuer Artikel"-Fenster ausgelesen
+        const kat = document.getElementById('new-kategorie') ? document.getElementById('new-kategorie').value : '';
         const gruppe = document.getElementById('new-gruppe').value;
         const ortId = document.getElementById('new-ort').value; 
         const menge = document.getElementById('new-menge').value;
 
         if (!name) { alert("Bitte Name angeben!"); return; }
 
-        const { data: neuArt, error: artErr } = await dbClient.from('artikel').insert([{ name: name, gruppe: gruppe }]).select();
+        // HIER KORRIGIERT: Kategorie wird beim Erstellen mit an die DB geschickt
+        const { data: neuArt, error: artErr } = await dbClient.from('artikel').insert([{ name: name, kategorie: kat, gruppe: gruppe }]).select();
         
         if (!artErr) {
             await dbClient.from('bestand').insert([{ artikel_id: neuArt[0].id, lagerort_id: ortId, menge: menge }]);
             closeModal(); 
             document.getElementById('new-name').value = '';
+            if(document.getElementById('new-kategorie')) document.getElementById('new-kategorie').value = '';
             document.getElementById('new-gruppe').value = '';
             ladeAlles(); 
+        } else {
+            console.error("Datenbank-Fehler:", artErr);
         }
     } catch (e) {
         console.error("Fehler beim Anlegen:", e);
