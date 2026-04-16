@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Vereinslager Verwaltung</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background-color: #e3000f; color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); }
@@ -101,12 +102,13 @@
                 
                 <div style="display: flex; gap: 5px; flex: 2; width: 100%;">
                     <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 1; min-width: 0;" onchange="zeigePackliste()">
-                        <option value="">-- Wähle ein Resort / Packliste --</option>
+                        <option value="">-- Wähle Resort / Packliste --</option>
                     </select>
                     <button class="btn" style="background-color: #95a5a6; padding: 10px;" onclick="umbenennePackliste()" title="Packliste umbenennen">✏️</button>
                     <button class="btn" style="background-color: #c0392b; padding: 10px;" onclick="loeschePackliste()" title="Packliste löschen">🗑️</button>
                 </div>
                 
+                <button class="btn" style="background-color: #8e44ad;" onclick="startEinkaufsliste()">🛒 Einkaufsliste</button>
                 <button class="btn" style="background-color: #27ae60;" onclick="neuePacklisteAnlegen()">+ Neue Liste</button>
                 <button class="btn" id="btn-event-edit" style="background-color: #f39c12;" onclick="toggleEventEditMode()">✏️ Bearbeiten: AUS</button>
             </div>
@@ -186,6 +188,34 @@
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="packPositionSpeichern()">Hinzufügen</button>
             <button class="btn btn-cancel" onclick="closeModal('packItemModal')">Abbrechen</button>
+        </div>
+    </div>
+</div>
+
+<div id="kauflisteModal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+        <h2 style="margin-top: 0; color: #8e44ad;">🛒 Einkaufsliste</h2>
+        
+        <p style="margin-bottom: 5px; font-weight: bold;">Automatisch erkannter Fehlbestand:</p>
+        <div style="max-height: 150px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border: 1px solid #fadbd8;">
+            <ul id="auto-kauf-liste" style="margin: 0; padding-left: 20px; color: #c0392b;"></ul>
+        </div>
+
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ddd;">
+
+        <p style="margin-bottom: 10px; font-weight: bold;">Zusätzliche Dinge manuell hinzufügen:</p>
+        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <input type="text" id="manuell-kauf-name" placeholder="z.B. Klebeband" style="flex: 3; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <input type="number" id="manuell-kauf-menge" value="1" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <button class="btn" style="background-color: #3498db;" onclick="manuellAufZettel()">+ Add</button>
+        </div>
+        <div style="max-height: 100px; overflow-y: auto;">
+            <ul id="manuell-kauf-liste" style="margin: 0; padding-left: 20px; color: #27ae60;"></ul>
+        </div>
+
+        <div class="flex-buttons" style="margin-top: 25px;">
+            <button class="btn btn-save" style="background-color: #8e44ad;" onclick="downloadExcel()">📥 Excel Herunterladen</button>
+            <button class="btn btn-cancel" onclick="closeModal('kauflisteModal')">Abbrechen</button>
         </div>
     </div>
 </div>

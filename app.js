@@ -11,6 +11,9 @@ let isEditMode = false;
 let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
 
+// NEU: Globale Einkaufsliste, bevor sie zur Excel wird
+let einkaufslisteArray = []; 
+
 // --- AUTHENTIFIZIERUNG ---
 document.addEventListener('DOMContentLoaded', async () => {
     const { data: { session } } = await dbClient.auth.getSession();
@@ -68,15 +71,14 @@ async function ladeLagerorte() {
 }
 
 async function ladeBestand() {
+    const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
+    alleArtikelInfos = alleArt || [];
+
     const { data, error } = await dbClient.from('bestand')
         .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie), lagerorte (id, name)`).order('id');
     
     if (error) { alert("Datenbank-Fehler beim Laden: " + error.message); return; }
     aktuelleDaten = data || []; 
-    
-    const artMap = new Map();
-    aktuelleDaten.forEach(d => { if(d.artikel && !artMap.has(d.artikel.id)) artMap.set(d.artikel.id, d.artikel); });
-    alleArtikelInfos = Array.from(artMap.values()).sort((a,b) => a.name.localeCompare(b.name));
 
     aktualisiereFilterDropdown(aktuelleDaten); 
     wendeFilterAn(); 
@@ -227,7 +229,7 @@ async function ladeEventDaten() {
         
         const sel = document.getElementById('packlisten-auswahl');
         const prevVal = sel.value;
-        sel.innerHTML = '<option value="">-- Wähle ein Resort / Packliste --</option>';
+        sel.innerHTML = '<option value="">-- Wähle Resort / Packliste --</option>';
         packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
         if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
 
@@ -238,7 +240,6 @@ async function ladeEventDaten() {
         zeigePackliste();
     } catch(e) {
         console.error("Fehler beim Event-Laden:", e);
-        if(e.message && e.message.includes("relation")) alert("Die neuen Tabellen (packlisten, packlisten_positionen) fehlen in Supabase!");
     }
 }
 
@@ -267,7 +268,6 @@ function zeigePackliste() {
 
     positionen.forEach(pos => {
         const tr = document.createElement('tr');
-        
         let anzeigeName = "";
         let statusHtml = "";
         let availableHtml = "-";
@@ -302,12 +302,7 @@ function zeigePackliste() {
             statusHtml += ` <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:10px;" onclick="loeschePackPosition(${pos.id})">🗑️</button>`;
         }
 
-        tr.innerHTML = `
-            <td><strong>${anzeigeName}</strong></td>
-            <td>${mengeZelle}</td>
-            <td>${availableHtml}</td>
-            <td>${statusHtml}</td>
-        `;
+        tr.innerHTML = `<td><strong>${anzeigeName}</strong></td><td>${mengeZelle}</td><td>${availableHtml}</td><td>${statusHtml}</td>`;
         tbody.appendChild(tr);
     });
 }
@@ -335,7 +330,6 @@ function togglePackTyp() {
     const typ = document.getElementById('pack-typ').value;
     document.getElementById('div-pack-lager').style.display = typ === 'lager' ? 'block' : 'none';
     document.getElementById('div-pack-custom').style.display = typ === 'custom' ? 'block' : 'none';
-    
     aktualisierePackVerfuegbarkeit(); 
 }
 
@@ -343,23 +337,16 @@ function aktualisierePackVerfuegbarkeit() {
     const typ = document.getElementById('pack-typ').value;
     const infoDiv = document.getElementById('pack-artikel-info');
 
-    if (typ !== 'lager') {
-        infoDiv.innerHTML = '';
-        return;
-    }
+    if (typ !== 'lager') { infoDiv.innerHTML = ''; return; }
 
     const selId = Number(document.getElementById('pack-artikel-select').value);
     if (!selId) { infoDiv.innerHTML = ''; return; }
 
     let gesamtLager = 0;
-    aktuelleDaten.forEach(b => { 
-        if(b.artikel_id === selId) gesamtLager += Number(b.menge); 
-    });
+    aktuelleDaten.forEach(b => { if(b.artikel_id === selId) gesamtLager += Number(b.menge); });
 
     let reserviert = 0;
-    packlistenPositionen.forEach(p => {
-        if (p.artikel_id === selId) reserviert += Number(p.menge);
-    });
+    packlistenPositionen.forEach(p => { if (p.artikel_id === selId) reserviert += Number(p.menge); });
 
     const verfuegbar = gesamtLager - reserviert;
 
@@ -396,8 +383,8 @@ async function packPositionSpeichern() {
 }
 
 async function updatePackMenge(posId, neueMenge) {
-    const { error } = await dbClient.from('packlisten_positionen').update({ menge: neueMenge }).eq('id', posId);
-    if (!error) ladeEventDaten();
+    await dbClient.from('packlisten_positionen').update({ menge: neueMenge }).eq('id', posId);
+    ladeEventDaten();
 }
 
 async function loeschePackPosition(posId) {
@@ -407,53 +394,166 @@ async function loeschePackPosition(posId) {
     }
 }
 
-// --- NEU: PACKLISTE UMBENENNEN ---
 async function umbenennePackliste() {
     const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) {
-        alert("Bitte wähle zuerst eine Packliste aus, die du umbenennen möchtest.");
-        return;
-    }
+    if (!listId) { alert("Bitte wähle zuerst eine Packliste aus."); return; }
 
     const aktuelleListe = packlisten.find(pl => pl.id == listId);
     const neuerName = prompt("Neuer Name für die Packliste:", aktuelleListe.name);
 
     if (!neuerName || neuerName.trim() === "" || neuerName === aktuelleListe.name) return;
+    const { error } = await dbClient.from('packlisten').update({ name: neuerName.trim() }).eq('id', listId);
+    if (error) alert("Fehler: " + error.message); else ladeEventDaten();
+}
 
-    const { error } = await dbClient
-        .from('packlisten')
-        .update({ name: neuerName.trim() })
-        .eq('id', listId);
+async function loeschePackliste() {
+    const listId = document.getElementById('packlisten-auswahl').value;
+    if (!listId) { alert("Bitte wähle zuerst eine Packliste aus."); return; }
 
-    if (error) {
-        alert("Fehler beim Umbenennen: " + error.message);
-    } else {
-        ladeEventDaten();
+    const aktuelleListe = packlisten.find(pl => pl.id == listId);
+    if (confirm(`Möchtest du die Packliste "${aktuelleListe.name}" wirklich löschen?`)) {
+        const { error } = await dbClient.from('packlisten').delete().eq('id', listId);
+        if (error) alert("Fehler: " + error.message); else { document.getElementById('packlisten-auswahl').value = ""; ladeEventDaten(); }
     }
 }
 
-// --- NEU: PACKLISTE LÖSCHEN ---
-async function loeschePackliste() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) {
-        alert("Bitte wähle zuerst eine Packliste aus, die du löschen möchtest.");
+// ==========================================
+// --- EINKAUFSLISTE UND EXCEL EXPORT ---
+// ==========================================
+
+function startEinkaufsliste() {
+    einkaufslisteArray = []; 
+
+    let artikelBestand = {};
+    aktuelleDaten.forEach(b => {
+        artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
+    });
+
+    let artikelBedarf = {};
+    let eigeneGegenstaende = {}; 
+
+    packlistenPositionen.forEach(p => {
+        if (p.artikel_id) {
+            artikelBedarf[p.artikel_id] = (artikelBedarf[p.artikel_id] || 0) + Number(p.menge);
+        } else if (p.eigener_name) {
+            eigeneGegenstaende[p.eigener_name] = (eigeneGegenstaende[p.eigener_name] || 0) + Number(p.menge);
+        }
+    });
+
+    const ulAuto = document.getElementById('auto-kauf-liste');
+    ulAuto.innerHTML = '';
+
+    alleArtikelInfos.forEach(art => {
+        let bestand = artikelBestand[art.id] || 0;
+        let bedarf = artikelBedarf[art.id] || 0;
+        
+        if (bedarf > bestand) {
+            let fehlMenge = bedarf - bestand;
+            einkaufslisteArray.push({ artikel: art.name, menge: fehlMenge, grund: 'Fehlt im Lager' });
+            ulAuto.innerHTML += `<li>${fehlMenge}x ${art.name}</li>`;
+        }
+    });
+
+    for (let name in eigeneGegenstaende) {
+        einkaufslisteArray.push({ artikel: name, menge: eigeneGegenstaende[name], grund: 'Sonderposten Packliste' });
+        ulAuto.innerHTML += `<li>${eigeneGegenstaende[name]}x ${name} <small style="color:#666;">(Sonderposten)</small></li>`;
+    }
+
+    if (einkaufslisteArray.length === 0) {
+        ulAuto.innerHTML = '<li style="color:#27ae60;">Alles grün! Das Lager deckt alle Listen ab.</li>';
+    }
+
+    document.getElementById('manuell-kauf-liste').innerHTML = '';
+    document.getElementById('kauflisteModal').style.display = 'block';
+}
+
+function manuellAufZettel() {
+    const nameFeld = document.getElementById('manuell-kauf-name');
+    const mengeFeld = document.getElementById('manuell-kauf-menge');
+    const name = nameFeld.value.trim();
+    const menge = Number(mengeFeld.value);
+
+    if (!name || menge <= 0) return;
+
+    einkaufslisteArray.push({ artikel: name, menge: menge, grund: 'Manuell hinzugefügt' });
+    
+    const ulManuell = document.getElementById('manuell-kauf-liste');
+    ulManuell.innerHTML += `<li>${menge}x ${name}</li>`;
+
+    nameFeld.value = '';
+    mengeFeld.value = '1';
+    nameFeld.focus();
+}
+
+async function downloadExcel() {
+    if (einkaufslisteArray.length === 0) {
+        alert("Die Liste ist komplett leer. Es gibt nichts zum Herunterladen.");
         return;
     }
 
-    const aktuelleListe = packlisten.find(pl => pl.id == listId);
-    
-    if (confirm(`Möchtest du die Packliste "${aktuelleListe.name}" wirklich komplett löschen? Alle enthaltenen Positionen gehen dabei verloren.`)) {
-        
-        const { error } = await dbClient
-            .from('packlisten')
-            .delete()
-            .eq('id', listId);
+    // 1. Neues Excel-Dokument mit ExcelJS erstellen
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Einkaufsliste');
 
-        if (error) {
-            alert("Fehler beim Löschen: " + error.message);
-        } else {
-            document.getElementById('packlisten-auswahl').value = "";
-            ladeEventDaten();
-        }
-    }
+    // 2. Den großen Titel (Zeile 1) stylen
+    sheet.mergeCells('A1:C1');
+    const titleCell = sheet.getCell('A1');
+    titleCell.value = '📦 EINKAUFSLISTE - TRISPORT ERDING';
+    titleCell.font = { size: 16, bold: true, color: { argb: 'FFE3000F' } }; // Trisport-Rot
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+    // 3. Den Zeitstempel (Zeile 2) stylen
+    sheet.mergeCells('A2:C2');
+    const timeCell = sheet.getCell('A2');
+    timeCell.value = 'Erstellt am: ' + new Date().toLocaleString('de-DE');
+    timeCell.font = { italic: true, color: { argb: 'FF666666' } }; // Grau
+    timeCell.alignment = { horizontal: 'center' };
+
+    // 4. Die Spalten-Überschriften (Zeile 4) stylen
+    const headerRow = sheet.getRow(4);
+    headerRow.values = ['ARTIKEL / MATERIAL', 'MENGE', 'GRUND / HERKUNFT'];
+    
+    ['A', 'B', 'C'].forEach(col => {
+        const cell = sheet.getCell(`${col}4`);
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; // Weiße Schrift
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF3498DB' } // Blau
+        };
+        cell.border = {
+            bottom: { style: 'medium', color: { argb: 'FF000000' } } 
+        };
+    });
+
+    // 5. Die eigentlichen Daten eintragen
+    let currentRow = 5;
+    einkaufslisteArray.forEach(item => {
+        const row = sheet.getRow(currentRow);
+        row.values = [item.artikel, item.menge, item.grund];
+        
+        ['A', 'B', 'C'].forEach(col => {
+            sheet.getCell(`${col}${currentRow}`).border = {
+                bottom: { style: 'thin', color: { argb: 'FFDDDDDD' } }
+            };
+        });
+        currentRow++;
+    });
+
+    // 6. Spaltenbreiten festlegen
+    sheet.getColumn(1).width = 40; 
+    sheet.getColumn(2).width = 12; 
+    sheet.getColumn(3).width = 30; 
+
+    // 7. Datei generieren und Download starten
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `Trisport_Einkauf_${new Date().toISOString().split('T')[0]}.xlsx`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+
+    closeModal('kauflisteModal');
 }
