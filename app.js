@@ -301,7 +301,7 @@ function zeigePackliste() {
             }
         } else {
             // EIGENER ARTIKEL (Nicht im Lager)
-            anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigen)</small>";
+            anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigener)</small>";
             statusHtml = `<span style="color:#7f8c8d;">- Manuell prüfen -</span>`;
         }
 
@@ -422,5 +422,58 @@ async function loeschePackPosition(posId) {
     if(confirm("Position von der Liste löschen?")) {
         await dbClient.from('packlisten_positionen').delete().eq('id', posId);
         ladeEventDaten();
+    }
+}
+
+// --- PACKLISTE UMBENENNEN ---
+async function umbenennePackliste() {
+    const listId = document.getElementById('packlisten-auswahl').value;
+    if (!listId) {
+        alert("Bitte wähle zuerst eine Packliste aus, die du umbenennen möchtest.");
+        return;
+    }
+
+    // Aktuellen Namen finden
+    const aktuelleListe = packlisten.find(pl => pl.id == listId);
+    const neuerName = prompt("Neuer Name für die Packliste:", aktuelleListe.name);
+
+    if (!neuerName || neuerName.trim() === "" || neuerName === aktuelleListe.name) return;
+
+    const { error } = await dbClient
+        .from('packlisten')
+        .update({ name: neuerName.trim() })
+        .eq('id', listId);
+
+    if (error) {
+        alert("Fehler beim Umbenennen: " + error.message);
+    } else {
+        ladeEventDaten(); // Liste neu laden
+    }
+}
+
+// --- PACKLISTE LÖSCHEN ---
+async function loeschePackliste() {
+    const listId = document.getElementById('packlisten-auswahl').value;
+    if (!listId) {
+        alert("Bitte wähle zuerst eine Packliste aus, die du löschen möchtest.");
+        return;
+    }
+
+    const aktuelleListe = packlisten.find(pl => pl.id == listId);
+    
+    if (confirm(`Möchtest du die Packliste "${aktuelleListe.name}" wirklich komplett löschen? Alle enthaltenen Positionen gehen dabei verloren.`)) {
+        
+        const { error } = await dbClient
+            .from('packlisten')
+            .delete()
+            .eq('id', listId);
+
+        if (error) {
+            alert("Fehler beim Löschen: " + error.message);
+        } else {
+            // Nach dem Löschen Auswahl zurücksetzen und Daten neu laden
+            document.getElementById('packlisten-auswahl').value = "";
+            ladeEventDaten();
+        }
     }
 }
