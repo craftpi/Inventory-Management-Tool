@@ -5,77 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Vereinslager Verwaltung</title>
     <style>
-        /* --- GRUNDDESIGN --- */
-        body { 
-            font-family: Arial, sans-serif; 
-            background-color: #e3000f; 
-            color: #333; 
-            margin: 0; 
-            padding: 40px 20px; 
-            min-height: 100vh;
-            box-sizing: border-box;
-        }
-        
-        .container { 
-            max-width: 800px; 
-            margin: 0 auto; 
-            background: white; 
-            padding: 30px; 
-            border-radius: 12px; 
-            box-shadow: 0 15px 35px rgba(0,0,0,0.3); 
-        }
-
-        h1 { color: #2c3e50; margin-top: 0; }
+        body { font-family: Arial, sans-serif; background-color: #e3000f; color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); }
+        h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         p.subtitle { color: #666; margin-bottom: 25px; line-height: 1.4; }
         
-        /* --- BUTTONS & AKTIONEN --- */
-        .action-bar {
-            display: flex;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        .action-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            flex: 1;
-        }
-        .btn { 
-            background-color: #3498db; 
-            color: white; 
-            border: none; 
-            padding: 10px 15px; 
-            border-radius: 6px; 
-            cursor: pointer; 
-            transition: background-color 0.2s; 
-            font-size: 0.95em; 
-            font-weight: bold;
-        }
+        .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 0.95em; font-weight: bold; }
         .btn:hover { background-color: #2980b9; }
         
-        /* --- TABELLE --- */
-        .table-responsive {
-            width: 100%;
-            overflow-x: auto; /* Wischbar auf dem Handy */
-            -webkit-overflow-scrolling: touch;
-        }
+        /* Modus Schalter */
+        .modus-switch { display: flex; gap: 10px; margin-bottom: 20px; background: #f4f4f9; padding: 5px; border-radius: 8px; }
+        .btn-modus { flex: 1; background: transparent; color: #666; }
+        .btn-modus.active { background: #e3000f; color: white; }
+
+        .action-bar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; }
+        .action-group { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
+        
+        .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; min-width: 500px; }
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
         th { background-color: #3498db; color: white; }
         .menge-input { width: 60px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
         
-        /* --- MODALS --- */
-        .modal {
-            display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; 
-            background-color: rgba(0,0,0,0.6); 
-            backdrop-filter: blur(3px);
-        }
-        .modal-content {
-            background-color: white; margin: 10vh auto; padding: 25px; border-radius: 10px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-        }
+        /* Event Modus Styles */
+        .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
+        .event-ok { color: #27ae60; font-weight: bold; }
+        
+        .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
+        .modal-content { background-color: white; margin: 10vh auto; padding: 25px; border-radius: 10px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
         .form-group input, .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
@@ -83,25 +41,12 @@
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
 
-        .edit-active tr.item-row { cursor: pointer; transition: background-color 0.2s; }
-        .edit-active tr.item-row:hover { background-color: #e8f4fd !important; }
-
-        /* --- SMARTPHONE OPTIMIERUNG (Media Queries) --- */
         @media (max-width: 600px) {
-            body { padding: 15px 10px; } /* Weniger roter Rand auf dem Handy */
+            body { padding: 15px 10px; }
             .container { padding: 20px 15px; }
-            h1 { font-size: 1.5em; }
-            .subtitle { font-size: 0.9em; }
-            
-            /* Buttons untereinander anordnen */
-            .action-bar { flex-direction: column; align-items: stretch; }
-            .action-group { flex-direction: column; }
-            .btn { width: 100%; padding: 12px; font-size: 1em; } /* Größere Klickfläche */
-            select.btn { width: 100%; }
-            
-            /* Tabelle anpassen */
+            .action-bar, .action-group { flex-direction: column; align-items: stretch; }
+            .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
-            .menge-input { width: 50px; }
         }
     </style>
 </head>
@@ -111,76 +56,130 @@
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
         <h2 style="margin-top:0; color:#2c3e50;">🔐 Lager-Zugang</h2>
         <p style="color:#666; margin-bottom: 25px;">Bitte gib das Vereins-Passwort ein.</p>
-        
         <input type="password" id="login-password" placeholder="Vereins-Passwort" style="width:100%; padding:12px; margin-bottom:20px; text-align:center; font-size:1.2em; border: 1px solid #ccc; border-radius: 6px; box-sizing:border-box;">
-        
         <button class="btn" onclick="handleLogin()" style="width:100%; padding:12px; font-size:1.1em;">🔓 Entsperren</button>
         <p id="login-error" style="color:red; display:none; margin-top:15px; font-weight:bold;">Falsches Passwort!</p>
     </div>
 </div>
 
 <div class="container">
-    <h1>📦 Vereinslager</h1>
-    <p class="subtitle">Aktuelle Bestandsübersicht über alle Kisten und Regale. Bitte achtet auf eine saubere Sortierung nach den Veranstaltungen!</p>
+    <h1>
+        <span>📦 Vereinsverwaltung</span>
+        <button class="btn" style="background-color: #e74c3c; font-size: 0.8em;" onclick="handleLogout()">🔒 Abmelden</button>
+    </h1>
     
-    <div class="action-bar">
-        <div class="action-group">
-            <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
-            <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Ort</button>
-            <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
-            <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                <option value="ALLE">Alle Kategorien anzeigen</option>
+    <div class="modus-switch">
+        <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Lager-Modus</button>
+        <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Modus</button>
+    </div>
+
+    <div id="ansicht-lager">
+        <p class="subtitle">Aktuelle Bestandsübersicht über alle Kisten und Regale.</p>
+        <div class="action-bar">
+            <div class="action-group">
+                <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
+                <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Ort</button>
+                <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
+                <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
+                    <option value="ALLE">Alle Kategorien anzeigen</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead><tr><th>Artikel</th><th>Lagerort</th><th>Menge</th></tr></thead>
+                <tbody id="lager-tabelle"><tr><td colspan="3" style="text-align:center; padding:30px;">Lade Daten...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="ansicht-event" style="display: none;">
+        <p class="subtitle">Packlisten für Resorts. Die Verfügbarkeit berechnet sich automatisch aus dem Lagerbestand.</p>
+        
+        <div class="action-bar">
+            <div class="action-group">
+                <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 2;" onchange="zeigePackliste()">
+                    <option value="">-- Wähle ein Resort / Packliste --</option>
+                </select>
+                <button class="btn" style="background-color: #27ae60;" onclick="neuePacklisteAnlegen()">+ Neue Liste</button>
+                <button class="btn" id="btn-event-edit" style="background-color: #f39c12;" onclick="toggleEventEditMode()">✏️ Bearbeiten: AUS</button>
+            </div>
+        </div>
+
+        <div id="packliste-details" style="display: none;">
+            <div style="margin-bottom: 15px;">
+                <button class="btn" onclick="openPackItemModal()">+ Position hinzufügen</button>
+            </div>
+            <div class="table-responsive">
+                <table>
+                    <thead style="background-color: #2c3e50;">
+                        <tr><th>Artikel / Material</th><th>Benötigt</th><th>Verfügbar</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="event-tabelle"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="artikelModal" class="modal">
+    <div class="modal-content">
+        <h2>Neuer Artikel</h2>
+        <div class="form-group"><label>Name</label><input type="text" id="new-name" placeholder="z.B. Handschuhe"></div>
+        <div class="form-group"><label>Kategorie</label><input type="text" id="new-kategorie"></div>
+        <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe"></div>
+        <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
+        <div class="form-group"><label>Start-Menge</label><input type="number" id="new-menge" value="0"></div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('artikelModal')">Abbrechen</button>
+        </div>
+    </div>
+</div>
+
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h2>Artikel bearbeiten</h2>
+        <input type="hidden" id="edit-bestand-id"><input type="hidden" id="edit-artikel-id">
+        <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
+        <div class="form-group"><label>Kategorie</label><input type="text" id="edit-kategorie"></div>
+        <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
+        <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
+        <div class="form-group"><label>Menge</label><input type="number" id="edit-menge"></div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>
+        </div>
+        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Löschen</button>
+    </div>
+</div>
+
+<div id="packItemModal" class="modal">
+    <div class="modal-content">
+        <h2>Packliste ergänzen</h2>
+        <div class="form-group">
+            <label>Art des Gegenstands</label>
+            <select id="pack-typ" onchange="togglePackTyp()">
+                <option value="lager">Aus dem Lagerbestand</option>
+                <option value="custom">Eigener Gegenstand (Nicht im Lager)</option>
             </select>
         </div>
-        <button class="btn" style="background-color: #e74c3c;" onclick="handleLogout()">🔒 Abmelden</button>
-    </div>
-
-    <div id="artikelModal" class="modal">
-        <div class="modal-content">
-            <h2>Neuer Artikel</h2>
-            <div class="form-group"><label>Name</label><input type="text" id="new-name" placeholder="z.B. Einmalhandschuhe Weiß"></div>
-            <div class="form-group"><label>Kategorie</label><input type="text" id="new-kategorie" placeholder="z.B. Verpflegung"></div>
-            <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe" placeholder="z.B. Einmalhandschuhe"></div>
-            <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
-            <div class="form-group"><label>Start-Menge</label><input type="number" id="new-menge" value="0"></div>
-            <div class="flex-buttons">
-                <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
-                <button class="btn btn-cancel" onclick="closeModal()">Abbrechen</button>
-            </div>
+        <div class="form-group" id="div-pack-lager">
+            <label>Lager-Artikel auswählen</label>
+            <select id="pack-artikel-select"></select>
         </div>
-    </div>
-
-    <div id="editModal" class="modal">
-        <div class="modal-content">
-            <h2>Artikel bearbeiten</h2>
-            <input type="hidden" id="edit-bestand-id">
-            <input type="hidden" id="edit-artikel-id">
-            <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
-            <div class="form-group"><label>Kategorie</label><input type="text" id="edit-kategorie"></div>
-            <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
-            <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
-            <div class="form-group"><label>Menge</label><input type="number" id="edit-menge"></div>
-            <div class="flex-buttons">
-                <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
-                <button class="btn btn-cancel" onclick="closeEditModal()">Abbrechen</button>
-            </div>
-            <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Eintrag löschen</button>
+        <div class="form-group" id="div-pack-custom" style="display:none;">
+            <label>Bezeichnung (Eigener)</label>
+            <input type="text" id="pack-eigener-name" placeholder="z.B. Miet-Transporter">
         </div>
-    </div>
-
-    <div class="table-responsive">
-        <table>
-            <thead>
-                <tr>
-                    <th>Artikel</th>
-                    <th>Lagerort</th>
-                    <th>Menge</th>
-                </tr>
-            </thead>
-            <tbody id="lager-tabelle">
-                <tr><td colspan="3" style="text-align: center; padding: 30px;">Lade Daten aus dem Lager...</td></tr>
-            </tbody>
-        </table>
+        <div class="form-group">
+            <label>Benötigte Menge</label>
+            <input type="number" id="pack-menge" value="1">
+        </div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="packPositionSpeichern()">Hinzufügen</button>
+            <button class="btn btn-cancel" onclick="closeModal('packItemModal')">Abbrechen</button>
+        </div>
     </div>
 </div>
 
