@@ -6,10 +6,10 @@ const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let aktuelleDaten = [];
 let packlisten = [];
 let packlistenPositionen = [];
-let alleArtikelInfos = []; // Für das Dropdown im Event-Modus
+let alleArtikelInfos = []; 
 let isEditMode = false;
 let isEventEditMode = false;
-let aktuellerModus = 'lager'; // 'lager' oder 'event'
+let aktuellerModus = 'lager'; 
 
 // --- AUTHENTIFIZIERUNG ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -74,7 +74,6 @@ async function ladeBestand() {
     if (error) { alert("Datenbank-Fehler beim Laden: " + error.message); return; }
     aktuelleDaten = data || []; 
     
-    // Eindeutige Artikel für Event-Dropdown sammeln
     const artMap = new Map();
     aktuelleDaten.forEach(d => { if(d.artikel && !artMap.has(d.artikel.id)) artMap.set(d.artikel.id, d.artikel); });
     alleArtikelInfos = Array.from(artMap.values()).sort((a,b) => a.name.localeCompare(b.name));
@@ -222,19 +221,16 @@ async function neuenLagerortAnlegen() {
 // === EVENT MODUS LOGIK ===
 async function ladeEventDaten() {
     try {
-        // Lade alle Listen
         const resList = await dbClient.from('packlisten').select('*').order('name');
         if(resList.error) throw resList.error;
         packlisten = resList.data || [];
         
-        // Dropdown updaten
         const sel = document.getElementById('packlisten-auswahl');
         const prevVal = sel.value;
         sel.innerHTML = '<option value="">-- Wähle ein Resort / Packliste --</option>';
         packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
         if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
 
-        // Lade alle Positionen
         const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name)');
         if(resPos.error) throw resPos.error;
         packlistenPositionen = resPos.data || [];
@@ -242,7 +238,6 @@ async function ladeEventDaten() {
         zeigePackliste();
     } catch(e) {
         console.error("Fehler beim Event-Laden:", e);
-        // Falls Tabellen fehlen:
         if(e.message && e.message.includes("relation")) alert("Die neuen Tabellen (packlisten, packlisten_positionen) fehlen in Supabase!");
     }
 }
@@ -278,14 +273,11 @@ function zeigePackliste() {
         let availableHtml = "-";
 
         if (pos.artikel_id && pos.artikel) {
-            // ARTIKEL AUS DEM LAGER
             anzeigeName = pos.artikel.name;
             
-            // 1. Gesamtbestand dieses Artikels im Lager berechnen
             let gesamtLager = 0;
             aktuelleDaten.forEach(b => { if(b.artikel_id === pos.artikel_id) gesamtLager += Number(b.menge); });
             
-            // 2. Verbrauch in ALLEN ANDEREN Packlisten berechnen
             let verbrauchtAndere = 0;
             packlistenPositionen.forEach(p => {
                 if (p.artikel_id === pos.artikel_id && p.packliste_id != currentId) verbrauchtAndere += Number(p.menge);
@@ -300,12 +292,10 @@ function zeigePackliste() {
                 statusHtml = `<span class="event-ok">✅ OK</span>`;
             }
         } else {
-            // EIGENER ARTIKEL (Nicht im Lager)
             anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigener)</small>";
             statusHtml = `<span style="color:#7f8c8d;">- Manuell prüfen -</span>`;
         }
 
-        // Bearbeiten-Zelle oder Nur-Lese-Zelle
         let mengeZelle = pos.menge;
         if (isEventEditMode) {
             mengeZelle = `<input type="number" class="menge-input" value="${pos.menge}" onchange="updatePackMenge(${pos.id}, this.value)">`;
@@ -333,7 +323,6 @@ function openPackItemModal() {
     const listId = document.getElementById('packlisten-auswahl').value;
     if (!listId) { alert("Bitte wähle zuerst eine Packliste aus!"); return; }
     
-    // Dropdown mit Lager-Artikeln füllen
     const sel = document.getElementById('pack-artikel-select');
     sel.innerHTML = '';
     alleArtikelInfos.forEach(art => sel.add(new Option(art.name, art.id)));
@@ -347,16 +336,13 @@ function togglePackTyp() {
     document.getElementById('div-pack-lager').style.display = typ === 'lager' ? 'block' : 'none';
     document.getElementById('div-pack-custom').style.display = typ === 'custom' ? 'block' : 'none';
     
-    // Aktualisiere die Anzeige, wenn der Typ gewechselt wird
     aktualisierePackVerfuegbarkeit(); 
 }
 
-// --- NEU: Live-Berechnung der Verfügbarkeit ---
 function aktualisierePackVerfuegbarkeit() {
     const typ = document.getElementById('pack-typ').value;
     const infoDiv = document.getElementById('pack-artikel-info');
 
-    // Wenn es ein "eigener" Gegenstand ist, brauchen wir keine Anzeige
     if (typ !== 'lager') {
         infoDiv.innerHTML = '';
         return;
@@ -365,31 +351,27 @@ function aktualisierePackVerfuegbarkeit() {
     const selId = Number(document.getElementById('pack-artikel-select').value);
     if (!selId) { infoDiv.innerHTML = ''; return; }
 
-    // 1. Bestand im gesamten Lager zusammenrechnen
     let gesamtLager = 0;
     aktuelleDaten.forEach(b => { 
         if(b.artikel_id === selId) gesamtLager += Number(b.menge); 
     });
 
-    // 2. Was ist bereits in ALLEN Packlisten reserviert?
     let reserviert = 0;
     packlistenPositionen.forEach(p => {
         if (p.artikel_id === selId) reserviert += Number(p.menge);
     });
 
-    // 3. Verfügbar ausrechnen
     const verfuegbar = gesamtLager - reserviert;
 
-    // 4. Schön formatieren und anzeigen
     if (verfuegbar > 0) {
         infoDiv.innerHTML = `✅ Noch <strong>${verfuegbar}</strong> frei im Lager`;
-        infoDiv.style.color = '#27ae60'; // Grün
+        infoDiv.style.color = '#27ae60'; 
     } else if (verfuegbar === 0) {
         infoDiv.innerHTML = `⚠️ Nichts mehr frei (Genau 0)`;
-        infoDiv.style.color = '#f39c12'; // Orange
+        infoDiv.style.color = '#f39c12'; 
     } else {
         infoDiv.innerHTML = `❌ Überbucht! (Es fehlen ${Math.abs(verfuegbar)})`;
-        infoDiv.style.color = '#e74c3c'; // Rot
+        infoDiv.style.color = '#e74c3c'; 
     }
 }
 
@@ -425,7 +407,7 @@ async function loeschePackPosition(posId) {
     }
 }
 
-// --- PACKLISTE UMBENENNEN ---
+// --- NEU: PACKLISTE UMBENENNEN ---
 async function umbenennePackliste() {
     const listId = document.getElementById('packlisten-auswahl').value;
     if (!listId) {
@@ -433,7 +415,6 @@ async function umbenennePackliste() {
         return;
     }
 
-    // Aktuellen Namen finden
     const aktuelleListe = packlisten.find(pl => pl.id == listId);
     const neuerName = prompt("Neuer Name für die Packliste:", aktuelleListe.name);
 
@@ -447,11 +428,11 @@ async function umbenennePackliste() {
     if (error) {
         alert("Fehler beim Umbenennen: " + error.message);
     } else {
-        ladeEventDaten(); // Liste neu laden
+        ladeEventDaten();
     }
 }
 
-// --- PACKLISTE LÖSCHEN ---
+// --- NEU: PACKLISTE LÖSCHEN ---
 async function loeschePackliste() {
     const listId = document.getElementById('packlisten-auswahl').value;
     if (!listId) {
@@ -471,7 +452,6 @@ async function loeschePackliste() {
         if (error) {
             alert("Fehler beim Löschen: " + error.message);
         } else {
-            // Nach dem Löschen Auswahl zurücksetzen und Daten neu laden
             document.getElementById('packlisten-auswahl').value = "";
             ladeEventDaten();
         }

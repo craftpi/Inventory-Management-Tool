@@ -96,12 +96,20 @@
     <div id="ansicht-event" style="display: none;">
         <p class="subtitle">Packlisten für Resorts. Die Verfügbarkeit berechnet sich automatisch aus dem Lagerbestand.</p>
         
-        <div class="action-group" style="display: flex; gap: 5px; width: 100%;">
-            <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 3;" onchange="zeigePackliste()">
-                <option value="">-- Wähle ein Resort / Packliste --</option>
-            </select>
-            <button class="btn" style="background-color: #95a5a6; flex: 1;" onclick="umbenennePackliste()" title="Umbenennen">✏️</button>
-            <button class="btn" style="background-color: #c0392b; flex: 1;" onclick="loeschePackliste()" title="Löschen">🗑️</button>
+        <div class="action-bar">
+            <div class="action-group">
+                
+                <div style="display: flex; gap: 5px; flex: 2; width: 100%;">
+                    <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 1; min-width: 0;" onchange="zeigePackliste()">
+                        <option value="">-- Wähle ein Resort / Packliste --</option>
+                    </select>
+                    <button class="btn" style="background-color: #95a5a6; padding: 10px;" onclick="umbenennePackliste()" title="Packliste umbenennen">✏️</button>
+                    <button class="btn" style="background-color: #c0392b; padding: 10px;" onclick="loeschePackliste()" title="Packliste löschen">🗑️</button>
+                </div>
+                
+                <button class="btn" style="background-color: #27ae60;" onclick="neuePacklisteAnlegen()">+ Neue Liste</button>
+                <button class="btn" id="btn-event-edit" style="background-color: #f39c12;" onclick="toggleEventEditMode()">✏️ Bearbeiten: AUS</button>
+            </div>
         </div>
 
         <div id="packliste-details" style="display: none;">
