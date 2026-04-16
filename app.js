@@ -346,6 +346,51 @@ function togglePackTyp() {
     const typ = document.getElementById('pack-typ').value;
     document.getElementById('div-pack-lager').style.display = typ === 'lager' ? 'block' : 'none';
     document.getElementById('div-pack-custom').style.display = typ === 'custom' ? 'block' : 'none';
+    
+    // Aktualisiere die Anzeige, wenn der Typ gewechselt wird
+    aktualisierePackVerfuegbarkeit(); 
+}
+
+// --- NEU: Live-Berechnung der Verfügbarkeit ---
+function aktualisierePackVerfuegbarkeit() {
+    const typ = document.getElementById('pack-typ').value;
+    const infoDiv = document.getElementById('pack-artikel-info');
+
+    // Wenn es ein "eigener" Gegenstand ist, brauchen wir keine Anzeige
+    if (typ !== 'lager') {
+        infoDiv.innerHTML = '';
+        return;
+    }
+
+    const selId = Number(document.getElementById('pack-artikel-select').value);
+    if (!selId) { infoDiv.innerHTML = ''; return; }
+
+    // 1. Bestand im gesamten Lager zusammenrechnen
+    let gesamtLager = 0;
+    aktuelleDaten.forEach(b => { 
+        if(b.artikel_id === selId) gesamtLager += Number(b.menge); 
+    });
+
+    // 2. Was ist bereits in ALLEN Packlisten reserviert?
+    let reserviert = 0;
+    packlistenPositionen.forEach(p => {
+        if (p.artikel_id === selId) reserviert += Number(p.menge);
+    });
+
+    // 3. Verfügbar ausrechnen
+    const verfuegbar = gesamtLager - reserviert;
+
+    // 4. Schön formatieren und anzeigen
+    if (verfuegbar > 0) {
+        infoDiv.innerHTML = `✅ Noch <strong>${verfuegbar}</strong> frei im Lager`;
+        infoDiv.style.color = '#27ae60'; // Grün
+    } else if (verfuegbar === 0) {
+        infoDiv.innerHTML = `⚠️ Nichts mehr frei (Genau 0)`;
+        infoDiv.style.color = '#f39c12'; // Orange
+    } else {
+        infoDiv.innerHTML = `❌ Überbucht! (Es fehlen ${Math.abs(verfuegbar)})`;
+        infoDiv.style.color = '#e74c3c'; // Rot
+    }
 }
 
 async function packPositionSpeichern() {

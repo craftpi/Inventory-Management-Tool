@@ -166,7 +166,8 @@
         </div>
         <div class="form-group" id="div-pack-lager">
             <label>Lager-Artikel auswählen</label>
-            <select id="pack-artikel-select"></select>
+            <select id="pack-artikel-select" onchange="aktualisierePackVerfuegbarkeit()"></select>
+            <div id="pack-artikel-info" style="margin-top: 5px; font-size: 0.9em; font-weight: bold;"></div>
         </div>
         <div class="form-group" id="div-pack-custom" style="display:none;">
             <label>Bezeichnung (Eigener)</label>
