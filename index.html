@@ -29,6 +29,7 @@
         th { background-color: #3498db; color: white; }
         .menge-input { width: 60px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
+        .sub-sum-badge { font-size: 0.75em; background: #7f8c8d; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; font-weight: normal; }
         
         /* Event Modus Styles */
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
@@ -139,6 +140,10 @@
         <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe"></div>
         <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
         <div class="form-group"><label>Start-Menge</label><input type="number" id="new-menge" value="0"></div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+            <input type="checkbox" id="new-no-group" style="width: auto;">
+            <label for="new-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
+        </div>
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('artikelModal')">Abbrechen</button>
@@ -155,6 +160,10 @@
         <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
         <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
         <div class="form-group"><label>Menge</label><input type="number" id="edit-menge"></div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+            <input type="checkbox" id="edit-no-group" style="width: auto;">
+            <label for="edit-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
+        </div>
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>

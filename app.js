@@ -73,8 +73,9 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
+    // NEU: no_group Spalte mitladen
     const { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie), lagerorte (id, name)`).order('id');
+        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie, no_group), lagerorte (id, name)`).order('id');
     
     if (error) { alert("Datenbank-Fehler beim Laden: " + error.message); return; }
     aktuelleDaten = data || []; 
@@ -101,7 +102,7 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefilterteDaten);
 }
 
-// --- NEUE INTELLIGENTE TABELLEN-LOGIK (Unterkategorien) ---
+// --- NEU: INTELLIGENTE GRUPPIERUNG & SUMMIERUNG ---
 function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
     if (!tbody) return;
@@ -109,7 +110,7 @@ function tabelleAktualisieren(daten) {
     const gruppierteDaten = {}; 
     const gruppenSummen = {}; 
     
-    // 1. Alles in die Hauptgruppen (z.B. "Verpflegung") sortieren
+    // 1. Gruppierung nach "Gruppe" (Hauptgruppe)
     daten.forEach(zeile => {
         if (!zeile.artikel) return; 
         const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
@@ -120,7 +121,7 @@ function tabelleAktualisieren(daten) {
     });
 
     for (const [gruppenName, zeilenListe] of Object.entries(gruppierteDaten)) {
-        // Haupt-Gruppen-Header (Grau)
+        // Render Hauptgruppe
         const headerTr = document.createElement('tr');
         headerTr.innerHTML = `
             <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
@@ -132,76 +133,72 @@ function tabelleAktualisieren(daten) {
         `;
         tbody.appendChild(headerTr);
 
-        // 2. Automatische Unterkategorien erkennen (1. Wort des Namens)
-        const distinctNamesByPrefix = {};
+        // 2. Unterkategorien berechnen (erstes Wort)
+        const prefixCounts = {};
+        const prefixSums = {};
+        
         zeilenListe.forEach(z => {
-            // Das erste Wort als möglichen Namen der Unterkategorie nehmen
+            if (z.artikel.no_group) return; // Wenn Häkchen gesetzt, nicht mitzählen
             const prefix = z.artikel.name.trim().split(' ')[0];
-            if(!distinctNamesByPrefix[prefix]) distinctNamesByPrefix[prefix] = new Set();
-            distinctNamesByPrefix[prefix].add(z.artikel.name);
+            if (!prefixCounts[prefix]) { prefixCounts[prefix] = new Set(); prefixSums[prefix] = 0; }
+            prefixCounts[prefix].add(z.artikel.name);
+            prefixSums[prefix] += Number(z.menge); // Berechne Untersumme
         });
 
-        const subGroups = {};
+        // 3. Aufteilen in Subgruppen oder Einzelartikel (STANDALONE)
+        const subGroups = { 'STANDALONE': {} };
         zeilenListe.forEach(z => {
             const prefix = z.artikel.name.trim().split(' ')[0];
-            // Untergruppe NUR erstellen, wenn es mind. 2 verschiedene Artikel mit diesem ersten Wort gibt!
-            let actualSubGroup = distinctNamesByPrefix[prefix].size > 1 ? prefix : 'OHNE_UNTERGRUPPE';
-
-            if (!subGroups[actualSubGroup]) subGroups[actualSubGroup] = {};
-            if (!subGroups[actualSubGroup][z.artikel.name]) subGroups[actualSubGroup][z.artikel.name] = [];
-            subGroups[actualSubGroup][z.artikel.name].push(z);
+            // Nur Kollektion wenn no_group=false UND mind. 2 verschiedene Artikel existieren
+            const isCollection = !z.artikel.no_group && prefixCounts[prefix] && prefixCounts[prefix].size > 1;
+            const groupKey = isCollection ? prefix : 'STANDALONE';
+            
+            if (!subGroups[groupKey]) subGroups[groupKey] = {};
+            if (!subGroups[groupKey][z.artikel.name]) subGroups[groupKey][z.artikel.name] = [];
+            subGroups[groupKey][z.artikel.name].push(z);
         });
 
-        // 3. Erst die "einzigartigen" Artikel OHNE Untergruppe rendern
-        if (subGroups['OHNE_UNTERGRUPPE']) {
-            renderArtikelRows(subGroups['OHNE_UNTERGRUPPE'], tbody, false);
-        }
+        // Zuerst "Standalone" Artikel rendern
+        renderArtikelRows(subGroups['STANDALONE'], tbody, false);
 
-        // 4. Dann die automatisch erkannten Untergruppen rendern
-        for (const [subName, artikelObjekt] of Object.entries(subGroups)) {
-            if (subName === 'OHNE_UNTERGRUPPE') continue;
-
+        // Dann Subgruppen rendern
+        for (const [subName, artObj] of Object.entries(subGroups)) {
+            if (subName === 'STANDALONE') continue;
+            
             const subTr = document.createElement('tr');
             subTr.innerHTML = `
                 <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0;">
-                    📂 ${subName} <small style="color:#7f8c8d; font-weight:normal;">
+                    📂 ${subName} <span class="sub-sum-badge">Kollektion: ${prefixSums[subName]}</span>
                 </td>
             `;
             tbody.appendChild(subTr);
-
-            // True = Eingerückt rendern
-            renderArtikelRows(artikelObjekt, tbody, true);
+            renderArtikelRows(artObj, tbody, true);
         }
     }
 }
 
-// Hilfsfunktion um die Zeilen zu zeichnen (mit oder ohne Einrückung)
-function renderArtikelRows(artikelObjekt, tbody, isSubGroup) {
-    for (const [artikelName, bestandsListe] of Object.entries(artikelObjekt)) {
-        bestandsListe.forEach((zeile, index) => {
+// Hilfsfunktion zum Rendern der Artikel
+function renderArtikelRows(artObj, tbody, isSub) {
+    for (const [aName, bList] of Object.entries(artObj)) {
+        bList.forEach((z, i) => {
             const tr = document.createElement('tr');
             tr.className = "item-row"; 
             tr.style.cursor = isEditMode ? "pointer" : "default";
+            tr.onclick = (e) => { if(e.target.tagName !== 'INPUT') openEditModal(z.id); };
             
-            tr.onclick = (event) => {
-                if(event.target.tagName !== 'INPUT') { openEditModal(zeile.id); }
-            };
-            
-            // Wenn in Unterkategorie, weiter einrücken und anderen Pfeil nutzen
-            let paddingLeft = isSubGroup ? 45 : 15;
-            let prefixIcon = isSubGroup ? '◦' : '↳';
-            let nameZelle = index === 0 ? `<td style="padding-left:${paddingLeft}px; color: #333;">${prefixIcon} <strong>${artikelName}</strong></td>` : `<td></td>`; 
+            let paddingLeft = isSub ? 45 : 15;
+            let prefixIcon = isSub ? '◦' : '↳';
+            let nZelle = i === 0 ? `<td style="padding-left:${paddingLeft}px; color:#333;">${prefixIcon} <strong>${aName}</strong></td>` : `<td></td>`; 
             
             tr.innerHTML = `
-                ${nameZelle}
-                <td style="color: #666;">📍 ${zeile.lagerorte.name}</td>
-                <td><input type="number" id="menge-${zeile.id}" class="menge-input" value="${zeile.menge}" onchange="speichereMenge(${zeile.id})"></td>
+                ${nZelle}
+                <td style="color:#666;">📍 ${z.lagerorte.name}</td>
+                <td><input type="number" id="menge-${z.id}" class="menge-input" value="${z.menge}" onchange="speichereMenge(${z.id})"></td>
             `;
             tbody.appendChild(tr);
         });
     }
 }
-// --- ENDE NEUE TABELLEN-LOGIK ---
 
 function toggleEditMode() {
     isEditMode = !isEditMode;
@@ -221,6 +218,12 @@ function openEditModal(bId) {
     document.getElementById('edit-gruppe').value = z.artikel.gruppe || '';
     document.getElementById('edit-ort').value = z.lagerort_id;
     document.getElementById('edit-menge').value = z.menge;
+    
+    // Checkbox setzen
+    if(document.getElementById('edit-no-group')) {
+        document.getElementById('edit-no-group').checked = z.artikel.no_group === true;
+    }
+    
     document.getElementById('editModal').style.display = 'block';
 }
 
@@ -233,13 +236,18 @@ async function speichereBearbeitung() {
         const nGrp = document.getElementById('edit-gruppe').value;
         const nOrt = document.getElementById('edit-ort').value;
         const nMenge = Number(document.getElementById('edit-menge').value);
+        
+        // Checkbox auslesen
+        const nNoGrp = document.getElementById('edit-no-group') ? document.getElementById('edit-no-group').checked : false;
 
-        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, gruppe: nGrp }).eq('id', aId);
+        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, gruppe: nGrp, no_group: nNoGrp }).eq('id', aId);
+        
         const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
         if (ex) {
             await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
             await dbClient.from('bestand').delete().eq('id', bId);
         } else { await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId); }
+        
         closeModal('editModal'); ladeAlles(); 
     } catch(e) { console.error("Fehler", e); }
 }
@@ -268,15 +276,22 @@ async function artikelAnlegen() {
         const o = document.getElementById('new-ort').value; 
         const m = document.getElementById('new-menge').value;
         const k = document.getElementById('new-kategorie') ? document.getElementById('new-kategorie').value : '';
+        
+        // Checkbox auslesen
+        const ng = document.getElementById('new-no-group') ? document.getElementById('new-no-group').checked : false;
+        
         if (!n) { alert("Name fehlt!"); return; }
 
-        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, gruppe: g }]).select();
+        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, gruppe: g, no_group: ng }]).select();
         if (err) { alert("Fehler: " + err.message); return; }
         await dbClient.from('bestand').insert([{ artikel_id: nA[0].id, lagerort_id: o, menge: m }]);
+        
         closeModal('artikelModal'); 
         document.getElementById('new-name').value = '';
         if(document.getElementById('new-kategorie')) document.getElementById('new-kategorie').value = '';
         document.getElementById('new-gruppe').value = '';
+        if(document.getElementById('new-no-group')) document.getElementById('new-no-group').checked = false;
+        
         ladeAlles(); 
     } catch (e) { console.error("Fehler", e); }
 }
