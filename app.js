@@ -168,7 +168,7 @@ function tabelleAktualisieren(daten) {
             const subTr = document.createElement('tr');
             subTr.innerHTML = `
                 <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0;">
-                    📂 ${subName} <span class="sub-sum-badge">Kollektion: ${prefixSums[subName]}</span>
+                    📂 ${subName} <span class="sub-sum-badge"> Gesamt: ${prefixSums[subName]}</span>
                 </td>
             `;
             tbody.appendChild(subTr);
