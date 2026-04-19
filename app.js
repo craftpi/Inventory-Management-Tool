@@ -64,16 +64,38 @@ async function ladeLagerorte() {
     if (data) {
         const selectNeu = document.getElementById('new-ort');
         const selectEdit = document.getElementById('edit-ort');
-        if(selectNeu) { selectNeu.innerHTML = ''; data.forEach(o => selectNeu.add(new Option(o.name, o.id))); }
-        if(selectEdit) { selectEdit.innerHTML = ''; data.forEach(o => selectEdit.add(new Option(o.name, o.id))); }
+        const filterOrt = document.getElementById('lagerort-filter'); // NEU
+        
+        if(selectNeu) selectNeu.innerHTML = ''; 
+        if(selectEdit) selectEdit.innerHTML = '';
+        
+        let aktuellerOrtFilter = 'ALLE';
+        if(filterOrt) {
+            aktuellerOrtFilter = filterOrt.value;
+            filterOrt.innerHTML = '<option value="ALLE">Alle Lagerorte</option>';
+        }
+
+        data.forEach(o => {
+            if(selectNeu) selectNeu.add(new Option(o.name, o.id));
+            if(selectEdit) selectEdit.add(new Option(o.name, o.id));
+            if(filterOrt) filterOrt.add(new Option(o.name, o.id));
+        });
+
+        // Vorherige Filterauswahl wiederherstellen
+        if(filterOrt && currentFilterExists(filterOrt, aktuellerOrtFilter)) {
+            filterOrt.value = aktuellerOrtFilter;
+        }
     }
+}
+
+function currentFilterExists(selectElement, val) {
+    return Array.from(selectElement.options).some(opt => opt.value === val);
 }
 
 async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // NEU: no_group Spalte mitladen
     const { data, error } = await dbClient.from('bestand')
         .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie, no_group), lagerorte (id, name)`).order('id');
     
@@ -93,16 +115,29 @@ function aktualisiereFilterDropdown(daten) {
     daten.forEach(z => { if (z.artikel && z.artikel.kategorie && z.artikel.kategorie.trim() !== '') kategorien.add(z.artikel.kategorie); });
     dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
     Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
-    if (Array.from(dropdown.options).some(o => o.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
+    if (currentFilterExists(dropdown, aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
 }
 
+// --- NEU: Kombinierter Filter (Kategorie + Ort) ---
 function wendeFilterAn() {
-    const f = document.getElementById('kategorie-filter')?.value || 'ALLE';
-    let gefilterteDaten = f !== 'ALLE' ? aktuelleDaten.filter(z => z.artikel && z.artikel.kategorie === f) : aktuelleDaten;
+    const katFilter = document.getElementById('kategorie-filter')?.value || 'ALLE';
+    const ortFilter = document.getElementById('lagerort-filter')?.value || 'ALLE';
+    
+    let gefilterteDaten = aktuelleDaten;
+
+    // Filter nach Kategorie
+    if (katFilter !== 'ALLE') {
+        gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
+    }
+    
+    // Filter nach Lagerort
+    if (ortFilter !== 'ALLE') {
+        gefilterteDaten = gefilterteDaten.filter(z => String(z.lagerort_id) === String(ortFilter));
+    }
+
     tabelleAktualisieren(gefilterteDaten);
 }
 
-// --- NEU: INTELLIGENTE GRUPPIERUNG & SUMMIERUNG ---
 function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
     if (!tbody) return;
@@ -110,7 +145,6 @@ function tabelleAktualisieren(daten) {
     const gruppierteDaten = {}; 
     const gruppenSummen = {}; 
     
-    // 1. Gruppierung nach "Gruppe" (Hauptgruppe)
     daten.forEach(zeile => {
         if (!zeile.artikel) return; 
         const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
@@ -121,7 +155,6 @@ function tabelleAktualisieren(daten) {
     });
 
     for (const [gruppenName, zeilenListe] of Object.entries(gruppierteDaten)) {
-        // Render Hauptgruppe
         const headerTr = document.createElement('tr');
         headerTr.innerHTML = `
             <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
@@ -133,23 +166,20 @@ function tabelleAktualisieren(daten) {
         `;
         tbody.appendChild(headerTr);
 
-        // 2. Unterkategorien berechnen (erstes Wort)
         const prefixCounts = {};
         const prefixSums = {};
         
         zeilenListe.forEach(z => {
-            if (z.artikel.no_group) return; // Wenn Häkchen gesetzt, nicht mitzählen
+            if (z.artikel.no_group) return; 
             const prefix = z.artikel.name.trim().split(' ')[0];
             if (!prefixCounts[prefix]) { prefixCounts[prefix] = new Set(); prefixSums[prefix] = 0; }
             prefixCounts[prefix].add(z.artikel.name);
-            prefixSums[prefix] += Number(z.menge); // Berechne Untersumme
+            prefixSums[prefix] += Number(z.menge); 
         });
 
-        // 3. Aufteilen in Subgruppen oder Einzelartikel (STANDALONE)
         const subGroups = { 'STANDALONE': {} };
         zeilenListe.forEach(z => {
             const prefix = z.artikel.name.trim().split(' ')[0];
-            // Nur Kollektion wenn no_group=false UND mind. 2 verschiedene Artikel existieren
             const isCollection = !z.artikel.no_group && prefixCounts[prefix] && prefixCounts[prefix].size > 1;
             const groupKey = isCollection ? prefix : 'STANDALONE';
             
@@ -158,10 +188,8 @@ function tabelleAktualisieren(daten) {
             subGroups[groupKey][z.artikel.name].push(z);
         });
 
-        // Zuerst "Standalone" Artikel rendern
         renderArtikelRows(subGroups['STANDALONE'], tbody, false);
 
-        // Dann Subgruppen rendern
         for (const [subName, artObj] of Object.entries(subGroups)) {
             if (subName === 'STANDALONE') continue;
             
@@ -177,7 +205,6 @@ function tabelleAktualisieren(daten) {
     }
 }
 
-// Hilfsfunktion zum Rendern der Artikel
 function renderArtikelRows(artObj, tbody, isSub) {
     for (const [aName, bList] of Object.entries(artObj)) {
         bList.forEach((z, i) => {
@@ -219,7 +246,6 @@ function openEditModal(bId) {
     document.getElementById('edit-ort').value = z.lagerort_id;
     document.getElementById('edit-menge').value = z.menge;
     
-    // Checkbox setzen
     if(document.getElementById('edit-no-group')) {
         document.getElementById('edit-no-group').checked = z.artikel.no_group === true;
     }
@@ -237,7 +263,6 @@ async function speichereBearbeitung() {
         const nOrt = document.getElementById('edit-ort').value;
         const nMenge = Number(document.getElementById('edit-menge').value);
         
-        // Checkbox auslesen
         const nNoGrp = document.getElementById('edit-no-group') ? document.getElementById('edit-no-group').checked : false;
 
         await dbClient.from('artikel').update({ name: nName, kategorie: nKat, gruppe: nGrp, no_group: nNoGrp }).eq('id', aId);
@@ -277,7 +302,6 @@ async function artikelAnlegen() {
         const m = document.getElementById('new-menge').value;
         const k = document.getElementById('new-kategorie') ? document.getElementById('new-kategorie').value : '';
         
-        // Checkbox auslesen
         const ng = document.getElementById('new-no-group') ? document.getElementById('new-no-group').checked : false;
         
         if (!n) { alert("Name fehlt!"); return; }
