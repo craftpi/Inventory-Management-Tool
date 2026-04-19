@@ -11,7 +11,6 @@ let isEditMode = false;
 let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
 
-// NEU: Globale Einkaufsliste, bevor sie zur Excel wird
 let einkaufslisteArray = []; 
 
 // --- AUTHENTIFIZIERUNG ---
@@ -102,37 +101,107 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefilterteDaten);
 }
 
+// --- NEUE INTELLIGENTE TABELLEN-LOGIK (Unterkategorien) ---
 function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
     if (!tbody) return;
     tbody.innerHTML = ''; 
-    const gd = {}; const gs = {}; 
+    const gruppierteDaten = {}; 
+    const gruppenSummen = {}; 
     
-    daten.forEach(z => {
-        if (!z.artikel) return; 
-        const gName = z.artikel.gruppe || 'Weitere Artikel';
-        gs[gName] = (gs[gName] || 0) + Number(z.menge);
-        if (!gd[gName]) gd[gName] = {}; 
-        if (!gd[gName][z.artikel.name]) gd[gName][z.artikel.name] = [];
-        gd[gName][z.artikel.name].push(z); 
+    // 1. Alles in die Hauptgruppen (z.B. "Verpflegung") sortieren
+    daten.forEach(zeile => {
+        if (!zeile.artikel) return; 
+        const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
+        gruppenSummen[gruppenName] = (gruppenSummen[gruppenName] || 0) + Number(zeile.menge);
+        
+        if (!gruppierteDaten[gruppenName]) { gruppierteDaten[gruppenName] = []; }
+        gruppierteDaten[gruppenName].push(zeile); 
     });
 
-    for (const [gName, aObj] of Object.entries(gd)) {
-        const h = document.createElement('tr');
-        h.innerHTML = `<td colspan="3" style="background:#e2e8f0; font-weight:bold;"><div style="display:flex; justify-content:space-between;"><span>📁 ${gName}</span><span class="summen-badge">Gesamt: ${gs[gName]}</span></div></td>`;
-        tbody.appendChild(h);
-        for (const [aName, bList] of Object.entries(aObj)) {
-            bList.forEach((z, i) => {
-                const tr = document.createElement('tr');
-                tr.className = "item-row"; 
-                tr.onclick = (e) => { if(e.target.tagName !== 'INPUT') openEditModal(z.id); };
-                let aZelle = i === 0 ? `<td style="padding-left:15px;">↳ <strong>${aName}</strong></td>` : `<td></td>`; 
-                tr.innerHTML = `${aZelle}<td style="color:#666;">📍 ${z.lagerorte.name}</td><td><input type="number" id="menge-${z.id}" class="menge-input" value="${z.menge}" onchange="speichereMenge(${z.id})"></td>`;
-                tbody.appendChild(tr);
-            });
+    for (const [gruppenName, zeilenListe] of Object.entries(gruppierteDaten)) {
+        // Haupt-Gruppen-Header (Grau)
+        const headerTr = document.createElement('tr');
+        headerTr.innerHTML = `
+            <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>📁 ${gruppenName}</span>
+                    <span class="summen-badge">Gesamt: ${gruppenSummen[gruppenName]}</span>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(headerTr);
+
+        // 2. Automatische Unterkategorien erkennen (1. Wort des Namens)
+        const distinctNamesByPrefix = {};
+        zeilenListe.forEach(z => {
+            // Das erste Wort als möglichen Namen der Unterkategorie nehmen
+            const prefix = z.artikel.name.trim().split(' ')[0];
+            if(!distinctNamesByPrefix[prefix]) distinctNamesByPrefix[prefix] = new Set();
+            distinctNamesByPrefix[prefix].add(z.artikel.name);
+        });
+
+        const subGroups = {};
+        zeilenListe.forEach(z => {
+            const prefix = z.artikel.name.trim().split(' ')[0];
+            // Untergruppe NUR erstellen, wenn es mind. 2 verschiedene Artikel mit diesem ersten Wort gibt!
+            let actualSubGroup = distinctNamesByPrefix[prefix].size > 1 ? prefix : 'OHNE_UNTERGRUPPE';
+
+            if (!subGroups[actualSubGroup]) subGroups[actualSubGroup] = {};
+            if (!subGroups[actualSubGroup][z.artikel.name]) subGroups[actualSubGroup][z.artikel.name] = [];
+            subGroups[actualSubGroup][z.artikel.name].push(z);
+        });
+
+        // 3. Erst die "einzigartigen" Artikel OHNE Untergruppe rendern
+        if (subGroups['OHNE_UNTERGRUPPE']) {
+            renderArtikelRows(subGroups['OHNE_UNTERGRUPPE'], tbody, false);
+        }
+
+        // 4. Dann die automatisch erkannten Untergruppen rendern
+        for (const [subName, artikelObjekt] of Object.entries(subGroups)) {
+            if (subName === 'OHNE_UNTERGRUPPE') continue;
+
+            const subTr = document.createElement('tr');
+            subTr.innerHTML = `
+                <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0;">
+                    📂 ${subName} <small style="color:#7f8c8d; font-weight:normal;">(Kollektion)</small>
+                </td>
+            `;
+            tbody.appendChild(subTr);
+
+            // True = Eingerückt rendern
+            renderArtikelRows(artikelObjekt, tbody, true);
         }
     }
 }
+
+// Hilfsfunktion um die Zeilen zu zeichnen (mit oder ohne Einrückung)
+function renderArtikelRows(artikelObjekt, tbody, isSubGroup) {
+    for (const [artikelName, bestandsListe] of Object.entries(artikelObjekt)) {
+        bestandsListe.forEach((zeile, index) => {
+            const tr = document.createElement('tr');
+            tr.className = "item-row"; 
+            tr.style.cursor = isEditMode ? "pointer" : "default";
+            
+            tr.onclick = (event) => {
+                if(event.target.tagName !== 'INPUT') { openEditModal(zeile.id); }
+            };
+            
+            // Wenn in Unterkategorie, weiter einrücken und anderen Pfeil nutzen
+            let paddingLeft = isSubGroup ? 45 : 15;
+            let prefixIcon = isSubGroup ? '◦' : '↳';
+            let nameZelle = index === 0 ? `<td style="padding-left:${paddingLeft}px; color: #333;">${prefixIcon} <strong>${artikelName}</strong></td>` : `<td></td>`; 
+            
+            tr.innerHTML = `
+                ${nameZelle}
+                <td style="color: #666;">📍 ${zeile.lagerorte.name}</td>
+                <td><input type="number" id="menge-${zeile.id}" class="menge-input" value="${zeile.menge}" onchange="speichereMenge(${zeile.id})"></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+}
+// --- ENDE NEUE TABELLEN-LOGIK ---
 
 function toggleEditMode() {
     isEditMode = !isEditMode;
@@ -491,42 +560,37 @@ async function downloadExcel() {
         return;
     }
 
-    // 1. Neues Excel-Dokument mit ExcelJS erstellen
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Einkaufsliste');
 
-    // 2. Den großen Titel (Zeile 1) stylen
     sheet.mergeCells('A1:C1');
     const titleCell = sheet.getCell('A1');
     titleCell.value = '📦 EINKAUFSLISTE - TRISPORT ERDING';
-    titleCell.font = { size: 16, bold: true, color: { argb: 'FFE3000F' } }; // Trisport-Rot
+    titleCell.font = { size: 16, bold: true, color: { argb: 'FFE3000F' } }; 
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
-    // 3. Den Zeitstempel (Zeile 2) stylen
     sheet.mergeCells('A2:C2');
     const timeCell = sheet.getCell('A2');
     timeCell.value = 'Erstellt am: ' + new Date().toLocaleString('de-DE');
-    timeCell.font = { italic: true, color: { argb: 'FF666666' } }; // Grau
+    timeCell.font = { italic: true, color: { argb: 'FF666666' } }; 
     timeCell.alignment = { horizontal: 'center' };
 
-    // 4. Die Spalten-Überschriften (Zeile 4) stylen
     const headerRow = sheet.getRow(4);
     headerRow.values = ['ARTIKEL / MATERIAL', 'MENGE', 'GRUND / HERKUNFT'];
     
     ['A', 'B', 'C'].forEach(col => {
         const cell = sheet.getCell(`${col}4`);
-        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; // Weiße Schrift
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; 
         cell.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: 'FF3498DB' } // Blau
+            fgColor: { argb: 'FF3498DB' } 
         };
         cell.border = {
             bottom: { style: 'medium', color: { argb: 'FF000000' } } 
         };
     });
 
-    // 5. Die eigentlichen Daten eintragen
     let currentRow = 5;
     einkaufslisteArray.forEach(item => {
         const row = sheet.getRow(currentRow);
@@ -540,12 +604,10 @@ async function downloadExcel() {
         currentRow++;
     });
 
-    // 6. Spaltenbreiten festlegen
     sheet.getColumn(1).width = 40; 
     sheet.getColumn(2).width = 12; 
     sheet.getColumn(3).width = 30; 
 
-    // 7. Datei generieren und Download starten
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = window.URL.createObjectURL(blob);
