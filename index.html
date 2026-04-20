@@ -110,15 +110,19 @@
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Ort</button>
                 <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
-                <button class="btn" style="background-color: #95a5a6;" onclick="toggleAlleGruppen()" title="Alle Ordner ein-/ausklappen">↕️ Auf/Zu</button>
                 
-                <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                    <option value="ALLE">Alle Kategorien</option>
-                </select>
-                
-                <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                    <option value="ALLE">Alle Lagerorte</option>
-                </select>
+                <!-- NEU: Der dezentere Auf/Zu-Button gruppiert mit den Filtern -->
+                <div style="display: flex; gap: 5px; align-items: center;">
+                    <button onclick="toggleAlleGruppen()" style="background: transparent; border: none; font-size: 1.4em; cursor: pointer; padding: 5px; color: #2c3e50; transition: transform 0.2s;" title="Alle Ordner auf-/zuklappen" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">↕️</button>
+                    
+                    <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
+                        <option value="ALLE">Alle Kategorien</option>
+                    </select>
+                    
+                    <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
+                        <option value="ALLE">Alle Lagerorte</option>
+                    </select>
+                </div>
             </div>
         </div>
         <div class="table-responsive">

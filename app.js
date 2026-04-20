@@ -172,7 +172,11 @@ function tabelleAktualisieren(daten) {
         gruppierteDaten[gruppenName].push(zeile); 
     });
 
-    for (const [gruppenName, zeilenListe] of Object.entries(gruppierteDaten)) {
+    // 1. HAUPTGRUPPEN ALPHABETISCH SORTIEREN
+    const sortedMainGroups = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de'));
+
+    for (const gruppenName of sortedMainGroups) {
+        const zeilenListe = gruppierteDaten[gruppenName];
         alleBekanntenGruppen.add(gruppenName);
         const isOpen = offeneGruppen.has(gruppenName);
         const icon = isOpen ? '📂' : '📁';
@@ -217,11 +221,19 @@ function tabelleAktualisieren(daten) {
             subGroups[groupKey][z.artikel.name].push(z);
         });
 
+        // 2. UNTERGRUPPEN ALPHABETISCH SORTIEREN (STANDALONE bleibt oben)
+        const sortedSubNames = Object.keys(subGroups).sort((a, b) => {
+            if (a === 'STANDALONE') return -1;
+            if (b === 'STANDALONE') return 1;
+            return a.localeCompare(b, 'de');
+        });
+
         renderArtikelRows(subGroups['STANDALONE'], tbody, false);
 
-        for (const [subName, artObj] of Object.entries(subGroups)) {
+        for (const subName of sortedSubNames) {
             if (subName === 'STANDALONE') continue;
             
+            const artObj = subGroups[subName];
             const subId = `${gruppenName}_${subName}`;
             alleBekanntenGruppen.add(subId);
             const isSubOpen = offeneGruppen.has(subId);
@@ -251,7 +263,15 @@ function tabelleAktualisieren(daten) {
 }
 
 function renderArtikelRows(artObj, tbody, isSub) {
-    for (const [aName, bList] of Object.entries(artObj)) {
+    // 3. ARTIKEL INNERHALB DER GRUPPE ALPHABETISCH SORTIEREN
+    const sortedItemNames = Object.keys(artObj).sort((a, b) => a.localeCompare(b, 'de'));
+
+    for (const aName of sortedItemNames) {
+        const bList = artObj[aName];
+        
+        // Optional: Falls ein Artikel z.B. in zwei Kisten liegt, nach Kisten-Namen sortieren
+        bList.sort((a, b) => (a.lagerorte?.name || '').localeCompare(b.lagerorte?.name || '', 'de'));
+
         bList.forEach((z, i) => {
             const tr = document.createElement('tr');
             tr.className = "item-row"; 
