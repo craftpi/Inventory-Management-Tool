@@ -12,6 +12,8 @@ let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
 
 let einkaufslisteArray = []; 
+let offeneGruppen = new Set();
+let alleBekanntenGruppen = new Set();
 
 // --- AUTHENTIFIZIERUNG ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -134,12 +136,32 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefilterteDaten);
 }
 
+function toggleGruppe(name) {
+    if (offeneGruppen.has(name)) {
+        offeneGruppen.delete(name);
+    } else {
+        offeneGruppen.add(name);
+    }
+    wendeFilterAn();
+}
+
+function toggleAlleGruppen() {
+    if (offeneGruppen.size < alleBekanntenGruppen.size) {
+        alleBekanntenGruppen.forEach(g => offeneGruppen.add(g));
+    } else {
+        offeneGruppen.clear();
+    }
+    wendeFilterAn();
+}
+
 function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
     if (!tbody) return;
     tbody.innerHTML = ''; 
     const gruppierteDaten = {}; 
     const gruppenSummen = {}; 
+    
+    alleBekanntenGruppen.clear();
     
     daten.forEach(zeile => {
         if (!zeile.artikel) return; 
@@ -151,16 +173,27 @@ function tabelleAktualisieren(daten) {
     });
 
     for (const [gruppenName, zeilenListe] of Object.entries(gruppierteDaten)) {
+        alleBekanntenGruppen.add(gruppenName);
+        const isOpen = offeneGruppen.has(gruppenName);
+        const icon = isOpen ? '📂' : '📁';
+
         const headerTr = document.createElement('tr');
+        headerTr.style.cursor = 'pointer';
+        headerTr.title = "Linksklick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
+        headerTr.onclick = () => toggleGruppe(gruppenName);
+        headerTr.oncontextmenu = (e) => { e.preventDefault(); toggleAlleGruppen(); };
+        
         headerTr.innerHTML = `
-            <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px;">
+            <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px; user-select: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>📁 ${gruppenName}</span>
+                    <span>${icon} ${gruppenName}</span>
                     <span class="summen-badge">Gesamt: ${gruppenSummen[gruppenName]}</span>
                 </div>
             </td>
         `;
         tbody.appendChild(headerTr);
+
+        if (!isOpen) continue;
 
         const prefixCounts = {};
         const prefixSums = {};
@@ -189,17 +222,30 @@ function tabelleAktualisieren(daten) {
         for (const [subName, artObj] of Object.entries(subGroups)) {
             if (subName === 'STANDALONE') continue;
             
+            const subId = `${gruppenName}_${subName}`;
+            alleBekanntenGruppen.add(subId);
+            const isSubOpen = offeneGruppen.has(subId);
+            const subIcon = isSubOpen ? '📂' : '📁';
+            
             const subTr = document.createElement('tr');
+            subTr.style.cursor = 'pointer';
+            subTr.title = "Linksklick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
+            subTr.onclick = () => toggleGruppe(subId);
+            subTr.oncontextmenu = (e) => { e.preventDefault(); toggleAlleGruppen(); };
+            
             subTr.innerHTML = `
-                <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0;">
+                <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0; user-select: none;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span>📂 ${subName}</span>
+                        <span>${subIcon} ${subName}</span>
                         <span class="sub-sum-badge">Gesamt: ${prefixSums[subName]}</span>
                     </div>
                 </td>
             `;
             tbody.appendChild(subTr);
-            renderArtikelRows(artObj, tbody, true);
+            
+            if (isSubOpen) {
+                renderArtikelRows(artObj, tbody, true);
+            }
         }
     }
 }
