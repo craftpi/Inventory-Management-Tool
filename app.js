@@ -64,7 +64,7 @@ async function ladeLagerorte() {
     if (data) {
         const selectNeu = document.getElementById('new-ort');
         const selectEdit = document.getElementById('edit-ort');
-        const filterOrt = document.getElementById('lagerort-filter'); // NEU
+        const filterOrt = document.getElementById('lagerort-filter'); 
         
         if(selectNeu) selectNeu.innerHTML = ''; 
         if(selectEdit) selectEdit.innerHTML = '';
@@ -81,7 +81,6 @@ async function ladeLagerorte() {
             if(filterOrt) filterOrt.add(new Option(o.name, o.id));
         });
 
-        // Vorherige Filterauswahl wiederherstellen
         if(filterOrt && currentFilterExists(filterOrt, aktuellerOrtFilter)) {
             filterOrt.value = aktuellerOrtFilter;
         }
@@ -118,19 +117,16 @@ function aktualisiereFilterDropdown(daten) {
     if (currentFilterExists(dropdown, aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
 }
 
-// --- NEU: Kombinierter Filter (Kategorie + Ort) ---
 function wendeFilterAn() {
     const katFilter = document.getElementById('kategorie-filter')?.value || 'ALLE';
     const ortFilter = document.getElementById('lagerort-filter')?.value || 'ALLE';
     
     let gefilterteDaten = aktuelleDaten;
 
-    // Filter nach Kategorie
     if (katFilter !== 'ALLE') {
         gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
     }
     
-    // Filter nach Lagerort
     if (ortFilter !== 'ALLE') {
         gefilterteDaten = gefilterteDaten.filter(z => String(z.lagerort_id) === String(ortFilter));
     }
@@ -196,7 +192,10 @@ function tabelleAktualisieren(daten) {
             const subTr = document.createElement('tr');
             subTr.innerHTML = `
                 <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0;">
-                    📂 ${subName} <span class="sub-sum-badge"> Gesamt: ${prefixSums[subName]}</span>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>📂 ${subName}</span>
+                        <span class="sub-sum-badge">Gesamt: ${prefixSums[subName]}</span>
+                    </div>
                 </td>
             `;
             tbody.appendChild(subTr);

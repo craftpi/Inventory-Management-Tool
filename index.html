@@ -35,8 +35,21 @@
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
         .event-ok { color: #27ae60; font-weight: bold; }
         
+        /* Modals - SCROLL OPTIMIERT */
         .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
-        .modal-content { background-color: white; margin: 10vh auto; padding: 25px; border-radius: 10px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+        .modal-content { 
+            background-color: white; 
+            margin: 5vh auto; 
+            padding: 25px; 
+            border-radius: 10px; 
+            width: 90%; 
+            max-width: 400px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            max-height: 85vh; /* Verhindert, dass das Fenster aus dem Bildschirm rutscht */
+            overflow-y: auto; /* Schaltet das Wischen/Scrollen im Fenster ein */
+            box-sizing: border-box; /* Wichtig, damit Padding das Fenster nicht zu groß macht */
+        }
+        
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
         .form-group input, .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
@@ -44,12 +57,26 @@
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
 
+        /* HANDY OPTIMIERUNG */
         @media (max-width: 600px) {
-            body { padding: 15px 10px; }
-            .container { padding: 20px 15px; }
+            body { padding: 10px 5px; }
+            .container { padding: 15px 10px; }
             .action-bar, .action-group { flex-direction: column; align-items: stretch; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
+            
+            /* Packlisten-Auswahl umbauen */
+            .packlisten-wrapper { flex-direction: row; flex-wrap: wrap; }
+            .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
+            .packlisten-wrapper button { flex: 1; width: auto; } /* Buttons bleiben nebeneinander, Select oben drüber */
+            
+            /* Speichern & Abbrechen Buttons untereinander für dicke Daumen */
+            .flex-buttons { flex-direction: column; }
+            .modal-content { 
+                padding: 15px; 
+                margin: 2vh auto; 
+                max-height: 95vh; /* Auf dem Handy maximal ausdehnen für die Tastatur */
+            }
         }
     </style>
 </head>
@@ -106,7 +133,7 @@
         
         <div class="action-bar">
             <div class="action-group">
-                <div style="display: flex; gap: 5px; flex: 2; width: 100%;">
+                <div class="packlisten-wrapper" style="display: flex; gap: 5px; flex: 2; width: 100%;">
                     <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 1; min-width: 0;" onchange="zeigePackliste()">
                         <option value="">-- Wähle Resort / Packliste --</option>
                     </select>
@@ -136,6 +163,7 @@
     </div>
 </div>
 
+<!-- Modals -->
 <div id="artikelModal" class="modal">
     <div class="modal-content">
         <h2>Neuer Artikel</h2>
