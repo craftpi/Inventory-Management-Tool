@@ -45,9 +45,9 @@
             width: 90%; 
             max-width: 400px; 
             box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-            max-height: 85vh; /* Verhindert, dass das Fenster aus dem Bildschirm rutscht */
-            overflow-y: auto; /* Schaltet das Wischen/Scrollen im Fenster ein */
-            box-sizing: border-box; /* Wichtig, damit Padding das Fenster nicht zu groß macht */
+            max-height: 85vh;
+            overflow-y: auto;
+            box-sizing: border-box;
         }
         
         .form-group { margin-bottom: 15px; }
@@ -57,7 +57,6 @@
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
 
-        /* HANDY OPTIMIERUNG */
         @media (max-width: 600px) {
             body { padding: 10px 5px; }
             .container { padding: 15px 10px; }
@@ -65,18 +64,12 @@
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
             
-            /* Packlisten-Auswahl umbauen */
             .packlisten-wrapper { flex-direction: row; flex-wrap: wrap; }
             .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
-            .packlisten-wrapper button { flex: 1; width: auto; } /* Buttons bleiben nebeneinander, Select oben drüber */
+            .packlisten-wrapper button { flex: 1; width: auto; }
             
-            /* Speichern & Abbrechen Buttons untereinander für dicke Daumen */
             .flex-buttons { flex-direction: column; }
-            .modal-content { 
-                padding: 15px; 
-                margin: 2vh auto; 
-                max-height: 95vh; /* Auf dem Handy maximal ausdehnen für die Tastatur */
-            }
+            .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; }
         }
     </style>
 </head>
@@ -111,23 +104,31 @@
                 <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Ort</button>
                 <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 
-                <!-- NEU: Der dezentere Auf/Zu-Button gruppiert mit den Filtern -->
-                <div style="display: flex; gap: 5px; align-items: center;">
-                    <button onclick="toggleAlleGruppen()" style="background: transparent; border: none; font-size: 1.4em; cursor: pointer; padding: 5px; color: #2c3e50; transition: transform 0.2s;" title="Alle Ordner auf-/zuklappen" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">↕️</button>
-                    
-                    <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                        <option value="ALLE">Alle Kategorien</option>
-                    </select>
-                    
-                    <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                        <option value="ALLE">Alle Lagerorte</option>
-                    </select>
-                </div>
+                <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
+                    <option value="ALLE">Alle Kategorien</option>
+                </select>
+                
+                <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
+                    <option value="ALLE">Alle Lagerorte</option>
+                </select>
             </div>
         </div>
         <div class="table-responsive">
             <table>
-                <thead><tr><th>Artikel</th><th>Lagerort</th><th>Menge</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th style="vertical-align: middle;">
+                            Artikel
+                            <!-- NEU: Diskrete Buttons für Sortieren & Ausklappen direkt in der Überschrift -->
+                            <span style="float: right; display: flex; gap: 5px;">
+                                <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="A-Z / Z-A Sortierung" onmouseover="this.style.background='rgba(255,255,255,0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">A-Z</button>
+                                <button onclick="toggleAlleGruppen()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="Alle Ordner auf-/zuklappen" onmouseover="this.style.background='rgba(255,255,255,0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">↕️</button>
+                            </span>
+                        </th>
+                        <th style="vertical-align: middle;">Lagerort</th>
+                        <th style="vertical-align: middle;">Menge</th>
+                    </tr>
+                </thead>
                 <tbody id="lager-tabelle"><tr><td colspan="3" style="text-align:center; padding:30px;">Lade Daten...</td></tr></tbody>
             </table>
         </div>

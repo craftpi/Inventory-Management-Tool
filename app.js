@@ -10,10 +10,12 @@ let alleArtikelInfos = [];
 let isEditMode = false;
 let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
-
 let einkaufslisteArray = []; 
+
+// NEU: Für Sortierung & Aufklappen
 let offeneGruppen = new Set();
-let alleBekanntenGruppen = new Set();
+let isAllOpen = false;
+let sortAscending = true;
 
 // --- AUTHENTIFIZIERUNG ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -136,6 +138,14 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefilterteDaten);
 }
 
+// --- NEU: Sortier- und Gruppensteuerungs-Funktionen ---
+function toggleSortierung() {
+    sortAscending = !sortAscending;
+    const btn = document.getElementById('btn-sort');
+    if (btn) btn.innerText = sortAscending ? 'A-Z' : 'Z-A';
+    wendeFilterAn();
+}
+
 function toggleGruppe(name) {
     if (offeneGruppen.has(name)) {
         offeneGruppen.delete(name);
@@ -146,10 +156,32 @@ function toggleGruppe(name) {
 }
 
 function toggleAlleGruppen() {
-    if (offeneGruppen.size < alleBekanntenGruppen.size) {
-        alleBekanntenGruppen.forEach(g => offeneGruppen.add(g));
-    } else {
-        offeneGruppen.clear();
+    isAllOpen = !isAllOpen;
+    offeneGruppen.clear();
+    
+    // Wenn aufklappen aktiviert wird, sammeln wir JEDE existierende Gruppe und Untergruppe
+    if (isAllOpen) {
+        const prefixCounts = {};
+        aktuelleDaten.forEach(zeile => {
+            if (!zeile.artikel) return;
+            const gName = zeile.artikel.gruppe || 'Weitere Artikel';
+            offeneGruppen.add(gName);
+
+            if (zeile.artikel.no_group) return;
+            const prefix = zeile.artikel.name.trim().split(' ')[0];
+            if (!prefixCounts[gName]) prefixCounts[gName] = {};
+            if (!prefixCounts[gName][prefix]) prefixCounts[gName][prefix] = new Set();
+            prefixCounts[gName][prefix].add(zeile.artikel.name);
+        });
+
+        // Hinzufügen aller Untergruppen, die mehr als 1 Element haben
+        for (const gName in prefixCounts) {
+            for (const prefix in prefixCounts[gName]) {
+                if (prefixCounts[gName][prefix].size > 1) {
+                    offeneGruppen.add(`${gName}_${prefix}`);
+                }
+            }
+        }
     }
     wendeFilterAn();
 }
@@ -161,8 +193,6 @@ function tabelleAktualisieren(daten) {
     const gruppierteDaten = {}; 
     const gruppenSummen = {}; 
     
-    alleBekanntenGruppen.clear();
-    
     daten.forEach(zeile => {
         if (!zeile.artikel) return; 
         const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
@@ -172,18 +202,18 @@ function tabelleAktualisieren(daten) {
         gruppierteDaten[gruppenName].push(zeile); 
     });
 
-    // 1. HAUPTGRUPPEN ALPHABETISCH SORTIEREN
-    const sortedMainGroups = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de'));
+    const sortFactor = sortAscending ? 1 : -1;
+    // Alphabetisch sortieren
+    const sortedMainGroups = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
 
     for (const gruppenName of sortedMainGroups) {
         const zeilenListe = gruppierteDaten[gruppenName];
-        alleBekanntenGruppen.add(gruppenName);
         const isOpen = offeneGruppen.has(gruppenName);
         const icon = isOpen ? '📂' : '📁';
 
         const headerTr = document.createElement('tr');
         headerTr.style.cursor = 'pointer';
-        headerTr.title = "Linksklick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
+        headerTr.title = "Klick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
         headerTr.onclick = () => toggleGruppe(gruppenName);
         headerTr.oncontextmenu = (e) => { e.preventDefault(); toggleAlleGruppen(); };
         
@@ -197,6 +227,7 @@ function tabelleAktualisieren(daten) {
         `;
         tbody.appendChild(headerTr);
 
+        // Nichts weiter zeichnen, wenn Gruppe geschlossen ist
         if (!isOpen) continue;
 
         const prefixCounts = {};
@@ -221,27 +252,26 @@ function tabelleAktualisieren(daten) {
             subGroups[groupKey][z.artikel.name].push(z);
         });
 
-        // 2. UNTERGRUPPEN ALPHABETISCH SORTIEREN (STANDALONE bleibt oben)
+        // Untergruppen alphabetisch sortieren, aber Einzelartikel bleiben als Block zusammen
         const sortedSubNames = Object.keys(subGroups).sort((a, b) => {
             if (a === 'STANDALONE') return -1;
             if (b === 'STANDALONE') return 1;
-            return a.localeCompare(b, 'de');
+            return a.localeCompare(b, 'de') * sortFactor;
         });
 
-        renderArtikelRows(subGroups['STANDALONE'], tbody, false);
+        renderArtikelRows(subGroups['STANDALONE'], tbody, false, sortFactor);
 
         for (const subName of sortedSubNames) {
             if (subName === 'STANDALONE') continue;
             
             const artObj = subGroups[subName];
             const subId = `${gruppenName}_${subName}`;
-            alleBekanntenGruppen.add(subId);
             const isSubOpen = offeneGruppen.has(subId);
             const subIcon = isSubOpen ? '📂' : '📁';
             
             const subTr = document.createElement('tr');
             subTr.style.cursor = 'pointer';
-            subTr.title = "Linksklick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
+            subTr.title = "Klick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
             subTr.onclick = () => toggleGruppe(subId);
             subTr.oncontextmenu = (e) => { e.preventDefault(); toggleAlleGruppen(); };
             
@@ -256,21 +286,22 @@ function tabelleAktualisieren(daten) {
             tbody.appendChild(subTr);
             
             if (isSubOpen) {
-                renderArtikelRows(artObj, tbody, true);
+                renderArtikelRows(artObj, tbody, true, sortFactor);
             }
         }
     }
 }
 
-function renderArtikelRows(artObj, tbody, isSub) {
-    // 3. ARTIKEL INNERHALB DER GRUPPE ALPHABETISCH SORTIEREN
-    const sortedItemNames = Object.keys(artObj).sort((a, b) => a.localeCompare(b, 'de'));
+function renderArtikelRows(artObj, tbody, isSub, sortFactor) {
+    if (!artObj) return;
+    // Artikel selbst alphabetisch sortieren
+    const sortedItemNames = Object.keys(artObj).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
 
     for (const aName of sortedItemNames) {
         const bList = artObj[aName];
         
-        // Optional: Falls ein Artikel z.B. in zwei Kisten liegt, nach Kisten-Namen sortieren
-        bList.sort((a, b) => (a.lagerorte?.name || '').localeCompare(b.lagerorte?.name || '', 'de'));
+        // Sortiere bei gleichen Artikeln nach dem Lagerort
+        bList.sort((a, b) => (a.lagerorte?.name || '').localeCompare(b.lagerorte?.name || '', 'de') * sortFactor);
 
         bList.forEach((z, i) => {
             const tr = document.createElement('tr');
