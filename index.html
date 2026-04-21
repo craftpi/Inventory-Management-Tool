@@ -56,7 +56,6 @@
         .app-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
         .app-footer a:hover { color: #f1c40f; text-decoration: none; }
 
-        /* Blockiert das Kopieren-Menü am Handy, damit Long-Press funktioniert */
         .no-select {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
@@ -133,7 +132,6 @@
                 <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Lagerort</button>
                 <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
                 <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
-                
             </div>
         </div>
         <div class="table-responsive">
@@ -196,8 +194,7 @@
     <div class="modal-content">
         <h2>Neuer Artikel</h2>
         <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
-        <div class="form-group"><label>Kategorie</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
-        <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe" placeholder="z.B. Eventmaterial"></div>
+        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
         <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
         
         <div class="form-group">
@@ -207,10 +204,6 @@
         <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
             <input type="checkbox" id="new-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('new-menge').disabled = this.checked; if(this.checked) document.getElementById('new-menge').value = '∞'; else document.getElementById('new-menge').value = '0';">
             <label for="new-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-            <input type="checkbox" id="new-no-group" style="width: auto;">
-            <label for="new-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
         </div>
         
         <div class="flex-buttons">
@@ -225,8 +218,7 @@
         <h2>Artikel bearbeiten</h2>
         <input type="hidden" id="edit-bestand-id"><input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
-        <div class="form-group"><label>Kategorie</label><input type="text" id="edit-kategorie"></div>
-        <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
+        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie"></div>
         <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
         
         <div class="form-group">
@@ -236,10 +228,6 @@
         <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
             <input type="checkbox" id="edit-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('edit-menge').disabled = this.checked; if(this.checked) document.getElementById('edit-menge').value = '∞';">
             <label for="edit-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-            <input type="checkbox" id="edit-no-group" style="width: auto;">
-            <label for="edit-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
         </div>
 
         <div class="flex-buttons">

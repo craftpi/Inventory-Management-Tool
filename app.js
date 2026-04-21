@@ -66,12 +66,12 @@ window.handleTouchStart = function(e) {
         hoverWasLongPress = true;
         if (type === 'date') showDateHover(content);
         if (type === 'res') showResHover(content);
-        if (navigator.vibrate) navigator.vibrate(50); // Vibrations-Feedback
-    }, 400); // 0.4 Sekunden gedrückt halten = Long Press
+        if (navigator.vibrate) navigator.vibrate(50);
+    }, 400);
 };
 
 window.handleTouchMove = function(e) {
-    clearTimeout(hoverPressTimer); // Abbrechen beim Scrollen
+    clearTimeout(hoverPressTimer);
 };
 
 window.handleTouchEnd = function(e) {
@@ -80,7 +80,7 @@ window.handleTouchEnd = function(e) {
         hoverHideTimer = setTimeout(() => {
             hideDateHover();
             hideResHover();
-        }, 3000); // Bleibt 3 Sekunden offen
+        }, 3000);
     } else {
         hideDateHover();
         hideResHover();
@@ -215,7 +215,6 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // GENAU DEIN FUNKTIONIERENDER DATENBANK-AUFRUF
     let { data, error } = await dbClient.from('bestand')
         .select(`id, menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
     
@@ -251,13 +250,11 @@ function aktualisiereFilterDropdown(daten) {
 function wendeFilterAn() {
     const katFilter = document.getElementById('kategorie-filter')?.value || 'ALLE';
     const ortFilter = document.getElementById('lagerort-filter')?.value || 'ALLE';
-    
-    // NEU: Suchfeld auslesen
     const suchText = document.getElementById('such-filter')?.value.toLowerCase().trim() || '';
     
     let gefilterteDaten = aktuelleDaten;
 
-    // NEU: Nach Suchtext filtern
+    // Suchen
     if (suchText !== '') {
         gefilterteDaten = gefilterteDaten.filter(z => 
             (z.artikel?.name || '').toLowerCase().includes(suchText) ||
@@ -401,7 +398,6 @@ function tabelleAktualisieren(daten) {
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? "pointer" : "default";
             
-            // Verhindern, dass beim Loslassen nach Long Press das Edit-Menü aufgeht
             tr.onclick = (e) => { 
                 if(hoverWasLongPress) return;
                 if(e.target.tagName !== 'INPUT') openEditModal(z.id); 
@@ -428,7 +424,6 @@ function tabelleAktualisieren(daten) {
             
             const resInfo = reservierungenDetails[z.artikel_id];
             if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
-                // TEXT FEHLER BEHOBEN: Sichere Quotes und Linebreaks
                 let hoverText = "<strong>Reserviert für:</strong><br>";
                 for (const [lName, lMenge] of Object.entries(resInfo.listen)) {
                     const safeLName = lName.replace(/'/g, "´").replace(/"/g, "´´");
@@ -508,6 +503,7 @@ async function speichereBearbeitung() {
         const nMenge = isInf ? -1 : werteMengeAus(document.getElementById('edit-menge').value);
         const aktuellesDatum = new Date().toISOString();
 
+        // SAUBERES UPDATE (Nur Kategorie)
         await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aId);
         
         const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
@@ -515,6 +511,7 @@ async function speichereBearbeitung() {
         if (ex && !isInf && Number(ex.menge) !== -1) {
             let res = await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge, created_at: aktuellesDatum }).eq('id', ex.id);
             if(res.error) await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
+            
             await dbClient.from('bestand').delete().eq('id', bId);
         } else { 
             let res = await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge, created_at: aktuellesDatum }).eq('id', bId); 
@@ -570,6 +567,7 @@ async function artikelAnlegen() {
         
         if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
+        // SAUBERER INSERT (Nur Kategorie)
         const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k }]).select();
         if (err) { showToast("Fehler: " + err.message, "error"); return; }
         
@@ -661,7 +659,6 @@ async function ladeEventDaten() {
         packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
         if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
 
-        // GENAU DEIN FUNKTIONIERENDER AUFRUF
         const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
         if(resPos.error) throw resPos.error;
         packlistenPositionen = resPos.data || [];
