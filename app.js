@@ -321,8 +321,12 @@ function tabelleAktualisieren(daten) {
     });
 
     const sortFactor = sortAscending ? 1 : -1;
-    const sortedKategorien = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
-
+    const sortedKategorien = Object.keys(gruppierteDaten).sort((a, b) => {
+        const specialFolder = 'Ohne Kategorie';
+        if (a === specialFolder) return 1;
+        if (b === specialFolder) return -1;
+        return a.localeCompare(b, 'de') * sortFactor;
+    });
     for (const katName of sortedKategorien) {
         const zeilenListe = gruppierteDaten[katName];
         
