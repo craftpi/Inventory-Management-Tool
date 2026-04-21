@@ -412,11 +412,22 @@ function tabelleAktualisieren(daten) {
         if (!isOpen) continue;
 
         const prefixCounts = {};
+        const prefixSums = {};
+        const prefixInf = {};
+        
         zeilenListe.forEach(z => {
             const parts = z.artikel.name.trim().split(' ');
             if (parts.length > 1) { 
                 const prefix = parts[0];
                 prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+                
+                // Summen für die Unterkategorien berechnen
+                if (!prefixSums[prefix]) prefixSums[prefix] = 0;
+                if (Number(z.menge) === -1) {
+                    prefixInf[prefix] = true;
+                } else {
+                    prefixSums[prefix] += Number(z.menge);
+                }
             }
         });
 
@@ -455,8 +466,22 @@ function tabelleAktualisieren(daten) {
 
             // Logik für die grauen Unterordner (Prefix)
             if (isGroup && currentPrefix !== prefix) {
+                let pSum = prefixSums[prefix] || 0;
+                let pInf = prefixInf[prefix] || false;
+                let pSumAnzeige = pSum;
+                
+                // Anzeige-Logik, falls unendliche (∞) Artikel im Unterordner liegen
+                if (pInf && pSum > 0) pSumAnzeige = `${pSum} + ∞`;
+                else if (pInf && pSum === 0) pSumAnzeige = `∞`;
+
                 const subGroupTr = document.createElement('tr');
-                subGroupTr.innerHTML = `<td colspan="3" style="padding-left: 25px; background: #fafafa; color: #7f8c8d; font-size: 0.85em; font-weight: bold; border-bottom: 1px dashed #ddd; user-select: none;">🏷️ ${prefix}</td>`;
+                subGroupTr.innerHTML = `
+                    <td colspan="3" style="padding-left: 25px; background: #fafafa; color: #7f8c8d; font-size: 0.85em; font-weight: bold; border-bottom: 1px dashed #ddd; user-select: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>🏷️ ${prefix}</span>
+                            <span class="sub-sum-badge">Gesamt: ${pSumAnzeige}</span>
+                        </div>
+                    </td>`;
                 tbody.appendChild(subGroupTr);
                 currentPrefix = prefix;
             } else if (!isGroup) {
