@@ -7,6 +7,7 @@ let aktuelleDaten = [];
 let packlisten = [];
 let packlistenPositionen = [];
 let alleArtikelInfos = []; 
+let alleLagerorte = []; // NEU für Lagerort-Verwaltung
 let isEditMode = false;
 let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
@@ -17,7 +18,7 @@ let offeneGruppen = new Set();
 let isAllOpen = false;
 let sortAscending = true;
 
-// --- TOAST NOTIFICATIONS (Professionelles Feedback) ---
+// --- TOAST NOTIFICATIONS ---
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
@@ -25,9 +26,7 @@ function showToast(message, type = 'success') {
     toast.innerText = message;
     container.appendChild(toast);
     
-    // Animation starten
     setTimeout(() => toast.classList.add('show'), 10);
-    // Nach 3 Sekunden verschwinden lassen
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
@@ -37,15 +36,12 @@ function showToast(message, type = 'success') {
 // --- HILFSFUNKTION: INLINE MATHE ---
 function werteMengeAus(eingabe) {
     if (eingabe === undefined || eingabe === null) return 0;
-    // Erlaubt nur Zahlen und Rechenzeichen
     const saubererString = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
     if (saubererString === '') return 0;
     try {
         const ergebnis = new Function('return ' + saubererString)();
-        return Math.round(ergebnis); // Immer auf ganze Zahlen runden
-    } catch (e) {
-        return 0; // Bei Quatsch-Eingabe
-    }
+        return Math.round(ergebnis); 
+    } catch (e) { return 0; }
 }
 
 // --- AUTHENTIFIZIERUNG ---
@@ -97,6 +93,15 @@ function openModal() {
 // --- DATEN LADEN ---
 async function ladeAlles() {
     await ladeLagerorte();
+    
+    // Packlisten laden
+    const { data: listData } = await dbClient.from('packlisten').select('*');
+    packlisten = listData || [];
+
+    // Packlisten-Positionen laden
+    const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
+    packlistenPositionen = resPos.data || [];
+
     await ladeBestand();
     if(aktuellerModus === 'event') await ladeEventDaten();
 }
@@ -104,6 +109,8 @@ async function ladeAlles() {
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
     if (data) {
+        alleLagerorte = data; // Global speichern für die Verwaltungsansicht
+
         const selectNeu = document.getElementById('new-ort');
         const selectEdit = document.getElementById('edit-ort');
         const filterOrt = document.getElementById('lagerort-filter'); 
@@ -130,7 +137,6 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // Lade Artikel. Wir brauchen 'gruppe' nicht mehr, nutzen nur 'kategorie'
     const { data, error } = await dbClient.from('bestand')
         .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
     
@@ -154,7 +160,6 @@ function aktualisiereFilterDropdown(daten) {
     });
     dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
     Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
-    
     if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
 }
 
@@ -164,13 +169,8 @@ function wendeFilterAn() {
     
     let gefilterteDaten = aktuelleDaten;
 
-    if (katFilter !== 'ALLE') {
-        gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
-    }
-    
-    if (ortFilter !== 'ALLE') {
-        gefilterteDaten = gefilterteDaten.filter(z => String(z.lagerort_id) === String(ortFilter));
-    }
+    if (katFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
+    if (ortFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => String(z.lagerort_id) === String(ortFilter));
 
     tabelleAktualisieren(gefilterteDaten);
 }
@@ -191,14 +191,7 @@ function toggleGruppe(name) {
 function toggleAlleGruppen() {
     isAllOpen = !isAllOpen;
     offeneGruppen.clear();
-    
-    if (isAllOpen) {
-        aktuelleDaten.forEach(zeile => {
-            if (!zeile.artikel) return;
-            const katName = zeile.artikel.kategorie || 'Ohne Kategorie';
-            offeneGruppen.add(katName);
-        });
-    }
+    if (isAllOpen) aktuelleDaten.forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
     wendeFilterAn();
 }
 
@@ -207,9 +200,22 @@ function tabelleAktualisieren(daten) {
     if (!tbody) return;
     tbody.innerHTML = ''; 
     
+    const reservierungenDetails = {};
+    packlistenPositionen.forEach(p => {
+        if(p.artikel_id) {
+            if (!reservierungenDetails[p.artikel_id]) {
+                reservierungenDetails[p.artikel_id] = { gesamt: 0, listen: {} };
+            }
+            reservierungenDetails[p.artikel_id].gesamt += Number(p.menge);
+            
+            const pl = packlisten.find(list => list.id === p.packliste_id);
+            const plName = pl ? pl.name : 'Unbekannte Liste';
+            
+            reservierungenDetails[p.artikel_id].listen[plName] = (reservierungenDetails[p.artikel_id].listen[plName] || 0) + Number(p.menge);
+        }
+    });
+
     const gruppierteDaten = {}; 
-    
-    // Gruppieren nur noch nach Kategorie
     daten.forEach(zeile => {
         if (!zeile.artikel) return; 
         const katName = zeile.artikel.kategorie || 'Ohne Kategorie';
@@ -218,7 +224,6 @@ function tabelleAktualisieren(daten) {
     });
 
     const sortFactor = sortAscending ? 1 : -1;
-    // Kategorien alphabetisch sortieren
     const sortedKategorien = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
 
     for (const katName of sortedKategorien) {
@@ -226,7 +231,6 @@ function tabelleAktualisieren(daten) {
         const isOpen = offeneGruppen.has(katName);
         const icon = isOpen ? '📂' : '📁';
 
-        // Summe für den Ordner berechnen (-1 wird ignoriert und als ∞ markiert)
         let ordnerSumme = 0;
         let hatUnendlich = false;
         zeilenListe.forEach(z => {
@@ -254,26 +258,84 @@ function tabelleAktualisieren(daten) {
 
         if (!isOpen) continue;
 
-        // Artikel innerhalb der Kategorie alphabetisch sortieren
-        zeilenListe.sort((a, b) => a.artikel.name.localeCompare(b.artikel.name, 'de') * sortFactor);
+        const prefixCounts = {};
+        zeilenListe.forEach(z => {
+            const parts = z.artikel.name.trim().split(' ');
+            if (parts.length > 1) { 
+                const prefix = parts[0];
+                prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+            }
+        });
+
+        zeilenListe.sort((a, b) => {
+            const aName = a.artikel.name.trim();
+            const bName = b.artikel.name.trim();
+            const aParts = aName.split(' ');
+            const bParts = bName.split(' ');
+            const aPrefix = aParts.length > 1 && prefixCounts[aParts[0]] > 1 ? aParts[0] : aName;
+            const bPrefix = bParts.length > 1 && prefixCounts[bParts[0]] > 1 ? bParts[0] : bName;
+
+            const cmp = aPrefix.localeCompare(bPrefix, 'de') * sortFactor;
+            if (cmp !== 0) return cmp;
+            return aName.localeCompare(bName, 'de') * sortFactor;
+        });
+
+        let currentPrefix = null;
 
         zeilenListe.forEach((z) => {
+            const parts = z.artikel.name.trim().split(' ');
+            const isGroup = parts.length > 1 && prefixCounts[parts[0]] > 1;
+            const prefix = isGroup ? parts[0] : null;
+
+            if (isGroup && currentPrefix !== prefix) {
+                const subGroupTr = document.createElement('tr');
+                subGroupTr.innerHTML = `<td colspan="3" style="padding-left: 25px; background: #fafafa; color: #7f8c8d; font-size: 0.85em; font-weight: bold; border-bottom: 1px dashed #ddd; user-select: none;">🏷️ ${prefix}</td>`;
+                tbody.appendChild(subGroupTr);
+                currentPrefix = prefix;
+            } else if (!isGroup) {
+                currentPrefix = null;
+            }
+
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? "pointer" : "default";
             tr.onclick = (e) => { if(e.target.tagName !== 'INPUT') openEditModal(z.id); };
             
+            let displayName = z.artikel.name;
+            let indent = 25;
+            let iconLabel = '↳';
+
+            if (isGroup) {
+                indent = 45;
+                iconLabel = '◦';
+                displayName = displayName.substring(prefix.length).trim(); 
+            }
+            
+            let isInfinite = (Number(z.menge) === -1);
+            let resHtml = '';
+            
+            const resInfo = reservierungenDetails[z.artikel_id];
+            if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
+                let hoverText = "Reserviert für:\n";
+                for (const [lName, lMenge] of Object.entries(resInfo.listen)) {
+                    hoverText += `• ${lMenge}x in "${lName}"\n`;
+                }
+                resHtml = `<div style="font-size: 0.75em; color: #d35400; margin-top: 5px; font-weight: normal; cursor: help;" title="${hoverText}">📦 Reserviert: ${resInfo.gesamt}</div>`;
+            }
+
             let mengeZelle = "";
-            if (Number(z.menge) === -1) {
-                // Anzeige für Verbrauchsartikel
+            if (isInfinite) {
                 mengeZelle = `<span style="font-size: 1.5em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span>`;
             } else {
                 mengeZelle = `<input type="text" id="menge-${z.id}" class="menge-input" value="${z.menge}" onchange="speichereMenge(${z.id})" placeholder="z.B. 5+2">`;
             }
             
             tr.innerHTML = `
-                <td style="padding-left: 25px; color:#333;">↳ <strong>${z.artikel.name}</strong></td>
+                <td style="padding-left: ${indent}px; color:#333;">${iconLabel} <strong>${displayName}</strong></td>
                 <td style="color:#666;">📍 ${z.lagerorte.name}</td>
-                <td>${mengeZelle}</td>
+                <td>
+                    ${mengeZelle}
+                    ${resHtml}
+                </td>
             `;
             tbody.appendChild(tr);
         });
@@ -320,7 +382,6 @@ async function speichereBearbeitung() {
 
         await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aId);
         
-        // Prüfen, ob am neuen Lagerort schon was liegt, um es zusammenzufassen
         const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
         
         if (ex && !isInf && Number(ex.menge) !== -1) {
@@ -349,9 +410,8 @@ async function speichereMenge(bId) {
     const f = document.getElementById(`menge-${bId}`);
     if(!f) return;
     
-    // Die Mathematik-Magie anwenden! Aus "35+23" wird 58
     const neueMenge = werteMengeAus(f.value);
-    f.value = neueMenge; // Feld direkt aktualisieren
+    f.value = neueMenge; 
     f.style.backgroundColor = '#fff3cd'; 
 
     const { error } = await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bId);
@@ -359,9 +419,7 @@ async function speichereMenge(bId) {
         f.style.backgroundColor = '#d4edda'; 
         showToast(`Bestand gespeichert: ${neueMenge}`);
         setTimeout(() => { if(f) f.style.backgroundColor = ''; ladeAlles(); }, 800); 
-    } else {
-        showToast("Speicherfehler!", "error");
-    }
+    } else { showToast("Speicherfehler!", "error"); }
 }
 
 async function artikelAnlegen() {
@@ -394,6 +452,65 @@ async function neuenLagerortAnlegen() {
     else { showToast('Neuer Ort angelegt'); ladeAlles(); }
 }
 
+// --- NEU: FUNKTIONEN FÜR LAGERORTE VERWALTEN ---
+function openOrteVerwalten() {
+    const sel = document.getElementById('manage-ort-select');
+    sel.innerHTML = '';
+    
+    if(alleLagerorte.length === 0) {
+        showToast("Keine Lagerorte vorhanden.", "warning");
+        return;
+    }
+    
+    alleLagerorte.forEach(o => sel.add(new Option(o.name, o.id)));
+    ortSelectChanged();
+    document.getElementById('orteModal').style.display = 'block';
+}
+
+function ortSelectChanged() {
+    const selId = document.getElementById('manage-ort-select').value;
+    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    if(ort) {
+        document.getElementById('manage-ort-name').value = ort.name;
+    }
+}
+
+async function speichereOrt() {
+    const oId = document.getElementById('manage-ort-select').value;
+    const nName = document.getElementById('manage-ort-name').value.trim();
+    if(!oId || !nName) return;
+
+    const { error } = await dbClient.from('lagerorte').update({ name: nName }).eq('id', oId);
+    if (error) showToast("Fehler: " + error.message, "error");
+    else {
+        closeModal('orteModal');
+        showToast("Lagerort umbenannt!");
+        ladeAlles();
+    }
+}
+
+async function loescheOrt() {
+    const oId = document.getElementById('manage-ort-select').value;
+    if(!oId) return;
+
+    // Prüfen, ob noch Artikel an diesem Ort liegen
+    const inUse = aktuelleDaten.some(b => String(b.lagerort_id) === String(oId));
+    if(inUse) {
+        showToast("Fehler: Ort ist nicht leer! Bitte erst die Artikel dort umbuchen.", "error");
+        return;
+    }
+
+    if(confirm("Diesen Lagerort wirklich löschen?")) {
+        const { error } = await dbClient.from('lagerorte').delete().eq('id', oId);
+        if (error) showToast("Fehler: " + error.message, "error");
+        else {
+            closeModal('orteModal');
+            showToast("Lagerort gelöscht!");
+            ladeAlles();
+        }
+    }
+}
+
 
 // === EVENT MODUS LOGIK ===
 async function ladeEventDaten() {
@@ -408,7 +525,7 @@ async function ladeEventDaten() {
         packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
         if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
 
-        const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name)');
+        const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
         if(resPos.error) throw resPos.error;
         packlistenPositionen = resPos.data || [];
 
@@ -449,7 +566,7 @@ function zeigePackliste() {
         let availableHtml = "-";
 
         if (pos.artikel_id && pos.artikel) {
-            anzeigeName = pos.artikel.name;
+            anzeigeName = (pos.artikel.kategorie ? pos.artikel.kategorie + " > " : "") + pos.artikel.name;
             
             let gesamtLager = 0;
             let hatUnendlich = false;
@@ -462,7 +579,6 @@ function zeigePackliste() {
             });
             
             if (hatUnendlich) {
-                // Wenn Unendlich-Markierung, dann immer verfügbar
                 availableHtml = `<span style="font-size:1.2em; font-weight:bold;">∞</span>`;
                 statusHtml = `<span class="event-ok">✅ OK</span>`;
             } else {
@@ -509,9 +625,18 @@ function openPackItemModal() {
     
     const sel = document.getElementById('pack-artikel-select');
     sel.innerHTML = '';
-    // Sortiere Artikel im Dropdown alphabetisch
-    const sortierteArt = [...alleArtikelInfos].sort((a, b) => a.name.localeCompare(b.name, 'de'));
-    sortierteArt.forEach(art => sel.add(new Option(art.name, art.id)));
+    
+    const sortierteArt = [...alleArtikelInfos].sort((a, b) => {
+        const aKat = a.kategorie || '';
+        const bKat = b.kategorie || '';
+        if (aKat !== bKat) return aKat.localeCompare(bKat, 'de');
+        return a.name.localeCompare(b.name, 'de');
+    });
+
+    sortierteArt.forEach(art => {
+        const nameString = (art.kategorie ? art.kategorie + " > " : "") + art.name;
+        sel.add(new Option(nameString, art.id));
+    });
     
     document.getElementById('packItemModal').style.display = 'block';
     togglePackTyp();
@@ -568,7 +693,7 @@ function aktualisierePackVerfuegbarkeit() {
 async function packPositionSpeichern() {
     const listId = document.getElementById('packlisten-auswahl').value;
     const typ = document.getElementById('pack-typ').value;
-    const menge = werteMengeAus(document.getElementById('pack-menge').value); // Auch hier Mathe erlauben
+    const menge = werteMengeAus(document.getElementById('pack-menge').value); 
     
     let dbObj = { packliste_id: listId, menge: menge };
 
@@ -586,7 +711,7 @@ async function packPositionSpeichern() {
         closeModal('packItemModal'); 
         document.getElementById('pack-eigener-name').value=''; 
         showToast("Zur Packliste hinzugefügt!");
-        ladeEventDaten(); 
+        ladeAlles(); 
     }
 }
 
@@ -594,13 +719,13 @@ async function updatePackMenge(posId, neueMenge) {
     const calcMenge = werteMengeAus(neueMenge);
     await dbClient.from('packlisten_positionen').update({ menge: calcMenge }).eq('id', posId);
     showToast("Menge in Packliste aktualisiert");
-    ladeEventDaten();
+    ladeAlles();
 }
 
 async function loeschePackPosition(posId) {
     if(confirm("Position von der Liste löschen?")) {
         await dbClient.from('packlisten_positionen').delete().eq('id', posId);
-        ladeEventDaten();
+        ladeAlles();
     }
 }
 
@@ -625,7 +750,7 @@ async function loeschePackliste() {
     if (confirm(`Möchtest du die Packliste "${aktuelleListe.name}" wirklich löschen?`)) {
         const { error } = await dbClient.from('packlisten').delete().eq('id', listId);
         if (error) showToast("Fehler: " + error.message, "error"); 
-        else { document.getElementById('packlisten-auswahl').value = ""; showToast("Gelöscht!"); ladeEventDaten(); }
+        else { document.getElementById('packlisten-auswahl').value = ""; showToast("Gelöscht!"); ladeAlles(); }
     }
 }
 
@@ -652,7 +777,6 @@ function startEinkaufsliste() {
 
     packlistenPositionen.forEach(p => {
         if (p.artikel_id) {
-            // Wenn der Artikel unendlich ist, brauchen wir ihn nicht auf der Einkaufsliste
             if (!artikelUnendlich.has(p.artikel_id)) {
                 artikelBedarf[p.artikel_id] = (artikelBedarf[p.artikel_id] || 0) + Number(p.menge);
             }
@@ -692,7 +816,7 @@ function manuellAufZettel() {
     const nameFeld = document.getElementById('manuell-kauf-name');
     const mengeFeld = document.getElementById('manuell-kauf-menge');
     const name = nameFeld.value.trim();
-    const menge = werteMengeAus(mengeFeld.value); // Mathe auch hier!
+    const menge = werteMengeAus(mengeFeld.value); 
 
     if (!name || menge <= 0) return;
 

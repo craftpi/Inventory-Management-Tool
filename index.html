@@ -27,9 +27,7 @@
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
         th { background-color: #3498db; color: white; }
         
-        /* Das Feld ist jetzt etwas breiter, damit man "35+23" gut tippen kann */
         .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
-        
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
         
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
@@ -46,7 +44,6 @@
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
 
-        /* NEU: Toast Notifications CSS */
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; }
         .toast { background: #333; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transform: translateY(20px); transition: opacity 0.3s, transform 0.3s; font-weight: bold; }
         .toast.show { opacity: 1; transform: translateY(0); }
@@ -94,6 +91,7 @@
             <div class="action-group">
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Ort</button>
+                <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
                 <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 
                 <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
@@ -109,12 +107,12 @@
                 <thead>
                     <tr>
                         <th style="vertical-align: middle;">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <span>Kategorie / Artikel</span>
+                            <div style="display: flex; align-items: center; gap: 10px;">
                                 <span style="display: flex; gap: 5px;">
-                                    <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="A-Z / Z-A Sortierung">A-Z</button>
                                     <button onclick="toggleAlleGruppen()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="Alle Ordner auf-/zuklappen">↕️</button>
+                                    <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="A-Z / Z-A Sortierung">A-Z</button>
                                 </span>
+                                <span>Kategorie / Artikel</span>
                             </div>
                         </th>
                         <th style="vertical-align: middle; width: 120px;">Lagerort</th>
@@ -205,6 +203,26 @@
             <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>
         </div>
         <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Artikel komplett löschen</button>
+    </div>
+</div>
+
+<div id="orteModal" class="modal">
+    <div class="modal-content">
+        <h2>⚙️ Lagerorte verwalten</h2>
+        <p style="font-size: 0.85em; color: #666;">Ein Ort kann nur gelöscht werden, wenn ihm keine Artikel mehr zugeordnet sind.</p>
+        <div class="form-group">
+            <label>Lagerort auswählen</label>
+            <select id="manage-ort-select" onchange="ortSelectChanged()"></select>
+        </div>
+        <div class="form-group">
+            <label>Name ändern</label>
+            <input type="text" id="manage-ort-name">
+        </div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="speichereOrt()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('orteModal')">Abbrechen</button>
+        </div>
+        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="loescheOrt()">🗑️ Lagerort löschen</button>
     </div>
 </div>
 
