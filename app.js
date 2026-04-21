@@ -178,9 +178,11 @@ function openModal() {
     const firstInput = firstRow.querySelector('.new-menge');
     firstInput.value = '0';
     firstInput.disabled = false;
+    firstInput.removeAttribute('data-old-value'); // WICHTIG: Alten Speicher leeren
     
     const firstBtnInf = firstRow.querySelector('.btn-inf');
     firstBtnInf.style.background = '#95a5a6';
+    firstBtnInf.setAttribute('data-active', 'false'); // WICHTIG: Button-Status auf 'aus'
     
     document.getElementById('artikelModal').style.display = 'block'; 
 }
@@ -194,9 +196,11 @@ function addOrtRow() {
     const input = newRow.querySelector('.new-menge');
     input.value = '0';
     input.disabled = false;
+    input.removeAttribute('data-old-value'); // WICHTIG: Kopierten Speicher leeren!
     
     const btnInf = newRow.querySelector('.btn-inf');
     btnInf.style.background = '#95a5a6';
+    btnInf.setAttribute('data-active', 'false'); // WICHTIG: Button-Status auf 'aus'
 
     // Aus dem blauen ➕ Button am Ende einen roten 🗑️ (Löschen) Button machen
     const btnAddDelete = newRow.lastElementChild;
@@ -527,19 +531,32 @@ function toggleEditMode() {
     wendeFilterAn();
 }
 
-// Neue Funktion: Steuert das Sperren/Entsperren der Mengen-Felder
-// Neue Funktion: Schaltet die Unendlich-Menge nur für EINE Zeile um
 function toggleRowInfinite(btn) {
-    const input = btn.previousElementSibling; // Holt das Input-Feld links neben dem Button
-    if (input.value === '∞') {
+    const input = btn.previousElementSibling;
+    
+    // Prüfen ob der Button aktuell "aktiv" ist (bulletproof)
+    const isInfinite = btn.getAttribute('data-active') === 'true';
+
+    if (isInfinite) {
+        // --- Unendlich AUSSCHALTEN ---
         input.disabled = false;
-        input.value = input.dataset.oldValue || '0';
-        btn.style.background = '#95a5a6'; // Grau = aus
+        // Den gemerkten Wert zurückholen (oder '0' wenn es keinen gab)
+        input.value = input.getAttribute('data-old-value') || '0';
+        
+        btn.style.background = '#95a5a6'; // Grau
+        btn.setAttribute('data-active', 'false');
     } else {
-        input.dataset.oldValue = input.value;
+        // --- Unendlich EINSCHALTEN ---
+        // Nur den alten Wert merken, wenn er nicht schon das Unendlich-Zeichen ist
+        if (input.value !== '∞') {
+            input.setAttribute('data-old-value', input.value);
+        }
+        
         input.value = '∞';
         input.disabled = true;
-        btn.style.background = '#27ae60'; // Grün = aktiv
+        
+        btn.style.background = '#27ae60'; // Grün
+        btn.setAttribute('data-active', 'true');
     }
 }
 
