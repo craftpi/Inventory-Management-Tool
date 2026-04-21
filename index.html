@@ -35,8 +35,32 @@
         .event-ok { color: #27ae60; font-weight: bold; }
         
         .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
-        .modal-content { background-color: white; margin: 5vh auto; padding: 25px; border-radius: 10px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); max-height: 85vh; overflow-y: auto; box-sizing: border-box; }
-        
+        .modal-content {
+            background-color: white;
+            margin: 5vh auto;
+            padding: 30px; 
+            border-radius: 12px;
+            width: 95%; 
+            max-width: 650px; 
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+            max-height: 90vh; 
+            overflow-y: auto;
+            box-sizing: border-box;
+            position: relative;
+        }
+        .modal-content::-webkit-scrollbar {
+            width: 10px;
+        }
+        .modal-content::-webkit-scrollbar-track {
+            background: #f4f4f9; 
+            border-radius: 0 12px 12px 0; 
+        }
+        .modal-content::-webkit-scrollbar-thumb {
+            background: #bdc3c7; 
+            border-radius: 10px;
+            border: 2px solid #f4f4f9; /* Erzeugt einen kleinen Puffer-Rand */
+        }
+
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
         .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
@@ -196,18 +220,22 @@
         <h2>Neuer Artikel</h2>
         <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
         <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
-        <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
         
-        <div class="form-group">
-            <label>Start-Menge (Zahl oder Rechnung)</label>
-            <input type="text" id="new-menge" value="0" placeholder="z.B. 10 oder 5+5">
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
-            <input type="checkbox" id="new-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('new-menge').disabled = this.checked; if(this.checked) document.getElementById('new-menge').value = '∞'; else document.getElementById('new-menge').value = '0';">
-            <label for="new-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+        <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Start-Mengen:</p>
+        <div id="new-orte-wrapper">
+            <div class="form-group lagerort-row" style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                <select class="new-ort" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
+                
+                <div style="flex: 1; display: flex; gap: 4px;">
+                    <input type="text" class="new-menge" value="0" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;">
+                    <button type="button" class="btn btn-inf" style="background: #95a5a6; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleRowInfinite(this)">∞</button>
+                </div>
+                <button type="button" class="btn" style="background-color: #3498db; padding: 8px 12px; width: auto; min-width: 40px;" onclick="addOrtRow()" title="Weiteren Ort hinzufügen">➕</button>
+            </div>
         </div>
         
-        <div class="flex-buttons">
+        <div class="flex-buttons" style="margin-top: 20px;">
             <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('artikelModal')">Abbrechen</button>
         </div>
@@ -217,21 +245,17 @@
 <div id="editModal" class="modal">
     <div class="modal-content">
         <h2>Artikel bearbeiten</h2>
-        <input type="hidden" id="edit-bestand-id"><input type="hidden" id="edit-artikel-id">
+        <input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
         <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie"></div>
-        <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
         
-        <div class="form-group">
-            <label>Menge</label>
-            <input type="text" id="edit-menge" placeholder="z.B. 10 oder 5+5">
-        </div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
-            <input type="checkbox" id="edit-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('edit-menge').disabled = this.checked; if(this.checked) document.getElementById('edit-menge').value = '∞';">
-            <label for="edit-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
-        </div>
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+        <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Mengen:</p>
+        <div id="edit-orte-wrapper">
+            </div>
+        <button type="button" class="btn" style="background-color: #3498db; width: 100%; margin-top: 5px;" onclick="addEditOrtRow()">➕ Weiteren Ort hinzufügen</button>
 
-        <div class="flex-buttons">
+        <div class="flex-buttons" style="margin-top: 20px;">
             <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>
         </div>

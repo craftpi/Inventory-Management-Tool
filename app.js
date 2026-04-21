@@ -161,13 +161,51 @@ function wechsleModus(modus) {
 }
 
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
 function openModal() { 
     document.getElementById('new-name').value = '';
     document.getElementById('new-kategorie').value = '';
-    document.getElementById('new-menge').value = '0';
-    document.getElementById('new-menge').disabled = false;
-    document.getElementById('new-is-infinite').checked = false;
+    
+    // Löscht alle zusätzlich angeklickten Zeilen wieder raus
+    const container = document.getElementById('new-orte-wrapper');
+    const rows = container.querySelectorAll('.lagerort-row');
+    for(let i = 1; i < rows.length; i++) {
+        rows[i].remove();
+    }
+    
+    // Setzt die allererste Zeile wieder auf Standard "0" und grauen Button zurück
+    const firstRow = rows[0];
+    const firstInput = firstRow.querySelector('.new-menge');
+    firstInput.value = '0';
+    firstInput.disabled = false;
+    
+    const firstBtnInf = firstRow.querySelector('.btn-inf');
+    firstBtnInf.style.background = '#95a5a6';
+    
     document.getElementById('artikelModal').style.display = 'block'; 
+}
+
+function addOrtRow() {
+    const container = document.getElementById('new-orte-wrapper');
+    const firstRow = container.querySelector('.lagerort-row');
+    const newRow = firstRow.cloneNode(true); // Kopiert das Dropdown, Input-Feld und ∞ Button
+
+    // Zurücksetzen des Input-Feldes und des Buttons in der neuen kopierten Zeile
+    const input = newRow.querySelector('.new-menge');
+    input.value = '0';
+    input.disabled = false;
+    
+    const btnInf = newRow.querySelector('.btn-inf');
+    btnInf.style.background = '#95a5a6';
+
+    // Aus dem blauen ➕ Button am Ende einen roten 🗑️ (Löschen) Button machen
+    const btnAddDelete = newRow.lastElementChild;
+    btnAddDelete.innerHTML = '🗑️';
+    btnAddDelete.style.backgroundColor = '#e74c3c';
+    btnAddDelete.title = "Ort entfernen";
+    btnAddDelete.onclick = function() { newRow.remove(); };
+
+    container.appendChild(newRow);
 }
 
 // --- DATEN LADEN ---
@@ -189,18 +227,18 @@ async function ladeLagerorte() {
     if (data) {
         alleLagerorte = data; 
 
-        const selectNeu = document.getElementById('new-ort');
+        const selectsNeu = document.querySelectorAll('.new-ort');
         const selectEdit = document.getElementById('edit-ort');
         const filterOrt = document.getElementById('lagerort-filter'); 
         
         let aktuellerOrtFilter = filterOrt ? filterOrt.value : 'ALLE';
         
-        if(selectNeu) selectNeu.innerHTML = ''; 
+        selectsNeu.forEach(sel => sel.innerHTML = ''); 
         if(selectEdit) selectEdit.innerHTML = '';
         if(filterOrt) filterOrt.innerHTML = '<option value="ALLE">Alle Lagerorte</option>';
 
         data.forEach(o => {
-            if(selectNeu) selectNeu.add(new Option(o.name, o.id));
+            selectsNeu.forEach(sel => sel.add(new Option(o.name, o.id)));
             if(selectEdit) selectEdit.add(new Option(o.name, o.id));
             if(filterOrt) filterOrt.add(new Option(o.name, o.id));
         });
@@ -384,12 +422,26 @@ function tabelleAktualisieren(daten) {
         });
 
         let currentPrefix = null;
+        // 1. Gruppieren nach Artikel-ID (statt nach einzelnen Beständen)
+        const artikelGruppen = new Map();
+        zeilenListe.forEach(z => {
+            if (!artikelGruppen.has(z.artikel_id)) {
+                artikelGruppen.set(z.artikel_id, {
+                    artikel: z.artikel,
+                    bestaende: []
+                });
+            }
+            artikelGruppen.get(z.artikel_id).bestaende.push(z);
+        });
 
-        zeilenListe.forEach((z) => {
-            const parts = z.artikel.name.trim().split(' ');
+        // 2. Tabellenzeilen für jeden Artikel generieren
+        artikelGruppen.forEach((gruppe, artId) => {
+            const aName = gruppe.artikel.name.trim();
+            const parts = aName.split(' ');
             const isGroup = parts.length > 1 && prefixCounts[parts[0]] > 1;
             const prefix = isGroup ? parts[0] : null;
 
+            // Logik für die grauen Unterordner (Prefix)
             if (isGroup && currentPrefix !== prefix) {
                 const subGroupTr = document.createElement('tr');
                 subGroupTr.innerHTML = `<td colspan="3" style="padding-left: 25px; background: #fafafa; color: #7f8c8d; font-size: 0.85em; font-weight: bold; border-bottom: 1px dashed #ddd; user-select: none;">🏷️ ${prefix}</td>`;
@@ -401,13 +453,14 @@ function tabelleAktualisieren(daten) {
 
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? "pointer" : "default";
-            
+
+            // WICHTIG: Klick öffnet jetzt den Artikel, nicht den Bestand
             tr.onclick = (e) => { 
                 if(hoverWasLongPress) return;
-                if(e.target.tagName !== 'INPUT') openEditModal(z.id); 
+                if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') openEditModal(artId); 
             };
-            
-            let displayName = z.artikel.name;
+
+            let displayName = gruppe.artikel.name;
             let indent = 25;
             let iconLabel = '↳';
 
@@ -416,17 +469,11 @@ function tabelleAktualisieren(daten) {
                 iconLabel = '◦';
                 displayName = displayName.substring(prefix.length).trim(); 
             }
-            
-            let dateStr = 'Unbekannt';
-            if (z.created_at) {
-                const d = new Date(z.created_at);
-                dateStr = d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + ' Uhr';
-            }
 
-            let isInfinite = (Number(z.menge) === -1);
+            // Reservierungen checken
+            let isInfinite = gruppe.bestaende.some(b => Number(b.menge) === -1);
             let resHtml = '';
-            
-            const resInfo = reservierungenDetails[z.artikel_id];
+            const resInfo = reservierungenDetails[artId];
             if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
                 let hoverText = "<strong>Reserviert für:</strong><br>";
                 for (const [lName, lMenge] of Object.entries(resInfo.listen)) {
@@ -436,31 +483,36 @@ function tabelleAktualisieren(daten) {
                 resHtml = `<div class="no-select" style="font-size: 0.75em; color: #d35400; margin-top: 5px; font-weight: normal; cursor: help; display: inline-block;"
                     data-hover-type="res" data-hover-content="${hoverText}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
-                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)"
-                    oncontextmenu="event.preventDefault(); return false;">
+                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
                     📦 Reserviert: ${resInfo.gesamt}
                 </div>`;
             }
 
-            let mengeZelle = "";
-            if (isInfinite) {
-                mengeZelle = `<span style="font-size: 1.5em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span>`;
-            } else {
-                mengeZelle = `<input type="text" id="menge-${z.id}" class="menge-input" value="${z.menge}" onchange="speichereMenge(${z.id})" placeholder="z.B. 5+2">`;
-            }
-            
+            // HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
+            let bestandInfoHtml = "";
+            gruppe.bestaende.forEach(b => {
+                const isInfLocal = (Number(b.menge) === -1);
+                let mengeZelle = "";
+                if (isInfLocal) {
+                    mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span>`;
+                } else {
+                    mengeZelle = `<input type="text" id="menge-${b.id}" class="menge-input" value="${b.menge}" onchange="speichereMenge(${b.id})" style="width: 70px;">`;
+                }
+
+                bestandInfoHtml += `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;">
+                        <span style="font-size: 0.9em; color: #666;">📍 ${b.lagerorte.name}</span>
+                        ${mengeZelle}
+                    </div>`;
+            });
+
             tr.innerHTML = `
-                <td class="no-select" style="padding-left: ${indent}px; color:#333;"
-                    data-hover-type="date" data-hover-content="${dateStr}"
-                    onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
-                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)"
-                    oncontextmenu="event.preventDefault(); return false;">
+                <td class="no-select" style="padding-left: ${indent}px; color:#333; vertical-align: top;">
                     ${iconLabel} <strong>${displayName}</strong>
                 </td>
-                <td style="color:#666;">📍 ${z.lagerorte.name}</td>
-                <td>
-                    ${mengeZelle}
-                    ${resHtml ? '<br>' + resHtml : ''}
+                <td colspan="2" style="vertical-align: top;">
+                    ${bestandInfoHtml}
+                    ${resHtml ? '<div>' + resHtml + '</div>' : ''}
                 </td>
             `;
             tbody.appendChild(tr);
@@ -475,64 +527,122 @@ function toggleEditMode() {
     wendeFilterAn();
 }
 
-function openEditModal(bId) {
-    if (!isEditMode) return; 
-    const z = aktuelleDaten.find(x => x.id === bId);
-    if (!z) return;
+// Neue Funktion: Steuert das Sperren/Entsperren der Mengen-Felder
+// Neue Funktion: Schaltet die Unendlich-Menge nur für EINE Zeile um
+function toggleRowInfinite(btn) {
+    const input = btn.previousElementSibling; // Holt das Input-Feld links neben dem Button
+    if (input.value === '∞') {
+        input.disabled = false;
+        input.value = input.dataset.oldValue || '0';
+        btn.style.background = '#95a5a6'; // Grau = aus
+    } else {
+        input.dataset.oldValue = input.value;
+        input.value = '∞';
+        input.disabled = true;
+        btn.style.background = '#27ae60'; // Grün = aktiv
+    }
+}
+
+function addEditOrtRow(data = null) {
+    const wrapper = document.getElementById('edit-orte-wrapper');
+    const div = document.createElement('div');
+    div.className = 'edit-ort-row';
+    div.style = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
     
-    document.getElementById('edit-bestand-id').value = z.id;
-    document.getElementById('edit-artikel-id').value = z.artikel_id;
-    document.getElementById('edit-name').value = z.artikel.name;
-    document.getElementById('edit-kategorie').value = z.artikel.kategorie || '';
-    document.getElementById('edit-ort').value = z.lagerort_id;
+    let options = alleLagerorte.map(o => `<option value="${o.id}" ${data && data.lagerort_id == o.id ? 'selected' : ''}>${o.name}</option>`).join('');
     
-    const isInfinite = (Number(z.menge) === -1);
-    document.getElementById('edit-is-infinite').checked = isInfinite;
-    const mengeFeld = document.getElementById('edit-menge');
-    mengeFeld.disabled = isInfinite;
-    mengeFeld.value = isInfinite ? '∞' : z.menge;
+    // Bestimme den anzuzeigenden Wert (wird pro Ort aus der Datenbank gelesen)
+    let displayVal = '0';
+    if (data) {
+        displayVal = (data.menge == -1) ? '∞' : data.menge;
+    }
+
+    const btnColor = (displayVal === '∞') ? '#27ae60' : '#95a5a6'; // Wenn unendlich, wird der Button gleich grün
+
+    div.innerHTML = `
+        <select class="edit-ort-select" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
+        
+        <div style="flex: 1; display: flex; gap: 4px;">
+            <input type="text" class="edit-menge-input" value="${displayVal}" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;" ${displayVal === '∞' ? 'disabled' : ''}>
+            <button type="button" class="btn" style="background: ${btnColor}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleRowInfinite(this)">∞</button>
+        </div>
+
+        <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeEditRow(this)">🗑️</button>
+    `;
+    wrapper.appendChild(div);
+}
+
+function removeEditRow(btn) {
+    const wrapper = document.getElementById('edit-orte-wrapper');
+    if (wrapper.querySelectorAll('.edit-ort-row').length > 1) {
+        btn.closest('.edit-ort-row').remove();
+    } else {
+        showToast("Ein Artikel muss mindestens einen Lagerort haben!", "warning");
+    }
+}
+
+async function openEditModal(artikelId) {
+    if (!isEditMode) return;
+    const art = alleArtikelInfos.find(a => a.id === artikelId);
+    const bestaende = aktuelleDaten.filter(b => b.artikel_id === artikelId);
     
+    document.getElementById('edit-artikel-id').value = artikelId;
+    document.getElementById('edit-name').value = art.name;
+    document.getElementById('edit-kategorie').value = art.kategorie || '';
+
+    const wrapper = document.getElementById('edit-orte-wrapper');
+    wrapper.innerHTML = '';
+    
+    // Vorhandene Bestände laden (Jede Zeile weiß jetzt selbst, ob sie ∞ ist)
+    bestaende.forEach(b => addEditOrtRow(b));
+    if(bestaende.length === 0) addEditOrtRow();
+
     document.getElementById('editModal').style.display = 'block';
 }
 
 async function speichereBearbeitung() {
     try {
-        const bId = document.getElementById('edit-bestand-id').value;
-        const aId = document.getElementById('edit-artikel-id').value;
+        const aid = document.getElementById('edit-artikel-id').value;
         const nName = document.getElementById('edit-name').value;
         const nKat = document.getElementById('edit-kategorie').value;
-        const nOrt = document.getElementById('edit-ort').value;
-        
-        const isInf = document.getElementById('edit-is-infinite').checked;
-        const nMenge = isInf ? -1 : werteMengeAus(document.getElementById('edit-menge').value);
-        const aktuellesDatum = new Date().toISOString();
 
-        // SAUBERES UPDATE (Nur Kategorie)
-        await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aId);
-        
-        const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
-        
-        if (ex && !isInf && Number(ex.menge) !== -1) {
-            let res = await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge, created_at: aktuellesDatum }).eq('id', ex.id);
-            if(res.error) await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
+        // 1. Artikel-Basisdaten (Name/Kat) updaten
+        await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aid);
+
+        // 2. Alle alten Bestände dieses Artikels löschen
+        await dbClient.from('bestand').delete().eq('artikel_id', aid);
+
+        // 3. Alle neuen Zeilen sammeln und einfügen
+        const inserts = [];
+        document.querySelectorAll('.edit-ort-row').forEach(row => {
+            const oid = row.querySelector('.edit-ort-select').value;
+            const input = row.querySelector('.edit-menge-input');
+            const mRaw = input.value;
             
-            await dbClient.from('bestand').delete().eq('id', bId);
-        } else { 
-            let res = await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge, created_at: aktuellesDatum }).eq('id', bId); 
-            if(res.error) await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId);
+            // Rechnet aus, ob der Wert unendlich (-1) oder eine Zahl ist
+            const menge = (mRaw === '∞') ? -1 : werteMengeAus(mRaw);
+            
+            inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge });
+        });
+
+        if (inserts.length > 0) {
+            await dbClient.from('bestand').insert(inserts);
         }
-        
-        closeModal('editModal'); 
-        showToast('Artikel aktualisiert!');
-        ladeAlles(); 
+
+        closeModal('editModal');
+        showToast("Artikel und Standorte aktualisiert!");
+        ladeAlles();
     } catch(e) { showToast("Fehler beim Speichern", "error"); console.error(e); }
 }
 
 async function artikelLoeschen() {
-    if(confirm("Diesen Eintrag wirklich löschen?")) {
-        await dbClient.from('bestand').delete().eq('id', document.getElementById('edit-bestand-id').value);
+    if(confirm("Diesen Artikel und alle seine Standorte wirklich komplett löschen?")) {
+        const aId = document.getElementById('edit-artikel-id').value;
+        // Erst Bestände löschen, dann den Artikel
+        await dbClient.from('bestand').delete().eq('artikel_id', aId);
+        await dbClient.from('artikel').delete().eq('id', aId);
         closeModal('editModal'); 
-        showToast('Artikel gelöscht');
+        showToast('Artikel komplett gelöscht');
         ladeAlles();
     }
 }
@@ -564,18 +674,33 @@ async function artikelAnlegen() {
     try {
         const n = document.getElementById('new-name').value;
         const k = document.getElementById('new-kategorie').value;
-        const o = document.getElementById('new-ort').value; 
-        
-        const isInf = document.getElementById('new-is-infinite').checked;
-        const m = isInf ? -1 : werteMengeAus(document.getElementById('new-menge').value);
         
         if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
-        // SAUBERER INSERT (Nur Kategorie)
+        // 1. Artikel in der Datenbank anlegen
         const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k }]).select();
         if (err) { showToast("Fehler: " + err.message, "error"); return; }
         
-        await dbClient.from('bestand').insert([{ artikel_id: nA[0].id, lagerort_id: o, menge: m }]);
+        // 2. Alle angelegten Orte und Mengen auslesen
+        const bestandInserts = [];
+        const rows = document.querySelectorAll('#new-orte-wrapper .lagerort-row');
+        
+        rows.forEach(row => {
+            const ortSelect = row.querySelector('.new-ort').value;
+            const mengeInput = row.querySelector('.new-menge').value;
+            
+            // Rechnet aus, ob der Wert unendlich (-1) oder eine Zahl ist
+            const berechneteMenge = (mengeInput === '∞') ? -1 : werteMengeAus(mengeInput);
+            
+            bestandInserts.push({ 
+                artikel_id: nA[0].id, 
+                lagerort_id: ortSelect, 
+                menge: berechneteMenge 
+            });
+        });
+        
+        // 3. Alle Lagerorte (Bestände) auf einmal in die DB schreiben
+        await dbClient.from('bestand').insert(bestandInserts);
         
         closeModal('artikelModal'); 
         showToast('Neuer Artikel angelegt!');
