@@ -1047,3 +1047,119 @@ async function downloadExcel() {
     closeModal('kauflisteModal');
     showToast("Download gestartet!");
 }
+function druckePackliste() {
+    const listId = document.getElementById('packlisten-auswahl').value;
+    if (!listId) return;
+
+    const liste = packlisten.find(pl => pl.id == listId);
+    const positionen = packlistenPositionen.filter(p => p.packliste_id == listId);
+
+    // Ermittle den Basis-Pfad
+    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf("/") + 1);
+
+    const printWindow = window.open('', '_blank');
+    
+    let html = `
+        <html>
+        <head>
+            <title>Packliste: ${liste.name}</title>
+            <style>
+                body { font-family: sans-serif; padding: 20px; color: #333; }
+                
+                /* Layout für den Kopfbereich (Text links, Logo rechts) */
+                .header-container {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center; /* Zentriert beides auf gleicher Höhe */
+                    border-bottom: 2px solid #e3000f;
+                    padding-bottom: 15px;
+                    margin-bottom: 20px;
+                }
+                
+                .header-text h1 { 
+                    color: #e3000f; 
+                    margin: 0 0 5px 0; /* Abstände anpassen, da der Rahmen jetzt im Container ist */
+                }
+                
+                .header-text p {
+                    margin: 0;
+                    color: #666;
+                }
+                
+                /* Styling für das Logo in der Ecke */
+                .corner-logo { 
+                    height: 60px; /* Hier kannst du einstellen, wie groß das Logo sein soll */
+                    width: auto; 
+                }
+
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+                th { background-color: #f2f2f2; }
+                .check { width: 30px; border: 1px solid #333; height: 20px; display: inline-block; }
+                
+                @media print { 
+                    .no-print { display: none; } 
+                    tr { page-break-inside: avoid; }
+                }
+            </style>
+        </head>
+        <body>
+            <button class="no-print" onclick="window.print()" style="margin-bottom:20px; padding:10px; cursor: pointer;">🖨️ Jetzt drucken</button>
+            
+            <div class="header-container">
+                <div class="header-text">
+                    <h1>📦 Packliste: ${liste.name}</h1>
+                    <p>Erstellt am: ${new Date().toLocaleDateString('de-DE')}</p>
+                </div>
+                
+                <img src="${baseUrl}trisportlogo.jpg" class="corner-logo" alt="Trisport Erding Logo">
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Gepackt</th>
+                        <th>Gegenstand / Material</th>
+                        <th>Menge</th>
+                        <th>Lagerort</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+    positionen.forEach(pos => {
+        let name = "";
+        let ort = "-";
+
+        if (pos.artikel_id && pos.artikel) {
+            name = (pos.artikel.kategorie ? pos.artikel.kategorie + " > " : "") + pos.artikel.name;
+            const bestandInfo = aktuelleDaten.find(b => b.artikel_id === pos.artikel_id);
+            if (bestandInfo && bestandInfo.lagerorte) {
+                ort = bestandInfo.lagerorte.name;
+            }
+        } else {
+            name = pos.eigener_name + " (Manuell)";
+            ort = "Nicht im Lager";
+        }
+
+        html += `
+            <tr>
+                <td style="text-align:center; width: 60px;"><div class="check"></div></td>
+                <td><strong>${name}</strong></td>
+                <td style="width: 80px;">${pos.menge}</td>
+                <td>${ort}</td>
+            </tr>`;
+    });
+
+    html += `
+                </tbody>
+            </table>
+            
+            <div style="margin-top: 30px; font-size: 0.8em; color: #666; text-align: center;">
+                Trisport Erding Lager-Verwaltung
+            </div>
+        </body>
+        </html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+}
