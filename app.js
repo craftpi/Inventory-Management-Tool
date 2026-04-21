@@ -12,10 +12,41 @@ let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
 let einkaufslisteArray = []; 
 
-// NEU: Für Sortierung & Aufklappen
+// Sortierung & Aufklappen
 let offeneGruppen = new Set();
 let isAllOpen = false;
 let sortAscending = true;
+
+// --- TOAST NOTIFICATIONS (Professionelles Feedback) ---
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerText = message;
+    container.appendChild(toast);
+    
+    // Animation starten
+    setTimeout(() => toast.classList.add('show'), 10);
+    // Nach 3 Sekunden verschwinden lassen
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// --- HILFSFUNKTION: INLINE MATHE ---
+function werteMengeAus(eingabe) {
+    if (eingabe === undefined || eingabe === null) return 0;
+    // Erlaubt nur Zahlen und Rechenzeichen
+    const saubererString = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
+    if (saubererString === '') return 0;
+    try {
+        const ergebnis = new Function('return ' + saubererString)();
+        return Math.round(ergebnis); // Immer auf ganze Zahlen runden
+    } catch (e) {
+        return 0; // Bei Quatsch-Eingabe
+    }
+}
 
 // --- AUTHENTIFIZIERUNG ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -26,7 +57,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 dbClient.auth.onAuthStateChange(async (event, session) => {
     const overlay = document.getElementById('login-overlay');
-    if (event === 'SIGNED_IN') { overlay.style.display = 'none'; ladeAlles(); } 
+    if (event === 'SIGNED_IN') { overlay.style.display = 'none'; showToast('Erfolgreich angemeldet!'); ladeAlles(); } 
     else if (event === 'SIGNED_OUT') {
         overlay.style.display = 'flex';
         document.getElementById('lager-tabelle').innerHTML = ''; 
@@ -54,7 +85,14 @@ function wechsleModus(modus) {
 }
 
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-function openModal() { document.getElementById('artikelModal').style.display = 'block'; }
+function openModal() { 
+    document.getElementById('new-name').value = '';
+    document.getElementById('new-kategorie').value = '';
+    document.getElementById('new-menge').value = '0';
+    document.getElementById('new-menge').disabled = false;
+    document.getElementById('new-is-infinite').checked = false;
+    document.getElementById('artikelModal').style.display = 'block'; 
+}
 
 // --- DATEN LADEN ---
 async function ladeAlles() {
@@ -70,14 +108,11 @@ async function ladeLagerorte() {
         const selectEdit = document.getElementById('edit-ort');
         const filterOrt = document.getElementById('lagerort-filter'); 
         
+        let aktuellerOrtFilter = filterOrt ? filterOrt.value : 'ALLE';
+        
         if(selectNeu) selectNeu.innerHTML = ''; 
         if(selectEdit) selectEdit.innerHTML = '';
-        
-        let aktuellerOrtFilter = 'ALLE';
-        if(filterOrt) {
-            aktuellerOrtFilter = filterOrt.value;
-            filterOrt.innerHTML = '<option value="ALLE">Alle Lagerorte</option>';
-        }
+        if(filterOrt) filterOrt.innerHTML = '<option value="ALLE">Alle Lagerorte</option>';
 
         data.forEach(o => {
             if(selectNeu) selectNeu.add(new Option(o.name, o.id));
@@ -85,24 +120,21 @@ async function ladeLagerorte() {
             if(filterOrt) filterOrt.add(new Option(o.name, o.id));
         });
 
-        if(filterOrt && currentFilterExists(filterOrt, aktuellerOrtFilter)) {
+        if(filterOrt && Array.from(filterOrt.options).some(opt => opt.value === aktuellerOrtFilter)) {
             filterOrt.value = aktuellerOrtFilter;
         }
     }
-}
-
-function currentFilterExists(selectElement, val) {
-    return Array.from(selectElement.options).some(opt => opt.value === val);
 }
 
 async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
+    // Lade Artikel. Wir brauchen 'gruppe' nicht mehr, nutzen nur 'kategorie'
     const { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, gruppe, kategorie, no_group), lagerorte (id, name)`).order('id');
+        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
     
-    if (error) { alert("Datenbank-Fehler beim Laden: " + error.message); return; }
+    if (error) { showToast("Datenbank-Fehler beim Laden", "error"); return; }
     aktuelleDaten = data || []; 
 
     aktualisiereFilterDropdown(aktuelleDaten); 
@@ -115,10 +147,15 @@ function aktualisiereFilterDropdown(daten) {
     if (!dropdown) return;
     const aktuelleAuswahl = dropdown.value;
     const kategorien = new Set();
-    daten.forEach(z => { if (z.artikel && z.artikel.kategorie && z.artikel.kategorie.trim() !== '') kategorien.add(z.artikel.kategorie); });
+    daten.forEach(z => { 
+        if (z.artikel && z.artikel.kategorie && z.artikel.kategorie.trim() !== '') {
+            kategorien.add(z.artikel.kategorie.trim()); 
+        }
+    });
     dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
     Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
-    if (currentFilterExists(dropdown, aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
+    
+    if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
 }
 
 function wendeFilterAn() {
@@ -138,7 +175,6 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefilterteDaten);
 }
 
-// --- NEU: Sortier- und Gruppensteuerungs-Funktionen ---
 function toggleSortierung() {
     sortAscending = !sortAscending;
     const btn = document.getElementById('btn-sort');
@@ -147,11 +183,8 @@ function toggleSortierung() {
 }
 
 function toggleGruppe(name) {
-    if (offeneGruppen.has(name)) {
-        offeneGruppen.delete(name);
-    } else {
-        offeneGruppen.add(name);
-    }
+    if (offeneGruppen.has(name)) offeneGruppen.delete(name);
+    else offeneGruppen.add(name);
     wendeFilterAn();
 }
 
@@ -159,29 +192,12 @@ function toggleAlleGruppen() {
     isAllOpen = !isAllOpen;
     offeneGruppen.clear();
     
-    // Wenn aufklappen aktiviert wird, sammeln wir JEDE existierende Gruppe und Untergruppe
     if (isAllOpen) {
-        const prefixCounts = {};
         aktuelleDaten.forEach(zeile => {
             if (!zeile.artikel) return;
-            const gName = zeile.artikel.gruppe || 'Weitere Artikel';
-            offeneGruppen.add(gName);
-
-            if (zeile.artikel.no_group) return;
-            const prefix = zeile.artikel.name.trim().split(' ')[0];
-            if (!prefixCounts[gName]) prefixCounts[gName] = {};
-            if (!prefixCounts[gName][prefix]) prefixCounts[gName][prefix] = new Set();
-            prefixCounts[gName][prefix].add(zeile.artikel.name);
+            const katName = zeile.artikel.kategorie || 'Ohne Kategorie';
+            offeneGruppen.add(katName);
         });
-
-        // Hinzufügen aller Untergruppen, die mehr als 1 Element haben
-        for (const gName in prefixCounts) {
-            for (const prefix in prefixCounts[gName]) {
-                if (prefixCounts[gName][prefix].size > 1) {
-                    offeneGruppen.add(`${gName}_${prefix}`);
-                }
-            }
-        }
     }
     wendeFilterAn();
 }
@@ -190,133 +206,74 @@ function tabelleAktualisieren(daten) {
     const tbody = document.getElementById('lager-tabelle');
     if (!tbody) return;
     tbody.innerHTML = ''; 
-    const gruppierteDaten = {}; 
-    const gruppenSummen = {}; 
     
+    const gruppierteDaten = {}; 
+    
+    // Gruppieren nur noch nach Kategorie
     daten.forEach(zeile => {
         if (!zeile.artikel) return; 
-        const gruppenName = zeile.artikel.gruppe || 'Weitere Artikel';
-        gruppenSummen[gruppenName] = (gruppenSummen[gruppenName] || 0) + Number(zeile.menge);
-        
-        if (!gruppierteDaten[gruppenName]) { gruppierteDaten[gruppenName] = []; }
-        gruppierteDaten[gruppenName].push(zeile); 
+        const katName = zeile.artikel.kategorie || 'Ohne Kategorie';
+        if (!gruppierteDaten[katName]) { gruppierteDaten[katName] = []; }
+        gruppierteDaten[katName].push(zeile); 
     });
 
     const sortFactor = sortAscending ? 1 : -1;
-    // Alphabetisch sortieren
-    const sortedMainGroups = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
+    // Kategorien alphabetisch sortieren
+    const sortedKategorien = Object.keys(gruppierteDaten).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
 
-    for (const gruppenName of sortedMainGroups) {
-        const zeilenListe = gruppierteDaten[gruppenName];
-        const isOpen = offeneGruppen.has(gruppenName);
+    for (const katName of sortedKategorien) {
+        const zeilenListe = gruppierteDaten[katName];
+        const isOpen = offeneGruppen.has(katName);
         const icon = isOpen ? '📂' : '📁';
+
+        // Summe für den Ordner berechnen (-1 wird ignoriert und als ∞ markiert)
+        let ordnerSumme = 0;
+        let hatUnendlich = false;
+        zeilenListe.forEach(z => {
+            if(Number(z.menge) === -1) hatUnendlich = true;
+            else ordnerSumme += Number(z.menge);
+        });
+        
+        let summenAnzeige = ordnerSumme;
+        if(hatUnendlich && ordnerSumme > 0) summenAnzeige = `${ordnerSumme} + ∞`;
+        else if(hatUnendlich && ordnerSumme === 0) summenAnzeige = `∞`;
 
         const headerTr = document.createElement('tr');
         headerTr.style.cursor = 'pointer';
-        headerTr.title = "Klick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
-        headerTr.onclick = () => toggleGruppe(gruppenName);
-        headerTr.oncontextmenu = (e) => { e.preventDefault(); toggleAlleGruppen(); };
+        headerTr.onclick = () => toggleGruppe(katName);
         
         headerTr.innerHTML = `
             <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px; user-select: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>${icon} ${gruppenName}</span>
-                    <span class="summen-badge">Gesamt: ${gruppenSummen[gruppenName]}</span>
+                    <span>${icon} ${katName}</span>
+                    <span class="summen-badge">Gesamt: ${summenAnzeige}</span>
                 </div>
             </td>
         `;
         tbody.appendChild(headerTr);
 
-        // Nichts weiter zeichnen, wenn Gruppe geschlossen ist
         if (!isOpen) continue;
 
-        const prefixCounts = {};
-        const prefixSums = {};
-        
-        zeilenListe.forEach(z => {
-            if (z.artikel.no_group) return; 
-            const prefix = z.artikel.name.trim().split(' ')[0];
-            if (!prefixCounts[prefix]) { prefixCounts[prefix] = new Set(); prefixSums[prefix] = 0; }
-            prefixCounts[prefix].add(z.artikel.name);
-            prefixSums[prefix] += Number(z.menge); 
-        });
+        // Artikel innerhalb der Kategorie alphabetisch sortieren
+        zeilenListe.sort((a, b) => a.artikel.name.localeCompare(b.artikel.name, 'de') * sortFactor);
 
-        const subGroups = { 'STANDALONE': {} };
-        zeilenListe.forEach(z => {
-            const prefix = z.artikel.name.trim().split(' ')[0];
-            const isCollection = !z.artikel.no_group && prefixCounts[prefix] && prefixCounts[prefix].size > 1;
-            const groupKey = isCollection ? prefix : 'STANDALONE';
-            
-            if (!subGroups[groupKey]) subGroups[groupKey] = {};
-            if (!subGroups[groupKey][z.artikel.name]) subGroups[groupKey][z.artikel.name] = [];
-            subGroups[groupKey][z.artikel.name].push(z);
-        });
-
-        // Untergruppen alphabetisch sortieren, aber Einzelartikel bleiben als Block zusammen
-        const sortedSubNames = Object.keys(subGroups).sort((a, b) => {
-            if (a === 'STANDALONE') return -1;
-            if (b === 'STANDALONE') return 1;
-            return a.localeCompare(b, 'de') * sortFactor;
-        });
-
-        renderArtikelRows(subGroups['STANDALONE'], tbody, false, sortFactor);
-
-        for (const subName of sortedSubNames) {
-            if (subName === 'STANDALONE') continue;
-            
-            const artObj = subGroups[subName];
-            const subId = `${gruppenName}_${subName}`;
-            const isSubOpen = offeneGruppen.has(subId);
-            const subIcon = isSubOpen ? '📂' : '📁';
-            
-            const subTr = document.createElement('tr');
-            subTr.style.cursor = 'pointer';
-            subTr.title = "Klick: Auf/Zu | Rechtsklick: Alle Auf/Zu";
-            subTr.onclick = () => toggleGruppe(subId);
-            subTr.oncontextmenu = (e) => { e.preventDefault(); toggleAlleGruppen(); };
-            
-            subTr.innerHTML = `
-                <td colspan="3" style="background-color: #f8f9fa; color: #2980b9; font-weight: bold; padding: 8px 12px 8px 25px; border-bottom: 1px solid #e2e8f0; user-select: none;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span>${subIcon} ${subName}</span>
-                        <span class="sub-sum-badge">Gesamt: ${prefixSums[subName]}</span>
-                    </div>
-                </td>
-            `;
-            tbody.appendChild(subTr);
-            
-            if (isSubOpen) {
-                renderArtikelRows(artObj, tbody, true, sortFactor);
-            }
-        }
-    }
-}
-
-function renderArtikelRows(artObj, tbody, isSub, sortFactor) {
-    if (!artObj) return;
-    // Artikel selbst alphabetisch sortieren
-    const sortedItemNames = Object.keys(artObj).sort((a, b) => a.localeCompare(b, 'de') * sortFactor);
-
-    for (const aName of sortedItemNames) {
-        const bList = artObj[aName];
-        
-        // Sortiere bei gleichen Artikeln nach dem Lagerort
-        bList.sort((a, b) => (a.lagerorte?.name || '').localeCompare(b.lagerorte?.name || '', 'de') * sortFactor);
-
-        bList.forEach((z, i) => {
+        zeilenListe.forEach((z) => {
             const tr = document.createElement('tr');
-            tr.className = "item-row"; 
             tr.style.cursor = isEditMode ? "pointer" : "default";
             tr.onclick = (e) => { if(e.target.tagName !== 'INPUT') openEditModal(z.id); };
             
-            let paddingLeft = isSub ? 45 : 15;
-            let prefixIcon = isSub ? '◦' : '↳';
-            let nZelle = i === 0 ? `<td style="padding-left:${paddingLeft}px; color:#333;">${prefixIcon} <strong>${aName}</strong></td>` : `<td></td>`; 
+            let mengeZelle = "";
+            if (Number(z.menge) === -1) {
+                // Anzeige für Verbrauchsartikel
+                mengeZelle = `<span style="font-size: 1.5em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span>`;
+            } else {
+                mengeZelle = `<input type="text" id="menge-${z.id}" class="menge-input" value="${z.menge}" onchange="speichereMenge(${z.id})" placeholder="z.B. 5+2">`;
+            }
             
             tr.innerHTML = `
-                ${nZelle}
+                <td style="padding-left: 25px; color:#333;">↳ <strong>${z.artikel.name}</strong></td>
                 <td style="color:#666;">📍 ${z.lagerorte.name}</td>
-                <td><input type="number" id="menge-${z.id}" class="menge-input" value="${z.menge}" onchange="speichereMenge(${z.id})"></td>
+                <td>${mengeZelle}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -334,17 +291,18 @@ function openEditModal(bId) {
     if (!isEditMode) return; 
     const z = aktuelleDaten.find(x => x.id === bId);
     if (!z) return;
+    
     document.getElementById('edit-bestand-id').value = z.id;
     document.getElementById('edit-artikel-id').value = z.artikel_id;
     document.getElementById('edit-name').value = z.artikel.name;
-    if(document.getElementById('edit-kategorie')) document.getElementById('edit-kategorie').value = z.artikel.kategorie || '';
-    document.getElementById('edit-gruppe').value = z.artikel.gruppe || '';
+    document.getElementById('edit-kategorie').value = z.artikel.kategorie || '';
     document.getElementById('edit-ort').value = z.lagerort_id;
-    document.getElementById('edit-menge').value = z.menge;
     
-    if(document.getElementById('edit-no-group')) {
-        document.getElementById('edit-no-group').checked = z.artikel.no_group === true;
-    }
+    const isInfinite = (Number(z.menge) === -1);
+    document.getElementById('edit-is-infinite').checked = isInfinite;
+    const mengeFeld = document.getElementById('edit-menge');
+    mengeFeld.disabled = isInfinite;
+    mengeFeld.value = isInfinite ? '∞' : z.menge;
     
     document.getElementById('editModal').style.display = 'block';
 }
@@ -354,73 +312,86 @@ async function speichereBearbeitung() {
         const bId = document.getElementById('edit-bestand-id').value;
         const aId = document.getElementById('edit-artikel-id').value;
         const nName = document.getElementById('edit-name').value;
-        const nKat = document.getElementById('edit-kategorie') ? document.getElementById('edit-kategorie').value : '';
-        const nGrp = document.getElementById('edit-gruppe').value;
+        const nKat = document.getElementById('edit-kategorie').value;
         const nOrt = document.getElementById('edit-ort').value;
-        const nMenge = Number(document.getElementById('edit-menge').value);
         
-        const nNoGrp = document.getElementById('edit-no-group') ? document.getElementById('edit-no-group').checked : false;
+        const isInf = document.getElementById('edit-is-infinite').checked;
+        const nMenge = isInf ? -1 : werteMengeAus(document.getElementById('edit-menge').value);
 
-        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, gruppe: nGrp, no_group: nNoGrp }).eq('id', aId);
+        await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aId);
         
+        // Prüfen, ob am neuen Lagerort schon was liegt, um es zusammenzufassen
         const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
-        if (ex) {
+        
+        if (ex && !isInf && Number(ex.menge) !== -1) {
             await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
             await dbClient.from('bestand').delete().eq('id', bId);
-        } else { await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId); }
+        } else { 
+            await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId); 
+        }
         
-        closeModal('editModal'); ladeAlles(); 
-    } catch(e) { console.error("Fehler", e); }
+        closeModal('editModal'); 
+        showToast('Artikel aktualisiert!');
+        ladeAlles(); 
+    } catch(e) { showToast("Fehler beim Speichern", "error"); console.error(e); }
 }
 
 async function artikelLoeschen() {
     if(confirm("Diesen Eintrag wirklich löschen?")) {
         await dbClient.from('bestand').delete().eq('id', document.getElementById('edit-bestand-id').value);
-        closeModal('editModal'); ladeAlles();
+        closeModal('editModal'); 
+        showToast('Artikel gelöscht');
+        ladeAlles();
     }
 }
 
 async function speichereMenge(bId) {
     const f = document.getElementById(`menge-${bId}`);
-    if(f) f.style.backgroundColor = '#fff3cd'; 
-    const { error } = await dbClient.from('bestand').update({ menge: f.value }).eq('id', bId);
+    if(!f) return;
+    
+    // Die Mathematik-Magie anwenden! Aus "35+23" wird 58
+    const neueMenge = werteMengeAus(f.value);
+    f.value = neueMenge; // Feld direkt aktualisieren
+    f.style.backgroundColor = '#fff3cd'; 
+
+    const { error } = await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bId);
     if (!error) {
-        if(f) f.style.backgroundColor = '#d4edda'; 
+        f.style.backgroundColor = '#d4edda'; 
+        showToast(`Bestand gespeichert: ${neueMenge}`);
         setTimeout(() => { if(f) f.style.backgroundColor = ''; ladeAlles(); }, 800); 
+    } else {
+        showToast("Speicherfehler!", "error");
     }
 }
 
 async function artikelAnlegen() {
     try {
         const n = document.getElementById('new-name').value;
-        const g = document.getElementById('new-gruppe').value;
+        const k = document.getElementById('new-kategorie').value;
         const o = document.getElementById('new-ort').value; 
-        const m = document.getElementById('new-menge').value;
-        const k = document.getElementById('new-kategorie') ? document.getElementById('new-kategorie').value : '';
         
-        const ng = document.getElementById('new-no-group') ? document.getElementById('new-no-group').checked : false;
+        const isInf = document.getElementById('new-is-infinite').checked;
+        const m = isInf ? -1 : werteMengeAus(document.getElementById('new-menge').value);
         
-        if (!n) { alert("Name fehlt!"); return; }
+        if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
-        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, gruppe: g, no_group: ng }]).select();
-        if (err) { alert("Fehler: " + err.message); return; }
+        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k }]).select();
+        if (err) { showToast("Fehler: " + err.message, "error"); return; }
+        
         await dbClient.from('bestand').insert([{ artikel_id: nA[0].id, lagerort_id: o, menge: m }]);
         
         closeModal('artikelModal'); 
-        document.getElementById('new-name').value = '';
-        if(document.getElementById('new-kategorie')) document.getElementById('new-kategorie').value = '';
-        document.getElementById('new-gruppe').value = '';
-        if(document.getElementById('new-no-group')) document.getElementById('new-no-group').checked = false;
-        
+        showToast('Neuer Artikel angelegt!');
         ladeAlles(); 
-    } catch (e) { console.error("Fehler", e); }
+    } catch (e) { console.error(e); showToast("Fehler", "error"); }
 }
 
 async function neuenLagerortAnlegen() {
     const nOrt = prompt("Wie heißt der neue Lagerort?");
     if (!nOrt || nOrt.trim() === "") return;
     const { error } = await dbClient.from('lagerorte').insert([{ name: nOrt.trim() }]);
-    if (error) alert("Fehler: " + error.message); else ladeAlles();
+    if (error) showToast("Fehler: " + error.message, "error"); 
+    else { showToast('Neuer Ort angelegt'); ladeAlles(); }
 }
 
 
@@ -443,7 +414,7 @@ async function ladeEventDaten() {
 
         zeigePackliste();
     } catch(e) {
-        console.error("Fehler beim Event-Laden:", e);
+        showToast("Fehler beim Event-Laden", "error");
     }
 }
 
@@ -451,7 +422,8 @@ async function neuePacklisteAnlegen() {
     const nName = prompt("Name der neuen Packliste (z.B. Resort Wechselzone):");
     if (!nName || nName.trim() === "") return;
     const { error } = await dbClient.from('packlisten').insert([{ name: nName.trim() }]);
-    if (error) alert("Fehler: " + error.message); else ladeEventDaten();
+    if (error) showToast("Fehler: " + error.message, "error"); 
+    else { showToast('Packliste erstellt'); ladeEventDaten(); }
 }
 
 function zeigePackliste() {
@@ -480,20 +452,33 @@ function zeigePackliste() {
             anzeigeName = pos.artikel.name;
             
             let gesamtLager = 0;
-            aktuelleDaten.forEach(b => { if(b.artikel_id === pos.artikel_id) gesamtLager += Number(b.menge); });
+            let hatUnendlich = false;
             
-            let verbrauchtAndere = 0;
-            packlistenPositionen.forEach(p => {
-                if (p.artikel_id === pos.artikel_id && p.packliste_id != currentId) verbrauchtAndere += Number(p.menge);
+            aktuelleDaten.forEach(b => { 
+                if(b.artikel_id === pos.artikel_id) {
+                    if(Number(b.menge) === -1) hatUnendlich = true;
+                    gesamtLager += Number(b.menge); 
+                }
             });
-
-            const verfuegbar = gesamtLager - verbrauchtAndere;
-            availableHtml = verfuegbar;
-
-            if (pos.menge > verfuegbar) {
-                statusHtml = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
-            } else {
+            
+            if (hatUnendlich) {
+                // Wenn Unendlich-Markierung, dann immer verfügbar
+                availableHtml = `<span style="font-size:1.2em; font-weight:bold;">∞</span>`;
                 statusHtml = `<span class="event-ok">✅ OK</span>`;
+            } else {
+                let verbrauchtAndere = 0;
+                packlistenPositionen.forEach(p => {
+                    if (p.artikel_id === pos.artikel_id && p.packliste_id != currentId) verbrauchtAndere += Number(p.menge);
+                });
+
+                const verfuegbar = gesamtLager - verbrauchtAndere;
+                availableHtml = verfuegbar;
+
+                if (pos.menge > verfuegbar) {
+                    statusHtml = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
+                } else {
+                    statusHtml = `<span class="event-ok">✅ OK</span>`;
+                }
             }
         } else {
             anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigener)</small>";
@@ -502,7 +487,7 @@ function zeigePackliste() {
 
         let mengeZelle = pos.menge;
         if (isEventEditMode) {
-            mengeZelle = `<input type="number" class="menge-input" value="${pos.menge}" onchange="updatePackMenge(${pos.id}, this.value)">`;
+            mengeZelle = `<input type="text" class="menge-input" value="${pos.menge}" onchange="updatePackMenge(${pos.id}, this.value)">`;
             statusHtml += ` <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:10px;" onclick="loeschePackPosition(${pos.id})">🗑️</button>`;
         }
 
@@ -520,11 +505,13 @@ function toggleEventEditMode() {
 
 function openPackItemModal() {
     const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) { alert("Bitte wähle zuerst eine Packliste aus!"); return; }
+    if (!listId) { showToast("Bitte wähle zuerst eine Packliste aus!", "warning"); return; }
     
     const sel = document.getElementById('pack-artikel-select');
     sel.innerHTML = '';
-    alleArtikelInfos.forEach(art => sel.add(new Option(art.name, art.id)));
+    // Sortiere Artikel im Dropdown alphabetisch
+    const sortierteArt = [...alleArtikelInfos].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    sortierteArt.forEach(art => sel.add(new Option(art.name, art.id)));
     
     document.getElementById('packItemModal').style.display = 'block';
     togglePackTyp();
@@ -547,7 +534,19 @@ function aktualisierePackVerfuegbarkeit() {
     if (!selId) { infoDiv.innerHTML = ''; return; }
 
     let gesamtLager = 0;
-    aktuelleDaten.forEach(b => { if(b.artikel_id === selId) gesamtLager += Number(b.menge); });
+    let hatUnendlich = false;
+    aktuelleDaten.forEach(b => { 
+        if(b.artikel_id === selId) {
+            if(Number(b.menge) === -1) hatUnendlich = true;
+            gesamtLager += Number(b.menge); 
+        }
+    });
+
+    if (hatUnendlich) {
+        infoDiv.innerHTML = `✅ Verbrauchsartikel (Unendlich auf Lager)`;
+        infoDiv.style.color = '#27ae60';
+        return;
+    }
 
     let reserviert = 0;
     packlistenPositionen.forEach(p => { if (p.artikel_id === selId) reserviert += Number(p.menge); });
@@ -569,7 +568,7 @@ function aktualisierePackVerfuegbarkeit() {
 async function packPositionSpeichern() {
     const listId = document.getElementById('packlisten-auswahl').value;
     const typ = document.getElementById('pack-typ').value;
-    const menge = document.getElementById('pack-menge').value;
+    const menge = werteMengeAus(document.getElementById('pack-menge').value); // Auch hier Mathe erlauben
     
     let dbObj = { packliste_id: listId, menge: menge };
 
@@ -577,17 +576,24 @@ async function packPositionSpeichern() {
         dbObj.artikel_id = document.getElementById('pack-artikel-select').value;
     } else {
         const en = document.getElementById('pack-eigener-name').value;
-        if (!en) { alert("Bitte Namen eingeben!"); return; }
+        if (!en) { showToast("Bitte Namen eingeben!", "warning"); return; }
         dbObj.eigener_name = en;
     }
 
     const { error } = await dbClient.from('packlisten_positionen').insert([dbObj]);
-    if (error) alert("Fehler: " + error.message);
-    else { closeModal('packItemModal'); document.getElementById('pack-eigener-name').value=''; ladeEventDaten(); }
+    if (error) showToast("Fehler: " + error.message, "error");
+    else { 
+        closeModal('packItemModal'); 
+        document.getElementById('pack-eigener-name').value=''; 
+        showToast("Zur Packliste hinzugefügt!");
+        ladeEventDaten(); 
+    }
 }
 
 async function updatePackMenge(posId, neueMenge) {
-    await dbClient.from('packlisten_positionen').update({ menge: neueMenge }).eq('id', posId);
+    const calcMenge = werteMengeAus(neueMenge);
+    await dbClient.from('packlisten_positionen').update({ menge: calcMenge }).eq('id', posId);
+    showToast("Menge in Packliste aktualisiert");
     ladeEventDaten();
 }
 
@@ -600,24 +606,26 @@ async function loeschePackPosition(posId) {
 
 async function umbenennePackliste() {
     const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) { alert("Bitte wähle zuerst eine Packliste aus."); return; }
+    if (!listId) { showToast("Bitte wähle zuerst eine Packliste aus.", "warning"); return; }
 
     const aktuelleListe = packlisten.find(pl => pl.id == listId);
     const neuerName = prompt("Neuer Name für die Packliste:", aktuelleListe.name);
 
     if (!neuerName || neuerName.trim() === "" || neuerName === aktuelleListe.name) return;
     const { error } = await dbClient.from('packlisten').update({ name: neuerName.trim() }).eq('id', listId);
-    if (error) alert("Fehler: " + error.message); else ladeEventDaten();
+    if (error) showToast("Fehler: " + error.message, "error"); 
+    else { showToast("Packliste umbenannt"); ladeEventDaten(); }
 }
 
 async function loeschePackliste() {
     const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) { alert("Bitte wähle zuerst eine Packliste aus."); return; }
+    if (!listId) return;
 
     const aktuelleListe = packlisten.find(pl => pl.id == listId);
     if (confirm(`Möchtest du die Packliste "${aktuelleListe.name}" wirklich löschen?`)) {
         const { error } = await dbClient.from('packlisten').delete().eq('id', listId);
-        if (error) alert("Fehler: " + error.message); else { document.getElementById('packlisten-auswahl').value = ""; ladeEventDaten(); }
+        if (error) showToast("Fehler: " + error.message, "error"); 
+        else { document.getElementById('packlisten-auswahl').value = ""; showToast("Gelöscht!"); ladeEventDaten(); }
     }
 }
 
@@ -629,8 +637,14 @@ function startEinkaufsliste() {
     einkaufslisteArray = []; 
 
     let artikelBestand = {};
+    let artikelUnendlich = new Set();
+    
     aktuelleDaten.forEach(b => {
-        artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
+        if (Number(b.menge) === -1) {
+            artikelUnendlich.add(b.artikel_id);
+        } else {
+            artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
+        }
     });
 
     let artikelBedarf = {};
@@ -638,7 +652,10 @@ function startEinkaufsliste() {
 
     packlistenPositionen.forEach(p => {
         if (p.artikel_id) {
-            artikelBedarf[p.artikel_id] = (artikelBedarf[p.artikel_id] || 0) + Number(p.menge);
+            // Wenn der Artikel unendlich ist, brauchen wir ihn nicht auf der Einkaufsliste
+            if (!artikelUnendlich.has(p.artikel_id)) {
+                artikelBedarf[p.artikel_id] = (artikelBedarf[p.artikel_id] || 0) + Number(p.menge);
+            }
         } else if (p.eigener_name) {
             eigeneGegenstaende[p.eigener_name] = (eigeneGegenstaende[p.eigener_name] || 0) + Number(p.menge);
         }
@@ -651,7 +668,7 @@ function startEinkaufsliste() {
         let bestand = artikelBestand[art.id] || 0;
         let bedarf = artikelBedarf[art.id] || 0;
         
-        if (bedarf > bestand) {
+        if (bedarf > bestand && !artikelUnendlich.has(art.id)) {
             let fehlMenge = bedarf - bestand;
             einkaufslisteArray.push({ artikel: art.name, menge: fehlMenge, grund: 'Fehlt im Lager' });
             ulAuto.innerHTML += `<li>${fehlMenge}x ${art.name}</li>`;
@@ -675,7 +692,7 @@ function manuellAufZettel() {
     const nameFeld = document.getElementById('manuell-kauf-name');
     const mengeFeld = document.getElementById('manuell-kauf-menge');
     const name = nameFeld.value.trim();
-    const menge = Number(mengeFeld.value);
+    const menge = werteMengeAus(mengeFeld.value); // Mathe auch hier!
 
     if (!name || menge <= 0) return;
 
@@ -691,7 +708,7 @@ function manuellAufZettel() {
 
 async function downloadExcel() {
     if (einkaufslisteArray.length === 0) {
-        alert("Die Liste ist komplett leer. Es gibt nichts zum Herunterladen.");
+        showToast("Die Liste ist komplett leer.", "warning");
         return;
     }
 
@@ -721,9 +738,7 @@ async function downloadExcel() {
             pattern: 'solid',
             fgColor: { argb: 'FF3498DB' } 
         };
-        cell.border = {
-            bottom: { style: 'medium', color: { argb: 'FF000000' } } 
-        };
+        cell.border = { bottom: { style: 'medium', color: { argb: 'FF000000' } } };
     });
 
     let currentRow = 5;
@@ -753,4 +768,5 @@ async function downloadExcel() {
     window.URL.revokeObjectURL(url);
 
     closeModal('kauflisteModal');
+    showToast("Download gestartet!");
 }

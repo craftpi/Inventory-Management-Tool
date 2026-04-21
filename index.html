@@ -15,7 +15,6 @@
         .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 0.95em; font-weight: bold; }
         .btn:hover { background-color: #2980b9; }
         
-        /* Modus Schalter */
         .modus-switch { display: flex; gap: 10px; margin-bottom: 20px; background: #f4f4f9; padding: 5px; border-radius: 8px; }
         .btn-modus { flex: 1; background: transparent; color: #666; }
         .btn-modus.active { background: #e3000f; color: white; }
@@ -27,35 +26,33 @@
         table { width: 100%; border-collapse: collapse; min-width: 500px; }
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
         th { background-color: #3498db; color: white; }
-        .menge-input { width: 60px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
-        .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
-        .sub-sum-badge { font-size: 0.75em; background: #7f8c8d; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; font-weight: normal; }
         
-        /* Event Modus Styles */
+        /* Das Feld ist jetzt etwas breiter, damit man "35+23" gut tippen kann */
+        .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+        
+        .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
+        
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
         .event-ok { color: #27ae60; font-weight: bold; }
         
-        /* Modals - SCROLL OPTIMIERT */
         .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
-        .modal-content { 
-            background-color: white; 
-            margin: 5vh auto; 
-            padding: 25px; 
-            border-radius: 10px; 
-            width: 90%; 
-            max-width: 400px; 
-            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-            max-height: 85vh;
-            overflow-y: auto;
-            box-sizing: border-box;
-        }
+        .modal-content { background-color: white; margin: 5vh auto; padding: 25px; border-radius: 10px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); max-height: 85vh; overflow-y: auto; box-sizing: border-box; }
         
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input, .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
+        .form-group input[type="text"], .form-group input[type="password"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
+        
         .flex-buttons { display: flex; gap: 10px; margin-top: 25px; }
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
+
+        /* NEU: Toast Notifications CSS */
+        #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: #333; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transform: translateY(20px); transition: opacity 0.3s, transform 0.3s; font-weight: bold; }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.success { background: #27ae60; }
+        .toast.error { background: #e74c3c; }
+        .toast.warning { background: #f39c12; }
 
         @media (max-width: 600px) {
             body { padding: 10px 5px; }
@@ -63,17 +60,12 @@
             .action-bar, .action-group { flex-direction: column; align-items: stretch; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
-            
-            .packlisten-wrapper { flex-direction: row; flex-wrap: wrap; }
-            .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
-            .packlisten-wrapper button { flex: 1; width: auto; }
-            
-            .flex-buttons { flex-direction: column; }
-            .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; }
         }
     </style>
 </head>
 <body>
+
+<div id="toast-container"></div>
 
 <div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
@@ -88,7 +80,7 @@
 <div class="container">
     <h1>
         <span>📦 Lager-Verwaltung</span>
-        <button class="btn" style="background-color: #e74c3c; font-size: 0.8em;" onclick="handleLogout()">🔒 Abmelden</button>
+        <button class="btn" style="background-color: #e74c3c; font-size: 0.8em; width: auto;" onclick="handleLogout()">🔒 Abmelden</button>
     </h1>
     
     <div class="modus-switch">
@@ -97,7 +89,7 @@
     </div>
 
     <div id="ansicht-lager">
-        <p class="subtitle">Aktuelle Bestandsübersicht über alle Kisten und Regale.</p>
+        <p class="subtitle">Aktuelle Bestandsübersicht. Tippe "35+12" in die Mengen-Felder, um direkt zu rechnen!</p>
         <div class="action-bar">
             <div class="action-group">
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
@@ -107,7 +99,6 @@
                 <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Kategorien</option>
                 </select>
-                
                 <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Lagerorte</option>
                 </select>
@@ -118,17 +109,16 @@
                 <thead>
                     <tr>
                         <th style="vertical-align: middle;">
-                            <!-- NEU: Eine Flexbox zwingt die Buttons in die "Artikel" Spalte -->
                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <span>Artikel</span>
+                                <span>Kategorie / Artikel</span>
                                 <span style="display: flex; gap: 5px;">
-                                    <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="A-Z / Z-A Sortierung" onmouseover="this.style.background='rgba(255,255,255,0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">A-Z</button>
-                                    <button onclick="toggleAlleGruppen()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="Alle Ordner auf-/zuklappen" onmouseover="this.style.background='rgba(255,255,255,0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">↕️</button>
+                                    <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="A-Z / Z-A Sortierung">A-Z</button>
+                                    <button onclick="toggleAlleGruppen()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="Alle Ordner auf-/zuklappen">↕️</button>
                                 </span>
                             </div>
                         </th>
                         <th style="vertical-align: middle; width: 120px;">Lagerort</th>
-                        <th style="vertical-align: middle; width: 80px;">Menge</th>
+                        <th style="vertical-align: middle; width: 100px;">Menge</th>
                     </tr>
                 </thead>
                 <tbody id="lager-tabelle"><tr><td colspan="3" style="text-align:center; padding:30px;">Lade Daten...</td></tr></tbody>
@@ -138,15 +128,14 @@
 
     <div id="ansicht-event" style="display: none;">
         <p class="subtitle">Packlisten für Resorts. Die Verfügbarkeit berechnet sich automatisch aus dem Lagerbestand.</p>
-        
         <div class="action-bar">
             <div class="action-group">
                 <div class="packlisten-wrapper" style="display: flex; gap: 5px; flex: 2; width: 100%;">
                     <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 1; min-width: 0;" onchange="zeigePackliste()">
                         <option value="">-- Wähle Resort / Packliste --</option>
                     </select>
-                    <button class="btn" style="background-color: #95a5a6; padding: 10px;" onclick="umbenennePackliste()" title="Packliste umbenennen">✏️</button>
-                    <button class="btn" style="background-color: #c0392b; padding: 10px;" onclick="loeschePackliste()" title="Packliste löschen">🗑️</button>
+                    <button class="btn" style="background-color: #95a5a6; padding: 10px; width: auto;" onclick="umbenennePackliste()" title="Packliste umbenennen">✏️</button>
+                    <button class="btn" style="background-color: #c0392b; padding: 10px; width: auto;" onclick="loeschePackliste()" title="Packliste löschen">🗑️</button>
                 </div>
                 
                 <button class="btn" style="background-color: #8e44ad;" onclick="startEinkaufsliste()">🛒 Einkaufsliste</button>
@@ -171,19 +160,22 @@
     </div>
 </div>
 
-<!-- Modals -->
 <div id="artikelModal" class="modal">
     <div class="modal-content">
         <h2>Neuer Artikel</h2>
-        <div class="form-group"><label>Name</label><input type="text" id="new-name" placeholder="z.B. Handschuhe"></div>
-        <div class="form-group"><label>Kategorie</label><input type="text" id="new-kategorie"></div>
-        <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe"></div>
+        <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
+        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
         <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
-        <div class="form-group"><label>Start-Menge</label><input type="number" id="new-menge" value="0"></div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-            <input type="checkbox" id="new-no-group" style="width: auto;">
-            <label for="new-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
+        
+        <div class="form-group">
+            <label>Start-Menge (Zahl oder Rechnung)</label>
+            <input type="text" id="new-menge" value="0" placeholder="z.B. 10 oder 5+5">
         </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
+            <input type="checkbox" id="new-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('new-menge').disabled = this.checked; if(this.checked) document.getElementById('new-menge').value = '∞'; else document.getElementById('new-menge').value = '0';">
+            <label for="new-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
+        </div>
+        
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('artikelModal')">Abbrechen</button>
@@ -196,19 +188,23 @@
         <h2>Artikel bearbeiten</h2>
         <input type="hidden" id="edit-bestand-id"><input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
-        <div class="form-group"><label>Kategorie</label><input type="text" id="edit-kategorie"></div>
-        <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
+        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie"></div>
         <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
-        <div class="form-group"><label>Menge</label><input type="number" id="edit-menge"></div>
-        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-            <input type="checkbox" id="edit-no-group" style="width: auto;">
-            <label for="edit-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
+        
+        <div class="form-group">
+            <label>Menge</label>
+            <input type="text" id="edit-menge" placeholder="z.B. 10 oder 5+5">
         </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
+            <input type="checkbox" id="edit-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('edit-menge').disabled = this.checked; if(this.checked) document.getElementById('edit-menge').value = '∞';">
+            <label for="edit-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
+        </div>
+
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>
         </div>
-        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Löschen</button>
+        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Artikel komplett löschen</button>
     </div>
 </div>
 
@@ -232,8 +228,8 @@
             <input type="text" id="pack-eigener-name" placeholder="z.B. Miet-Transporter">
         </div>
         <div class="form-group">
-            <label>Benötigte Menge</label>
-            <input type="number" id="pack-menge" value="1">
+            <label>Benötigte Menge (Zahl)</label>
+            <input type="text" id="pack-menge" value="1">
         </div>
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="packPositionSpeichern()">Hinzufügen</button>
@@ -245,24 +241,20 @@
 <div id="kauflisteModal" class="modal">
     <div class="modal-content" style="max-width: 500px;">
         <h2 style="margin-top: 0; color: #8e44ad;">🛒 Einkaufsliste</h2>
-        
         <p style="margin-bottom: 5px; font-weight: bold;">Automatisch erkannter Fehlbestand:</p>
         <div style="max-height: 150px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border: 1px solid #fadbd8;">
             <ul id="auto-kauf-liste" style="margin: 0; padding-left: 20px; color: #c0392b;"></ul>
         </div>
-
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ddd;">
-
         <p style="margin-bottom: 10px; font-weight: bold;">Zusätzliche Dinge manuell hinzufügen:</p>
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
             <input type="text" id="manuell-kauf-name" placeholder="z.B. Klebeband" style="flex: 3; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            <input type="number" id="manuell-kauf-menge" value="1" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            <button class="btn" style="background-color: #3498db;" onclick="manuellAufZettel()">+ Add</button>
+            <input type="text" id="manuell-kauf-menge" value="1" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <button class="btn" style="background-color: #3498db; width: auto;" onclick="manuellAufZettel()">+ Add</button>
         </div>
         <div style="max-height: 100px; overflow-y: auto;">
             <ul id="manuell-kauf-liste" style="margin: 0; padding-left: 20px; color: #27ae60;"></ul>
         </div>
-
         <div class="flex-buttons" style="margin-top: 25px;">
             <button class="btn btn-save" style="background-color: #8e44ad;" onclick="downloadExcel()">📥 Excel Herunterladen</button>
             <button class="btn btn-cancel" onclick="closeModal('kauflisteModal')">Abbrechen</button>
