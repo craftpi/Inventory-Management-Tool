@@ -579,12 +579,27 @@ async function artikelAnlegen() {
     } catch (e) { console.error(e); showToast("Fehler", "error"); }
 }
 
-async function neuenLagerortAnlegen() {
-    const nOrt = prompt("Wie heißt der neue Lagerort?");
-    if (!nOrt || nOrt.trim() === "") return;
-    const { error } = await dbClient.from('lagerorte').insert([{ name: nOrt.trim() }]);
-    if (error) showToast("Fehler: " + error.message, "error"); 
-    else { showToast('Neuer Ort angelegt'); ladeAlles(); }
+function openNeuOrtModal() {
+    document.getElementById('neu-ort-name').value = '';
+    document.getElementById('neuOrtModal').style.display = 'block';
+}
+
+async function speichereNeuenOrt() {
+    const nOrt = document.getElementById('neu-ort-name').value.trim();
+    if (!nOrt) { 
+        showToast("Bitte einen Namen für den Lagerort eingeben!", "warning"); 
+        return; 
+    }
+    
+    const { error } = await dbClient.from('lagerorte').insert([{ name: nOrt }]);
+    
+    if (error) {
+        showToast("Fehler: " + error.message, "error"); 
+    } else { 
+        closeModal('neuOrtModal');
+        showToast('Neuer Ort angelegt!'); 
+        ladeAlles(); 
+    }
 }
 
 // --- LAGERORTE VERWALTEN ---
