@@ -7,7 +7,7 @@ let aktuelleDaten = [];
 let packlisten = [];
 let packlistenPositionen = [];
 let alleArtikelInfos = []; 
-let alleLagerorte = []; // NEU für Lagerort-Verwaltung
+let alleLagerorte = []; 
 let isEditMode = false;
 let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
@@ -21,6 +21,7 @@ let sortAscending = true;
 // --- TOAST NOTIFICATIONS ---
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
+    if(!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.innerText = message;
@@ -31,6 +32,20 @@ function showToast(message, type = 'success') {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
     }, 3000);
+}
+
+// --- DATUM HOVER ANZEIGE ---
+function showDateHover(dateString) {
+    const box = document.getElementById('hover-date-info');
+    const text = document.getElementById('hover-date-text');
+    if (box && text) {
+        text.innerText = dateString;
+        box.style.display = 'block';
+    }
+}
+function hideDateHover() {
+    const box = document.getElementById('hover-date-info');
+    if (box) box.style.display = 'none';
 }
 
 // --- HILFSFUNKTION: INLINE MATHE ---
@@ -109,7 +124,7 @@ async function ladeAlles() {
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
     if (data) {
-        alleLagerorte = data; // Global speichern für die Verwaltungsansicht
+        alleLagerorte = data; 
 
         const selectNeu = document.getElementById('new-ort');
         const selectEdit = document.getElementById('edit-ort');
@@ -137,12 +152,21 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    const { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
+    // SICHERER FALLBACK FÜR DAS DATUM: 
+    // Versuch 1: Mit created_at laden
+    let { data, error } = await dbClient.from('bestand')
+        .select(`id, menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
     
-    if (error) { showToast("Datenbank-Fehler beim Laden", "error"); return; }
-    aktuelleDaten = data || []; 
+    // Versuch 2 (Rettungsschirm): Wenn Spalte fehlt, dann ohne Datum laden (App stürzt nicht ab!)
+    if (error) {
+        console.warn("Spalte created_at fehlt in Supabase. Lade ohne Datum.");
+        const fallback = await dbClient.from('bestand')
+            .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
+        data = fallback.data;
+        if (fallback.error) { showToast("Datenbank-Fehler", "error"); return; }
+    }
 
+    aktuelleDaten = data || []; 
     aktualisiereFilterDropdown(aktuelleDaten); 
     wendeFilterAn(); 
 }
@@ -310,6 +334,13 @@ function tabelleAktualisieren(daten) {
                 displayName = displayName.substring(prefix.length).trim(); 
             }
             
+            // Datum auslesen (Falls Spalte im Fallback fehlte, bleibt es "Unbekannt")
+            let dateStr = 'Unbekannt';
+            if (z.created_at) {
+                const d = new Date(z.created_at);
+                dateStr = d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + ' Uhr';
+            }
+
             let isInfinite = (Number(z.menge) === -1);
             let resHtml = '';
             
@@ -330,7 +361,9 @@ function tabelleAktualisieren(daten) {
             }
             
             tr.innerHTML = `
-                <td style="padding-left: ${indent}px; color:#333;">${iconLabel} <strong>${displayName}</strong></td>
+                <td style="padding-left: ${indent}px; color:#333;" onmouseenter="showDateHover('${dateStr}')" onmouseleave="hideDateHover()">
+                    ${iconLabel} <strong>${displayName}</strong>
+                </td>
                 <td style="color:#666;">📍 ${z.lagerorte.name}</td>
                 <td>
                     ${mengeZelle}
@@ -379,16 +412,21 @@ async function speichereBearbeitung() {
         
         const isInf = document.getElementById('edit-is-infinite').checked;
         const nMenge = isInf ? -1 : werteMengeAus(document.getElementById('edit-menge').value);
+        const aktuellesDatum = new Date().toISOString();
 
         await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aId);
-        
         const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
         
         if (ex && !isInf && Number(ex.menge) !== -1) {
-            await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
+            // Mit Fallback
+            let res = await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge, created_at: aktuellesDatum }).eq('id', ex.id);
+            if(res.error) await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
+            
             await dbClient.from('bestand').delete().eq('id', bId);
         } else { 
-            await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId); 
+            // Mit Fallback
+            let res = await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge, created_at: aktuellesDatum }).eq('id', bId); 
+            if(res.error) await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId);
         }
         
         closeModal('editModal'); 
@@ -414,7 +452,15 @@ async function speichereMenge(bId) {
     f.value = neueMenge; 
     f.style.backgroundColor = '#fff3cd'; 
 
-    const { error } = await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bId);
+    const aktuellesDatum = new Date().toISOString();
+    
+    // Rettungsschirm für das Schreiben des Datums
+    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, created_at: aktuellesDatum }).eq('id', bId);
+    if (error) {
+        const fallback = await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bId);
+        error = fallback.error;
+    }
+    
     if (!error) {
         f.style.backgroundColor = '#d4edda'; 
         showToast(`Bestand gespeichert: ${neueMenge}`);
@@ -452,7 +498,7 @@ async function neuenLagerortAnlegen() {
     else { showToast('Neuer Ort angelegt'); ladeAlles(); }
 }
 
-// --- NEU: FUNKTIONEN FÜR LAGERORTE VERWALTEN ---
+// --- LAGERORTE VERWALTEN ---
 function openOrteVerwalten() {
     const sel = document.getElementById('manage-ort-select');
     sel.innerHTML = '';
@@ -493,7 +539,6 @@ async function loescheOrt() {
     const oId = document.getElementById('manage-ort-select').value;
     if(!oId) return;
 
-    // Prüfen, ob noch Artikel an diesem Ort liegen
     const inUse = aktuelleDaten.some(b => String(b.lagerort_id) === String(oId));
     if(inUse) {
         showToast("Fehler: Ort ist nicht leer! Bitte erst die Artikel dort umbuchen.", "error");
