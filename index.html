@@ -58,6 +58,24 @@
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
         }
+        /* Fußzeile (Footer) */
+        .app-footer {
+            text-align: center;
+            padding: 20px;
+            margin-top: 30px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9em;
+        }
+        .app-footer a {
+            color: white;
+            font-weight: bold;
+            text-decoration: underline;
+            transition: 0.2s;
+        }
+        .app-footer a:hover {
+            color: #f1c40f; /* Ein schönes Gelb beim Drüberfahren */
+            text-decoration: none;
+        }
     </style>
 </head>
 <body>
@@ -86,7 +104,7 @@
     </div>
 
     <div id="ansicht-lager">
-        <p class="subtitle">Aktuelle Bestandsübersicht. Tippe "35+12" in die Mengen-Felder, um direkt zu rechnen!</p>
+        <p class="subtitle">Beachte bitte das letzte Änderungsdatum der Artikel. diese könnten veraltet sein</p>
         <div class="action-bar">
             <div class="action-group">
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
@@ -279,6 +297,17 @@
         </div>
     </div>
 </div>
+
+<div class="app-footer">
+    Bugs gefunden oder Verbesserungsvorschläge? 
+    <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melde Sie sich hier!</a>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
