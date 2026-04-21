@@ -34,17 +34,82 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-// --- DATUM HOVER ANZEIGE ---
+// --- TOUCH UND HOVER LOGIK (LONG PRESS FÜR HANDY) ---
+let hoverPressTimer = null;
+let hoverWasLongPress = false;
+let hoverHideTimer = null;
+
+window.handleMouseEnter = function(e) {
+    if (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return; 
+    clearTimeout(hoverHideTimer);
+    let el = e.currentTarget;
+    let type = el.getAttribute('data-hover-type');
+    let content = el.getAttribute('data-hover-content');
+    if (type === 'date') showDateHover(content);
+    if (type === 'res') showResHover(content);
+};
+
+window.handleMouseLeave = function(e) {
+    hideDateHover();
+    hideResHover();
+};
+
+window.handleTouchStart = function(e) {
+    let el = e.currentTarget;
+    let type = el.getAttribute('data-hover-type');
+    let content = el.getAttribute('data-hover-content');
+    
+    clearTimeout(hoverHideTimer);
+    hoverWasLongPress = false;
+    
+    hoverPressTimer = setTimeout(() => {
+        hoverWasLongPress = true;
+        if (type === 'date') showDateHover(content);
+        if (type === 'res') showResHover(content);
+        if (navigator.vibrate) navigator.vibrate(50); // Vibrations-Feedback
+    }, 400); // 0.4 Sekunden gedrückt halten = Long Press
+};
+
+window.handleTouchMove = function(e) {
+    clearTimeout(hoverPressTimer); // Abbrechen beim Scrollen
+};
+
+window.handleTouchEnd = function(e) {
+    clearTimeout(hoverPressTimer);
+    if (hoverWasLongPress) {
+        hoverHideTimer = setTimeout(() => {
+            hideDateHover();
+            hideResHover();
+        }, 3000); // Bleibt 3 Sekunden offen
+    } else {
+        hideDateHover();
+        hideResHover();
+    }
+    setTimeout(() => { hoverWasLongPress = false; }, 50);
+};
+
 function showDateHover(dateString) {
     const box = document.getElementById('hover-date-info');
     const text = document.getElementById('hover-date-text');
     if (box && text) {
-        text.innerText = dateString;
+        text.innerHTML = dateString;
         box.style.display = 'block';
     }
 }
 function hideDateHover() {
     const box = document.getElementById('hover-date-info');
+    if (box) box.style.display = 'none';
+}
+function showResHover(content) {
+    const box = document.getElementById('hover-res-info');
+    const text = document.getElementById('hover-res-text');
+    if (box && text) { 
+        text.innerHTML = content; 
+        box.style.display = 'block'; 
+    }
+}
+function hideResHover() {
+    const box = document.getElementById('hover-res-info');
     if (box) box.style.display = 'none';
 }
 
@@ -109,11 +174,9 @@ function openModal() {
 async function ladeAlles() {
     await ladeLagerorte();
     
-    // Packlisten laden
     const { data: listData } = await dbClient.from('packlisten').select('*');
     packlisten = listData || [];
 
-    // Packlisten-Positionen laden
     const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
     packlistenPositionen = resPos.data || [];
 
@@ -152,12 +215,10 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // SICHERER FALLBACK FÜR DAS DATUM: 
-    // Versuch 1: Mit created_at laden
+    // GENAU DEIN FUNKTIONIERENDER DATENBANK-AUFRUF
     let { data, error } = await dbClient.from('bestand')
         .select(`id, menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
     
-    // Versuch 2 (Rettungsschirm): Wenn Spalte fehlt, dann ohne Datum laden (App stürzt nicht ab!)
     if (error) {
         console.warn("Spalte created_at fehlt in Supabase. Lade ohne Datum.");
         const fallback = await dbClient.from('bestand')
@@ -191,7 +252,19 @@ function wendeFilterAn() {
     const katFilter = document.getElementById('kategorie-filter')?.value || 'ALLE';
     const ortFilter = document.getElementById('lagerort-filter')?.value || 'ALLE';
     
+    // NEU: Suchfeld auslesen
+    const suchText = document.getElementById('such-filter')?.value.toLowerCase().trim() || '';
+    
     let gefilterteDaten = aktuelleDaten;
+
+    // NEU: Nach Suchtext filtern
+    if (suchText !== '') {
+        gefilterteDaten = gefilterteDaten.filter(z => 
+            (z.artikel?.name || '').toLowerCase().includes(suchText) ||
+            (z.artikel?.kategorie || '').toLowerCase().includes(suchText) ||
+            (z.lagerorte?.name || '').toLowerCase().includes(suchText)
+        );
+    }
 
     if (katFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
     if (ortFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => String(z.lagerort_id) === String(ortFilter));
@@ -224,6 +297,9 @@ function tabelleAktualisieren(daten) {
     if (!tbody) return;
     tbody.innerHTML = ''; 
     
+    const suchText = document.getElementById('such-filter')?.value.trim() || '';
+    const isSearching = suchText.length > 0;
+    
     const reservierungenDetails = {};
     packlistenPositionen.forEach(p => {
         if(p.artikel_id) {
@@ -232,7 +308,7 @@ function tabelleAktualisieren(daten) {
             }
             reservierungenDetails[p.artikel_id].gesamt += Number(p.menge);
             
-            const pl = packlisten.find(list => list.id === p.packliste_id);
+            const pl = packlisten.find(list => String(list.id) === String(p.packliste_id));
             const plName = pl ? pl.name : 'Unbekannte Liste';
             
             reservierungenDetails[p.artikel_id].listen[plName] = (reservierungenDetails[p.artikel_id].listen[plName] || 0) + Number(p.menge);
@@ -252,7 +328,9 @@ function tabelleAktualisieren(daten) {
 
     for (const katName of sortedKategorien) {
         const zeilenListe = gruppierteDaten[katName];
-        const isOpen = offeneGruppen.has(katName);
+        
+        // Ordner automatisch öffnen, wenn gesucht wird
+        const isOpen = offeneGruppen.has(katName) || isSearching;
         const icon = isOpen ? '📂' : '📁';
 
         let ordnerSumme = 0;
@@ -322,7 +400,12 @@ function tabelleAktualisieren(daten) {
 
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? "pointer" : "default";
-            tr.onclick = (e) => { if(e.target.tagName !== 'INPUT') openEditModal(z.id); };
+            
+            // Verhindern, dass beim Loslassen nach Long Press das Edit-Menü aufgeht
+            tr.onclick = (e) => { 
+                if(hoverWasLongPress) return;
+                if(e.target.tagName !== 'INPUT') openEditModal(z.id); 
+            };
             
             let displayName = z.artikel.name;
             let indent = 25;
@@ -334,7 +417,6 @@ function tabelleAktualisieren(daten) {
                 displayName = displayName.substring(prefix.length).trim(); 
             }
             
-            // Datum auslesen (Falls Spalte im Fallback fehlte, bleibt es "Unbekannt")
             let dateStr = 'Unbekannt';
             if (z.created_at) {
                 const d = new Date(z.created_at);
@@ -346,11 +428,19 @@ function tabelleAktualisieren(daten) {
             
             const resInfo = reservierungenDetails[z.artikel_id];
             if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
-                let hoverText = "Reserviert für:\n";
+                // TEXT FEHLER BEHOBEN: Sichere Quotes und Linebreaks
+                let hoverText = "<strong>Reserviert für:</strong><br>";
                 for (const [lName, lMenge] of Object.entries(resInfo.listen)) {
-                    hoverText += `• ${lMenge}x in "${lName}"\n`;
+                    const safeLName = lName.replace(/'/g, "´").replace(/"/g, "´´");
+                    hoverText += `• ${lMenge}x in <i>${safeLName}</i><br>`;
                 }
-                resHtml = `<div style="font-size: 0.75em; color: #d35400; margin-top: 5px; font-weight: normal; cursor: help;" title="${hoverText}">📦 Reserviert: ${resInfo.gesamt}</div>`;
+                resHtml = `<div class="no-select" style="font-size: 0.75em; color: #d35400; margin-top: 5px; font-weight: normal; cursor: help; display: inline-block;"
+                    data-hover-type="res" data-hover-content="${hoverText}"
+                    onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
+                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)"
+                    oncontextmenu="event.preventDefault(); return false;">
+                    📦 Reserviert: ${resInfo.gesamt}
+                </div>`;
             }
 
             let mengeZelle = "";
@@ -361,13 +451,17 @@ function tabelleAktualisieren(daten) {
             }
             
             tr.innerHTML = `
-                <td style="padding-left: ${indent}px; color:#333;" onmouseenter="showDateHover('${dateStr}')" onmouseleave="hideDateHover()">
+                <td class="no-select" style="padding-left: ${indent}px; color:#333;"
+                    data-hover-type="date" data-hover-content="${dateStr}"
+                    onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
+                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)"
+                    oncontextmenu="event.preventDefault(); return false;">
                     ${iconLabel} <strong>${displayName}</strong>
                 </td>
                 <td style="color:#666;">📍 ${z.lagerorte.name}</td>
                 <td>
                     ${mengeZelle}
-                    ${resHtml}
+                    ${resHtml ? '<br>' + resHtml : ''}
                 </td>
             `;
             tbody.appendChild(tr);
@@ -415,16 +509,14 @@ async function speichereBearbeitung() {
         const aktuellesDatum = new Date().toISOString();
 
         await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aId);
+        
         const { data: ex } = await dbClient.from('bestand').select('id, menge').eq('artikel_id', aId).eq('lagerort_id', nOrt).neq('id', bId).maybeSingle(); 
         
         if (ex && !isInf && Number(ex.menge) !== -1) {
-            // Mit Fallback
             let res = await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge, created_at: aktuellesDatum }).eq('id', ex.id);
             if(res.error) await dbClient.from('bestand').update({ menge: Number(ex.menge) + nMenge }).eq('id', ex.id);
-            
             await dbClient.from('bestand').delete().eq('id', bId);
         } else { 
-            // Mit Fallback
             let res = await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge, created_at: aktuellesDatum }).eq('id', bId); 
             if(res.error) await dbClient.from('bestand').update({ lagerort_id: nOrt, menge: nMenge }).eq('id', bId);
         }
@@ -454,7 +546,6 @@ async function speichereMenge(bId) {
 
     const aktuellesDatum = new Date().toISOString();
     
-    // Rettungsschirm für das Schreiben des Datums
     let { error } = await dbClient.from('bestand').update({ menge: neueMenge, created_at: aktuellesDatum }).eq('id', bId);
     if (error) {
         const fallback = await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bId);
@@ -570,6 +661,7 @@ async function ladeEventDaten() {
         packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
         if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
 
+        // GENAU DEIN FUNKTIONIERENDER AUFRUF
         const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
         if(resPos.error) throw resPos.error;
         packlistenPositionen = resPos.data || [];

@@ -10,7 +10,7 @@
         body { font-family: Arial, sans-serif; background-color: #e3000f; color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); }
         h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
-        p.subtitle { color: #666; margin-bottom: 25px; line-height: 1.4; }
+        p.subtitle { color: #666; margin-bottom: 25px; line-height: 1.4; text-align: center; }
         
         .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 0.95em; font-weight: bold; }
         .btn:hover { background-color: #2980b9; }
@@ -19,7 +19,7 @@
         .btn-modus { flex: 1; background: transparent; color: #666; }
         .btn-modus.active { background: #e3000f; color: white; }
 
-        .action-bar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; }
+        .action-bar { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
         .action-group { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
         
         .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -29,6 +29,7 @@
         
         .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
+        .sub-sum-badge { font-size: 0.75em; background: #7f8c8d; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; font-weight: normal; }
         
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
         .event-ok { color: #27ae60; font-weight: bold; }
@@ -38,7 +39,7 @@
         
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input[type="text"], .form-group input[type="password"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
+        .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
         
         .flex-buttons { display: flex; gap: 10px; margin-top: 25px; }
         .btn-save { background-color: #27ae60; flex: 2; }
@@ -51,10 +52,16 @@
         .toast.error { background: #e74c3c; }
         .toast.warning { background: #f39c12; }
 
-        /* Fußzeile (Footer) */
         .app-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
         .app-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
         .app-footer a:hover { color: #f1c40f; text-decoration: none; }
+
+        /* Blockiert das Kopieren-Menü am Handy, damit Long-Press funktioniert */
+        .no-select {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
 
         @media (max-width: 600px) {
             body { padding: 10px 5px; }
@@ -62,6 +69,11 @@
             .action-bar, .action-group { flex-direction: column; align-items: stretch; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
+            .packlisten-wrapper { flex-direction: row; flex-wrap: wrap; }
+            .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
+            .packlisten-wrapper button { flex: 1; width: auto; }
+            .flex-buttons { flex-direction: column; }
+            .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; }
         }
     </style>
 </head>
@@ -72,6 +84,11 @@
 <div id="hover-date-info" style="display: none; position: fixed; bottom: 20px; left: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
     <span style="font-size: 1.2em; vertical-align: middle; margin-right: 5px;">📅</span> 
     <span style="vertical-align: middle;">Letzte Änderung: <strong id="hover-date-text"></strong></span>
+</div>
+
+<div id="hover-res-info" style="display: none; position: fixed; bottom: 20px; right: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3); line-height: 1.5;">
+    <span style="font-size: 1.2em; vertical-align: top; margin-right: 5px;">📦</span> 
+    <span style="vertical-align: top; display: inline-block;" id="hover-res-text"></span>
 </div>
 
 <div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
@@ -96,24 +113,27 @@
     </div>
 
     <div id="ansicht-lager">
-        <p class="subtitle" style="text-align: center;">
+        <p class="subtitle">
             Beachte das Änderungsdatum der Artikel, sie könnten veraltet sein.<br>
             Achtet bitte auf Ordnung im Lager !!
         </p>
         
         <div class="action-bar">
+            <input type="text" id="such-filter" placeholder="🔍 Artikel, Ort oder Kategorie suchen..." onkeyup="wendeFilterAn()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
+            
             <div class="action-group">
-                <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
-                <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Ort</button>
-                <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
-                <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
-                
                 <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Kategorien</option>
                 </select>
                 <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Lagerorte</option>
                 </select>
+
+                <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
+                <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Lagerort</button>
+                <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
+                <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
+                
             </div>
         </div>
         <div class="table-responsive">
@@ -176,7 +196,8 @@
     <div class="modal-content">
         <h2>Neuer Artikel</h2>
         <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
-        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
+        <div class="form-group"><label>Kategorie</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
+        <div class="form-group"><label>Gruppe</label><input type="text" id="new-gruppe" placeholder="z.B. Eventmaterial"></div>
         <div class="form-group"><label>Lagerort</label><select id="new-ort"></select></div>
         
         <div class="form-group">
@@ -186,6 +207,10 @@
         <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
             <input type="checkbox" id="new-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('new-menge').disabled = this.checked; if(this.checked) document.getElementById('new-menge').value = '∞'; else document.getElementById('new-menge').value = '0';">
             <label for="new-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
+        </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+            <input type="checkbox" id="new-no-group" style="width: auto;">
+            <label for="new-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
         </div>
         
         <div class="flex-buttons">
@@ -200,7 +225,8 @@
         <h2>Artikel bearbeiten</h2>
         <input type="hidden" id="edit-bestand-id"><input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
-        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie"></div>
+        <div class="form-group"><label>Kategorie</label><input type="text" id="edit-kategorie"></div>
+        <div class="form-group"><label>Gruppe</label><input type="text" id="edit-gruppe"></div>
         <div class="form-group"><label>Lagerort</label><select id="edit-ort"></select></div>
         
         <div class="form-group">
@@ -210,6 +236,10 @@
         <div class="form-group" style="display: flex; align-items: center; gap: 10px; background: #f4f4f9; padding: 10px; border-radius: 6px;">
             <input type="checkbox" id="edit-is-infinite" style="width: auto; transform: scale(1.5); margin-left: 5px;" onchange="document.getElementById('edit-menge').disabled = this.checked; if(this.checked) document.getElementById('edit-menge').value = '∞';">
             <label for="edit-is-infinite" style="margin: 0; font-weight: normal;">Verbrauchsartikel (Unbegrenzte Menge)</label>
+        </div>
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+            <input type="checkbox" id="edit-no-group" style="width: auto;">
+            <label for="edit-no-group" style="margin: 0; font-weight: normal;">Nicht automatisch gruppieren</label>
         </div>
 
         <div class="flex-buttons">
