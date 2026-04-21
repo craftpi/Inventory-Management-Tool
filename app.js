@@ -558,7 +558,7 @@ function tabelleAktualisieren(daten) {
                 </div>`;
             }
 
-            // HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
+// HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
             let bestandInfoHtml = "";
             const einheit = gruppe.artikel.einheit || 'Stück'; // Einheit aus der Datenbank holen
 
@@ -566,10 +566,8 @@ function tabelleAktualisieren(daten) {
                 const isInfLocal = (Number(b.menge) === -1);
                 let mengeZelle = "";
                 if (isInfLocal) {
-                    // Zeigt das Unendlich Symbol und daneben die Einheit
                     mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small style="color: #888; font-size: 0.8em; margin-left: 3px;">${einheit}</small>`;
                 } else {
-                    // Zeigt das Eingabefeld und daneben die Einheit
                     mengeZelle = `
                         <div style="display: flex; align-items: center; gap: 5px; justify-content: flex-end;">
                             <input type="text" id="menge-${b.id}" class="menge-input" value="${b.menge}" onchange="speichereMenge(${b.id})" style="width: 60px;">
@@ -577,8 +575,19 @@ function tabelleAktualisieren(daten) {
                         </div>`;
                 }
 
+                // NEU: Datum für den Hover-Effekt formatieren
+                let dateStr = "Unbekannt";
+                if(b.created_at) {
+                    const d = new Date(b.created_at);
+                    dateStr = d.toLocaleDateString('de-DE') + " " + d.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + " Uhr";
+                }
+
+                // NEU: Die Event-Listener und Attribute wieder zum HTML-Container hinzufügen
                 bestandInfoHtml += `
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;"
+                         data-hover-type="date" data-hover-content="${dateStr}"
+                         onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
+                         ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
                         <span style="font-size: 0.9em; color: #666;">📍 ${b.lagerorte.name}</span>
                         ${mengeZelle}
                     </div>`;
