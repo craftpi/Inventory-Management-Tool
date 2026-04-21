@@ -37,7 +37,6 @@
         .modal { 
             display: none; 
             position: fixed; 
-            /* Ändere diesen Wert auf 10001, damit er ÜBER dem Login (9999) liegt */
             z-index: 10001; 
             left: 0; 
             top: 0; 
@@ -69,7 +68,7 @@
         .modal-content::-webkit-scrollbar-thumb {
             background: #bdc3c7; 
             border-radius: 10px;
-            border: 2px solid #f4f4f9; /* Erzeugt einen kleinen Puffer-Rand */
+            border: 2px solid #f4f4f9; 
         }
 
         .form-group { margin-bottom: 15px; }
@@ -265,11 +264,27 @@
     </div>
 </div>
 
+<datalist id="kategorie-liste"></datalist>
+
 <div id="artikelModal" class="modal">
     <div class="modal-content">
         <h2>Neuer Artikel</h2>
         <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
-        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" placeholder="z.B. Verbrauchsmaterial"></div>
+        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" list="kategorie-liste" placeholder="z.B. Verbrauchsmaterial"></div>
+        
+        <div class="form-group">
+            <label>Einheit</label>
+            <select id="new-einheit">
+                <option value="Stück">Stück</option>
+                <option value="Packung">Packung</option>
+                <option value="Flasche">Flasche</option>
+                <option value="Kiste">Kiste</option>
+                <option value="Rolle">Rolle</option>
+                <option value="Paar">Paar</option>
+                <option value="Set">Set</option>
+                <option value="Meter">Meter</option>
+            </select>
+        </div>
         
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
         <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Start-Mengen:</p>
@@ -297,8 +312,22 @@
         <h2>Artikel bearbeiten</h2>
         <input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
-        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie"></div>
-        
+        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie" list="kategorie-liste"></div>
+
+        <div class="form-group">
+            <label>Einheit</label>
+            <select id="edit-einheit">
+                <option value="Stück">Stück</option>
+                <option value="Packung">Packung</option>
+                <option value="Flasche">Flasche</option>
+                <option value="Kiste">Kiste</option>
+                <option value="Rolle">Rolle</option>
+                <option value="Paar">Paar</option>
+                <option value="Set">Set</option>
+                <option value="Meter">Meter</option>
+            </select>
+        </div>
+
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
         <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Mengen:</p>
         <div id="edit-orte-wrapper">

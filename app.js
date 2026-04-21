@@ -171,6 +171,7 @@ function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 function openModal() { 
     document.getElementById('new-name').value = '';
     document.getElementById('new-kategorie').value = '';
+    document.getElementById('new-einheit').value = 'Stück';
     
     // Löscht alle zusätzlich angeklickten Zeilen wieder raus
     const container = document.getElementById('new-orte-wrapper');
@@ -225,7 +226,7 @@ async function ladeAlles() {
     const { data: listData } = await dbClient.from('packlisten').select('*');
     packlisten = listData || [];
 
-    const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
+    const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
     packlistenPositionen = resPos.data || [];
 
     await ladeBestand();
@@ -263,15 +264,14 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // HIER WURDE "alte_menge" HINZUGEFÜGT:
+    // WICHTIG: Die neue Spalte "einheit" wird hier auch mit geladen!
     let { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
+        .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit), lagerorte (id, name)`).order('id');
     
     if (error) {
         console.warn("Spalte created_at fehlt in Supabase. Lade ohne Datum.");
-        // HIER AUCH:
         const fallback = await dbClient.from('bestand')
-            .select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
+            .select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit), lagerorte (id, name)`).order('id');
         data = fallback.data;
         if (fallback.error) { showToast("Datenbank-Fehler", "error"); return; }
     }
@@ -284,17 +284,32 @@ async function ladeBestand() {
 // === LAGER MODUS LOGIK ===
 function aktualisiereFilterDropdown(daten) {
     const dropdown = document.getElementById('kategorie-filter');
-    if (!dropdown) return;
-    const aktuelleAuswahl = dropdown.value;
+    const datalist = document.getElementById('kategorie-liste'); // Das ist unsere neue Vorschlagsliste
+    
     const kategorien = new Set();
     daten.forEach(z => { 
         if (z.artikel && z.artikel.kategorie && z.artikel.kategorie.trim() !== '') {
             kategorien.add(z.artikel.kategorie.trim()); 
         }
     });
-    dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
-    Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
-    if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
+
+    // 1. Dropdown für den Haupt-Filter befüllen
+    if (dropdown) {
+        const aktuelleAuswahl = dropdown.value;
+        dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
+        Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
+        if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
+    }
+
+    // 2. Die unsichtbare Datalist für die Textfelder befüllen
+    if (datalist) {
+        datalist.innerHTML = '';
+        Array.from(kategorien).sort().forEach(kat => {
+            const option = document.createElement('option');
+            option.value = kat;
+            datalist.appendChild(option);
+        });
+    }
 }
 
 function wendeFilterAn() {
@@ -377,6 +392,7 @@ function tabelleAktualisieren(daten) {
         if (b === specialFolder) return -1;
         return a.localeCompare(b, 'de') * sortFactor;
     });
+    
     for (const katName of sortedKategorien) {
         const zeilenListe = gruppierteDaten[katName];
         
@@ -445,7 +461,7 @@ function tabelleAktualisieren(daten) {
         });
 
         let currentPrefix = null;
-        // 1. Gruppieren nach Artikel-ID (statt nach einzelnen Beständen)
+        // 1. Gruppieren nach Artikel-ID
         const artikelGruppen = new Map();
         zeilenListe.forEach(z => {
             if (!artikelGruppen.has(z.artikel_id)) {
@@ -464,7 +480,7 @@ function tabelleAktualisieren(daten) {
             const isGroup = parts.length > 1 && prefixCounts[parts[0]] > 1;
             const prefix = isGroup ? parts[0] : null;
 
-            // Logik für die grauen Unterordner (Prefix)
+            // Logik für die grauen Unterordner (Prefix) inklusive Sub-Summe
             if (isGroup && currentPrefix !== prefix) {
                 let pSum = prefixSums[prefix] || 0;
                 let pInf = prefixInf[prefix] || false;
@@ -491,7 +507,6 @@ function tabelleAktualisieren(daten) {
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? "pointer" : "default";
 
-            // WICHTIG: Klick öffnet jetzt den Artikel, nicht den Bestand
             tr.onclick = (e) => { 
                 if(hoverWasLongPress) return;
                 if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') openEditModal(artId); 
@@ -527,13 +542,21 @@ function tabelleAktualisieren(daten) {
 
             // HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
             let bestandInfoHtml = "";
+            const einheit = gruppe.artikel.einheit || 'Stück'; // Einheit aus der Datenbank holen
+
             gruppe.bestaende.forEach(b => {
                 const isInfLocal = (Number(b.menge) === -1);
                 let mengeZelle = "";
                 if (isInfLocal) {
-                    mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span>`;
+                    // Zeigt das Unendlich Symbol und daneben die Einheit
+                    mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small style="color: #888; font-size: 0.8em; margin-left: 3px;">${einheit}</small>`;
                 } else {
-                    mengeZelle = `<input type="text" id="menge-${b.id}" class="menge-input" value="${b.menge}" onchange="speichereMenge(${b.id})" style="width: 70px;">`;
+                    // Zeigt das Eingabefeld und daneben die Einheit
+                    mengeZelle = `
+                        <div style="display: flex; align-items: center; gap: 5px; justify-content: flex-end;">
+                            <input type="text" id="menge-${b.id}" class="menge-input" value="${b.menge}" onchange="speichereMenge(${b.id})" style="width: 60px;">
+                            <small style="color: #888; font-size: 0.8em; width: 45px; text-align: left;">${einheit}</small>
+                        </div>`;
                 }
 
                 bestandInfoHtml += `
@@ -571,23 +594,16 @@ function toggleRowInfinite(btn) {
     const isInfinite = btn.getAttribute('data-active') === 'true';
 
     if (isInfinite) {
-        // --- Unendlich AUSSCHALTEN ---
         input.disabled = false;
-        // Den gemerkten Wert zurückholen (oder '0' wenn es keinen gab)
         input.value = input.getAttribute('data-old-value') || '0';
-        
         btn.style.background = '#95a5a6'; // Grau
         btn.setAttribute('data-active', 'false');
     } else {
-        // --- Unendlich EINSCHALTEN ---
-        // Nur den alten Wert merken, wenn er nicht schon das Unendlich-Zeichen ist
         if (input.value !== '∞') {
             input.setAttribute('data-old-value', input.value);
         }
-        
         input.value = '∞';
         input.disabled = true;
-        
         btn.style.background = '#27ae60'; // Grün
         btn.setAttribute('data-active', 'true');
     }
@@ -607,7 +623,6 @@ function addEditOrtRow(data = null) {
     
     if (data) {
         displayVal = (data.menge == -1) ? '∞' : data.menge;
-        // Wenn es eine "alte_menge" in der Datenbank gibt, nehmen wir die. 
         hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge == -1 ? '0' : data.menge);
     }
 
@@ -644,11 +659,12 @@ async function openEditModal(artikelId) {
     document.getElementById('edit-artikel-id').value = artikelId;
     document.getElementById('edit-name').value = art.name;
     document.getElementById('edit-kategorie').value = art.kategorie || '';
+    document.getElementById('edit-einheit').value = art.einheit || 'Stück'; // Lade die gespeicherte Einheit
 
     const wrapper = document.getElementById('edit-orte-wrapper');
     wrapper.innerHTML = '';
     
-    // Vorhandene Bestände laden (Jede Zeile weiß jetzt selbst, ob sie ∞ ist)
+    // Vorhandene Bestände laden
     bestaende.forEach(b => addEditOrtRow(b));
     if(bestaende.length === 0) addEditOrtRow();
 
@@ -658,10 +674,18 @@ async function openEditModal(artikelId) {
 async function speichereBearbeitung() {
     try {
         const aid = document.getElementById('edit-artikel-id').value;
-        const nName = document.getElementById('edit-name').value;
-        const nKat = document.getElementById('edit-kategorie').value;
+        const nName = document.getElementById('edit-name').value.trim();
+        const nKat = document.getElementById('edit-kategorie').value.trim();
+        const nEinheit = document.getElementById('edit-einheit').value; // Einheit holen
 
-        await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aid);
+        // PRÜFUNG AUF DOPPELTE NAMEN (ohne den aktuell bearbeiteten)
+        const doppelt = alleArtikelInfos.find(a => a.name.toLowerCase() === nName.toLowerCase() && String(a.id) !== String(aid));
+        if (doppelt) {
+            const weiter = confirm(`Hinweis: Ein anderer Artikel heißt bereits "${nName}" (Kategorie: ${doppelt.kategorie || 'Ohne'}). Wirklich umbenennen?`);
+            if (!weiter) return;
+        }
+
+        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, einheit: nEinheit }).eq('id', aid);
         await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
         const inserts = [];
@@ -674,7 +698,7 @@ async function speichereBearbeitung() {
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
             const menge = (mRaw === '∞') ? -1 : werteMengeAus(mRaw);
             
-            // Wenn die Menge unendlich ist, merke dir die alte Zahl. Wenn nicht, ist die alte Zahl einfach die aktuelle Menge.
+            // Wenn die Menge unendlich ist, merke dir die alte Zahl.
             const finaleAlteMenge = (menge === -1) ? alteMengeAusFeld : menge;
             
             inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge, alte_menge: finaleAlteMenge });
@@ -728,12 +752,20 @@ async function speichereMenge(bId) {
 
 async function artikelAnlegen() {
     try {
-        const n = document.getElementById('new-name').value;
-        const k = document.getElementById('new-kategorie').value;
+        const n = document.getElementById('new-name').value.trim();
+        const k = document.getElementById('new-kategorie').value.trim();
+        const e = document.getElementById('new-einheit').value; // Einheit holen
         
         if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
-        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k }]).select();
+        // PRÜFUNG AUF DOPPELTE NAMEN
+        const existiertBereits = alleArtikelInfos.find(a => a.name.toLowerCase() === n.toLowerCase());
+        if (existiertBereits) {
+            const weiter = confirm(`Warnung: Ein Artikel mit dem Namen "${n}" existiert bereits in der Kategorie "${existiertBereits.kategorie || 'Ohne Kategorie'}". Möchtest du ihn trotzdem anlegen?`);
+            if (!weiter) return;
+        }
+
+        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, einheit: e }]).select();
         if (err) { showToast("Fehler: " + err.message, "error"); return; }
         
         const bestandInserts = [];
@@ -860,7 +892,7 @@ async function ladeEventDaten() {
         packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
         if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
 
-        const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie)');
+        const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
         if(resPos.error) throw resPos.error;
         packlistenPositionen = resPos.data || [];
 
@@ -1229,6 +1261,7 @@ async function downloadExcel() {
     closeModal('kauflisteModal');
     showToast("Download gestartet!");
 }
+
 function druckePackliste() {
     const listId = document.getElementById('packlisten-auswahl').value;
     if (!listId) return;
@@ -1236,7 +1269,6 @@ function druckePackliste() {
     const liste = packlisten.find(pl => pl.id == listId);
     const positionen = packlistenPositionen.filter(p => p.packliste_id == listId);
 
-    // Ermittle den Basis-Pfad
     const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf("/") + 1);
 
     const printWindow = window.open('', '_blank');
@@ -1247,64 +1279,29 @@ function druckePackliste() {
             <title>Packliste: ${liste.name}</title>
             <style>
                 body { font-family: sans-serif; padding: 20px; color: #333; }
-                
-                /* Layout für den Kopfbereich (Text links, Logo rechts) */
-                .header-container {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center; /* Zentriert beides auf gleicher Höhe */
-                    border-bottom: 2px solid #e3000f;
-                    padding-bottom: 15px;
-                    margin-bottom: 20px;
-                }
-                
-                .header-text h1 { 
-                    color: #e3000f; 
-                    margin: 0 0 5px 0; /* Abstände anpassen, da der Rahmen jetzt im Container ist */
-                }
-                
-                .header-text p {
-                    margin: 0;
-                    color: #666;
-                }
-                
-                /* Styling für das Logo in der Ecke */
-                .corner-logo { 
-                    height: 60px; /* Hier kannst du einstellen, wie groß das Logo sein soll */
-                    width: auto; 
-                }
-
+                .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e3000f; padding-bottom: 15px; margin-bottom: 20px; }
+                .header-text h1 { color: #e3000f; margin: 0 0 5px 0; }
+                .header-text p { margin: 0; color: #666; }
+                .corner-logo { height: 60px; width: auto; }
                 table { width: 100%; border-collapse: collapse; margin-top: 10px; }
                 th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
                 th { background-color: #f2f2f2; }
                 .check { width: 30px; border: 1px solid #333; height: 20px; display: inline-block; }
-                
-                @media print { 
-                    .no-print { display: none; } 
-                    tr { page-break-inside: avoid; }
-                }
+                @media print { .no-print { display: none; } tr { page-break-inside: avoid; } }
             </style>
         </head>
         <body>
             <button class="no-print" onclick="window.print()" style="margin-bottom:20px; padding:10px; cursor: pointer;">🖨️ Jetzt drucken</button>
-            
             <div class="header-container">
                 <div class="header-text">
                     <h1>📦 Packliste: ${liste.name}</h1>
                     <p>Erstellt am: ${new Date().toLocaleDateString('de-DE')}</p>
                 </div>
-                
                 <img src="${baseUrl}trisportlogo.jpg" class="corner-logo" alt="Trisport Erding Logo">
             </div>
-
             <table>
                 <thead>
-                    <tr>
-                        <th>Gepackt</th>
-                        <th>Gegenstand / Material</th>
-                        <th>Menge</th>
-                        <th>Lagerort</th>
-                    </tr>
+                    <tr><th>Gepackt</th><th>Gegenstand / Material</th><th>Menge</th><th>Lagerort</th></tr>
                 </thead>
                 <tbody>`;
 
@@ -1335,10 +1332,7 @@ function druckePackliste() {
     html += `
                 </tbody>
             </table>
-            
-            <div style="margin-top: 30px; font-size: 0.8em; color: #666; text-align: center;">
-                Trisport Erding Lager-Verwaltung
-            </div>
+            <div style="margin-top: 30px; font-size: 0.8em; color: #666; text-align: center;">Trisport Erding Lager-Verwaltung</div>
         </body>
         </html>`;
 
