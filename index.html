@@ -34,7 +34,18 @@
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
         .event-ok { color: #27ae60; font-weight: bold; }
         
-        .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
+        .modal { 
+            display: none; 
+            position: fixed; 
+            /* Ändere diesen Wert auf 10001, damit er ÜBER dem Login (9999) liegt */
+            z-index: 10001; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: rgba(0,0,0,0.6); 
+            backdrop-filter: blur(3px); 
+        }
         .modal-content {
             background-color: white;
             margin: 5vh auto;
@@ -80,6 +91,11 @@
         .app-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
         .app-footer a:hover { color: #f1c40f; text-decoration: none; }
 
+        .login-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
+        .login-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
+        .login-footer a:hover { color: #f1c40f; text-decoration: none; }
+        .login-footer footer { margin-top: 10px; font-size: 0.85em; color: rgba(255, 255, 255, 0.6); }
+
         .no-select {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
@@ -114,13 +130,25 @@
     <span style="vertical-align: top; display: inline-block;" id="hover-res-text"></span>
 </div>
 
-<div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
+<div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; flex-direction: column; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
+    
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
         <h2 style="margin-top:0; color:#2c3e50;">🔐 Lager-Zugang</h2>
         <p style="color:#666; margin-bottom: 25px;">Bitte gib das Vereins-Passwort ein.</p>
         <input type="password" id="login-password" placeholder="Vereins-Passwort" style="width:100%; padding:12px; margin-bottom:20px; text-align:center; font-size:1.2em; border: 1px solid #ccc; border-radius: 6px; box-sizing:border-box;">
         <button class="btn" onclick="handleLogin()" style="width:100%; padding:12px; font-size:1.1em;">🔓 Entsperren</button>
         <p id="login-error" style="color:red; display:none; margin-top:15px; font-weight:bold;">Falsches Passwort!</p>
+    </div>
+
+    <div class="login-footer">
+        Bugs gefunden oder Verbesserungsvorschläge?<br>
+        <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melden Sie sich hier!</a>
+        <p style="margin-top: 15px;">
+            <a href="https://trisport-erding.de/verein/impressum" target="_blank" style="margin-right: 15px; text-decoration: none;">Impressum</a>
+            <a href="https://trisport-erding.de/verein/datenschutz" target="_blank" style="margin-right: 15px; text-decoration: none;">Datenschutz</a>
+            <a href="#" onclick="openRechtliches(event, 'technikModal')" style="text-decoration: none;">Technik-Info</a>
+        </p>
+        <footer style="margin-top: 10px; font-size: 0.85em; color: rgba(255, 255, 255, 0.6);">&copy; 2026 Trisport Erding. Alle Rechte vorbehalten.</footer>
     </div>
 </div>
 
@@ -211,6 +239,28 @@
                     <tbody id="event-tabelle"></tbody>
                 </table>
             </div>
+        </div>
+    </div>
+</div>
+
+<div id="technikModal" class="modal">
+    <div class="modal-content" style="line-height: 1.5; color: #333;">
+        <h2 style="color: #e3000f; margin-top: 0;">Zusätzliche Datenschutz-Infos</h2>
+        <p>Dieses interne Verwaltungstool nutzt spezialisierte technische Dienstleister, um die Funktionalität zu gewährleisten:</p>
+        
+        <p><strong>1. Supabase (Datenbank & Login)</strong><br>
+        Wir nutzen Supabase (Supabase, Inc., USA) zur Speicherung der Bestandsdaten und für die Benutzeranmeldung. Hierbei wird technisch bedingt Ihre IP-Adresse übertragen und ein Authentifizierungs-Token im lokalen Speicher Ihres Browsers abgelegt. <br>
+        Details: <a href="https://supabase.com/privacy" target="_blank" style="color: #3498db;">Supabase Privacy Policy</a></p>
+
+        <p><strong>2. GitHub (Hosting)</strong><br>
+        Die Bereitstellung der Website-Dateien (HTML/JS) erfolgt über GitHub Pages (GitHub, Inc., USA). GitHub kann Protokolldaten über Zugriffe (IP-Adresse, Browser-Typ) erheben, um den Dienst sicher und zuverlässig bereitzustellen.<br>
+        Details: <a href="https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement" target="_blank" style="color: #3498db;">GitHub Privacy Statement</a></p>
+
+        <p><strong>Rechtsgrundlage:</strong><br>
+        Die Nutzung dieser Dienste erfolgt auf Grundlage unseres berechtigten Interesses an einer effizienten Vereinsverwaltung (Art. 6 Abs. 1 lit. f DSGVO).</p>
+
+        <div class="flex-buttons" style="margin-top: 30px;">
+            <button class="btn btn-cancel" style="width: 100%; background-color: #34495e;" onclick="closeModal('technikModal')">Schließen</button>
         </div>
     </div>
 </div>
@@ -351,9 +401,16 @@
     </div>
 </div>
 
+
 <div class="app-footer">
-    Bugs gefunden oder Verbesserungsvorschläge? 
-    <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melde Sie sich hier!</a>
+    Bugs gefunden oder Verbesserungsvorschläge?<br>
+    <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melden Sie sich hier!</a>
+    <p style="margin-top: 15px;">
+        <a href="https://trisport-erding.de/verein/impressum" target="_blank" style="margin-right: 15px; text-decoration: none;">Impressum</a>
+        <a href="https://trisport-erding.de/verein/datenschutz" target="_blank" style="margin-right: 15px; text-decoration: none;">Datenschutz</a>
+        <a href="#" onclick="openRechtliches(event, 'technikModal')" style="text-decoration: none;">Technik-Info</a>
+    </p>
+    <p>&copy; 2026 Trisport Erding. Alle Rechte vorbehalten.</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

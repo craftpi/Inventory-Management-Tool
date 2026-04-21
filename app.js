@@ -149,6 +149,12 @@ async function handleLogin() {
 async function handleLogout() { await dbClient.auth.signOut(); }
 
 // --- UI STEUERUNG ---
+
+function openRechtliches(event, modalId) {
+    event.preventDefault();
+    document.getElementById(modalId).style.display = 'block';
+}
+
 function wechsleModus(modus) {
     aktuellerModus = modus;
     document.getElementById('ansicht-lager').style.display = modus === 'lager' ? 'block' : 'none';
