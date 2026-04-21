@@ -257,13 +257,15 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
+    // HIER WURDE "alte_menge" HINZUGEFÜGT:
     let { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
+        .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
     
     if (error) {
         console.warn("Spalte created_at fehlt in Supabase. Lade ohne Datum.");
+        // HIER AUCH:
         const fallback = await dbClient.from('bestand')
-            .select(`id, menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
+            .select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie), lagerorte (id, name)`).order('id');
         data = fallback.data;
         if (fallback.error) { showToast("Datenbank-Fehler", "error"); return; }
     }
@@ -568,20 +570,25 @@ function addEditOrtRow(data = null) {
     
     let options = alleLagerorte.map(o => `<option value="${o.id}" ${data && data.lagerort_id == o.id ? 'selected' : ''}>${o.name}</option>`).join('');
     
-    // Bestimme den anzuzeigenden Wert (wird pro Ort aus der Datenbank gelesen)
+    // Werte aus der Datenbank lesen
     let displayVal = '0';
+    let hiddenOldVal = '0'; // Der versteckte Wert
+    
     if (data) {
         displayVal = (data.menge == -1) ? '∞' : data.menge;
+        // Wenn es eine "alte_menge" in der Datenbank gibt, nehmen wir die. 
+        hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge == -1 ? '0' : data.menge);
     }
 
-    const btnColor = (displayVal === '∞') ? '#27ae60' : '#95a5a6'; // Wenn unendlich, wird der Button gleich grün
+    const isInf = (displayVal === '∞');
+    const btnColor = isInf ? '#27ae60' : '#95a5a6'; 
 
     div.innerHTML = `
         <select class="edit-ort-select" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
         
         <div style="flex: 1; display: flex; gap: 4px;">
-            <input type="text" class="edit-menge-input" value="${displayVal}" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;" ${displayVal === '∞' ? 'disabled' : ''}>
-            <button type="button" class="btn" style="background: ${btnColor}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleRowInfinite(this)">∞</button>
+            <input type="text" class="edit-menge-input" value="${displayVal}" data-old-value="${hiddenOldVal}" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;" ${isInf ? 'disabled' : ''}>
+            <button type="button" class="btn" style="background: ${btnColor}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" data-active="${isInf}" onclick="toggleRowInfinite(this)">∞</button>
         </div>
 
         <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeEditRow(this)">🗑️</button>
@@ -623,23 +630,23 @@ async function speichereBearbeitung() {
         const nName = document.getElementById('edit-name').value;
         const nKat = document.getElementById('edit-kategorie').value;
 
-        // 1. Artikel-Basisdaten (Name/Kat) updaten
         await dbClient.from('artikel').update({ name: nName, kategorie: nKat }).eq('id', aid);
-
-        // 2. Alle alten Bestände dieses Artikels löschen
         await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
-        // 3. Alle neuen Zeilen sammeln und einfügen
         const inserts = [];
         document.querySelectorAll('.edit-ort-row').forEach(row => {
             const oid = row.querySelector('.edit-ort-select').value;
             const input = row.querySelector('.edit-menge-input');
             const mRaw = input.value;
             
-            // Rechnet aus, ob der Wert unendlich (-1) oder eine Zahl ist
+            // Lese den versteckten alten Wert aus
+            const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
             const menge = (mRaw === '∞') ? -1 : werteMengeAus(mRaw);
             
-            inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge });
+            // Wenn die Menge unendlich ist, merke dir die alte Zahl. Wenn nicht, ist die alte Zahl einfach die aktuelle Menge.
+            const finaleAlteMenge = (menge === -1) ? alteMengeAusFeld : menge;
+            
+            inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge, alte_menge: finaleAlteMenge });
         });
 
         if (inserts.length > 0) {
@@ -674,9 +681,10 @@ async function speichereMenge(bId) {
 
     const aktuellesDatum = new Date().toISOString();
     
-    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, created_at: aktuellesDatum }).eq('id', bId);
+    // HIER AUCH alte_menge AKTUALISIEREN:
+    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge, created_at: aktuellesDatum }).eq('id', bId);
     if (error) {
-        const fallback = await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bId);
+        const fallback = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge }).eq('id', bId);
         error = fallback.error;
     }
     
@@ -694,29 +702,30 @@ async function artikelAnlegen() {
         
         if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
-        // 1. Artikel in der Datenbank anlegen
         const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k }]).select();
         if (err) { showToast("Fehler: " + err.message, "error"); return; }
         
-        // 2. Alle angelegten Orte und Mengen auslesen
         const bestandInserts = [];
         const rows = document.querySelectorAll('#new-orte-wrapper .lagerort-row');
         
         rows.forEach(row => {
             const ortSelect = row.querySelector('.new-ort').value;
-            const mengeInput = row.querySelector('.new-menge').value;
+            const input = row.querySelector('.new-menge');
+            const mRaw = input.value;
             
-            // Rechnet aus, ob der Wert unendlich (-1) oder eine Zahl ist
-            const berechneteMenge = (mengeInput === '∞') ? -1 : werteMengeAus(mengeInput);
+            // Auslesen und Berechnen
+            const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
+            const menge = (mRaw === '∞') ? -1 : werteMengeAus(mRaw);
+            const finaleAlteMenge = (menge === -1) ? alteMengeAusFeld : menge;
             
             bestandInserts.push({ 
                 artikel_id: nA[0].id, 
                 lagerort_id: ortSelect, 
-                menge: berechneteMenge 
+                menge: menge,
+                alte_menge: finaleAlteMenge 
             });
         });
         
-        // 3. Alle Lagerorte (Bestände) auf einmal in die DB schreiben
         await dbClient.from('bestand').insert(bestandInserts);
         
         closeModal('artikelModal'); 
