@@ -51,6 +51,11 @@
         .toast.error { background: #e74c3c; }
         .toast.warning { background: #f39c12; }
 
+        /* Fußzeile (Footer) */
+        .app-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
+        .app-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
+        .app-footer a:hover { color: #f1c40f; text-decoration: none; }
+
         @media (max-width: 600px) {
             body { padding: 10px 5px; }
             .container { padding: 15px 10px; }
@@ -58,29 +63,16 @@
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
         }
-        /* Fußzeile (Footer) */
-        .app-footer {
-            text-align: center;
-            padding: 20px;
-            margin-top: 30px;
-            color: rgba(255, 255, 255, 0.8);
-            font-size: 0.9em;
-        }
-        .app-footer a {
-            color: white;
-            font-weight: bold;
-            text-decoration: underline;
-            transition: 0.2s;
-        }
-        .app-footer a:hover {
-            color: #f1c40f; /* Ein schönes Gelb beim Drüberfahren */
-            text-decoration: none;
-        }
     </style>
 </head>
 <body>
 
 <div id="toast-container"></div>
+
+<div id="hover-date-info" style="display: none; position: fixed; bottom: 20px; left: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+    <span style="font-size: 1.2em; vertical-align: middle; margin-right: 5px;">📅</span> 
+    <span style="vertical-align: middle;">Letzte Änderung: <strong id="hover-date-text"></strong></span>
+</div>
 
 <div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
@@ -104,7 +96,7 @@
     </div>
 
     <div id="ansicht-lager">
-        <p class="subtitle">Beachte bitte das letzte Änderungsdatum der Artikel. diese könnten veraltet sein</p>
+        <p class="subtitle" style="text-align: center;">Beachte das änderungsdatum der Artikel sie könnten veraltet sein. <br> Achtet bitte auf Ordnung im Lager !! </p>
         <div class="action-bar">
             <div class="action-group">
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
@@ -300,14 +292,8 @@
 
 <div class="app-footer">
     Bugs gefunden oder Verbesserungsvorschläge? 
-    <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melde Sie sich hier!</a>
+    <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melde sie sich hier!</a>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="app.js"></script>
-
-</body>
-</html>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
