@@ -129,7 +129,7 @@
                 </select>
 
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
-                <button class="btn" style="background-color: #27ae60;" onclick="neuenLagerortAnlegen()">+ Neuer Lagerort</button>
+                <button class="btn" style="background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
                 <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
                 <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
             </div>
@@ -235,6 +235,20 @@
             <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>
         </div>
         <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Artikel komplett löschen</button>
+    </div>
+</div>
+
+<div id="neuOrtModal" class="modal">
+    <div class="modal-content">
+        <h2>Neuer Lagerort</h2>
+        <div class="form-group">
+            <label>Name des neuen Lagerorts</label>
+            <input type="text" id="neu-ort-name" placeholder="z.B. Regal A">
+        </div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="speichereNeuenOrt()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('neuOrtModal')">Abbrechen</button>
+        </div>
     </div>
 </div>
 
