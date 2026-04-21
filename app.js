@@ -180,16 +180,23 @@ function openModal() {
         rows[i].remove();
     }
     
-    // Setzt die allererste Zeile wieder auf Standard "0" und grauen Button zurück
+    // Setzt die allererste Zeile wieder auf Standard zurück
     const firstRow = rows[0];
     const firstInput = firstRow.querySelector('.new-menge');
     firstInput.value = '0';
     firstInput.disabled = false;
-    firstInput.removeAttribute('data-old-value'); // WICHTIG: Alten Speicher leeren
+    firstInput.removeAttribute('data-old-value'); 
     
     const firstBtnInf = firstRow.querySelector('.btn-inf');
     firstBtnInf.style.background = '#95a5a6';
-    firstBtnInf.setAttribute('data-active', 'false'); // WICHTIG: Button-Status auf 'aus'
+    firstBtnInf.setAttribute('data-active', 'false'); 
+
+    // NEU: Ort auf Standard zurücksetzen
+    const firstSelect = firstRow.querySelector('.new-ort');
+    const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
+    if (defaultOrt && firstSelect) {
+        firstSelect.value = defaultOrt.id;
+    }
     
     document.getElementById('artikelModal').style.display = 'block'; 
 }
@@ -197,19 +204,24 @@ function openModal() {
 function addOrtRow() {
     const container = document.getElementById('new-orte-wrapper');
     const firstRow = container.querySelector('.lagerort-row');
-    const newRow = firstRow.cloneNode(true); // Kopiert das Dropdown, Input-Feld und ∞ Button
+    const newRow = firstRow.cloneNode(true); 
 
-    // Zurücksetzen des Input-Feldes und des Buttons in der neuen kopierten Zeile
     const input = newRow.querySelector('.new-menge');
     input.value = '0';
     input.disabled = false;
-    input.removeAttribute('data-old-value'); // WICHTIG: Kopierten Speicher leeren!
+    input.removeAttribute('data-old-value'); 
     
     const btnInf = newRow.querySelector('.btn-inf');
     btnInf.style.background = '#95a5a6';
-    btnInf.setAttribute('data-active', 'false'); // WICHTIG: Button-Status auf 'aus'
+    btnInf.setAttribute('data-active', 'false'); 
 
-    // Aus dem blauen ➕ Button am Ende einen roten 🗑️ (Löschen) Button machen
+    // NEU: Setze den neuen Dropdown direkt auf den Standard-Ort
+    const newSelect = newRow.querySelector('.new-ort');
+    const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
+    if (defaultOrt && newSelect) {
+        newSelect.value = defaultOrt.id;
+    }
+
     const btnAddDelete = newRow.lastElementChild;
     btnAddDelete.innerHTML = '🗑️';
     btnAddDelete.style.backgroundColor = '#e74c3c';
@@ -256,6 +268,12 @@ async function ladeLagerorte() {
 
         if(filterOrt && Array.from(filterOrt.options).some(opt => opt.value === aktuellerOrtFilter)) {
             filterOrt.value = aktuellerOrtFilter;
+        }
+
+        // NEU: Standard-Ort "Sonstiger Ort im Lager" automatisch auswählen
+        const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
+        if (defaultOrt) {
+            selectsNeu.forEach(sel => sel.value = defaultOrt.id);
         }
     }
 }
@@ -615,11 +633,24 @@ function addEditOrtRow(data = null) {
     div.className = 'edit-ort-row';
     div.style = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
     
-    let options = alleLagerorte.map(o => `<option value="${o.id}" ${data && data.lagerort_id == o.id ? 'selected' : ''}>${o.name}</option>`).join('');
+    // NEU: Standard-Ort suchen
+    const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
     
-    // Werte aus der Datenbank lesen
+    let options = alleLagerorte.map(o => {
+        let isSelected = false;
+        // Wenn Daten aus der DB kommen, setze den entsprechenden Ort
+        if (data && data.lagerort_id == o.id) {
+            isSelected = true;
+        } 
+        // Wenn eine leere neue Zeile erzeugt wird, setze den Standard-Ort
+        else if (!data && defaultOrt && o.id == defaultOrt.id) {
+            isSelected = true;
+        }
+        return `<option value="${o.id}" ${isSelected ? 'selected' : ''}>${o.name}</option>`;
+    }).join('');
+    
     let displayVal = '0';
-    let hiddenOldVal = '0'; // Der versteckte Wert
+    let hiddenOldVal = '0'; 
     
     if (data) {
         displayVal = (data.menge == -1) ? '∞' : data.menge;
