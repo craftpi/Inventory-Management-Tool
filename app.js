@@ -2,7 +2,6 @@ const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// GLOBALE VARIABLEN
 let aktuelleDaten = [];
 let packlisten = [];
 let packlistenPositionen = [];
@@ -13,12 +12,10 @@ let isEventEditMode = false;
 let aktuellerModus = 'lager'; 
 let einkaufslisteArray = []; 
 
-// Sortierung & Aufklappen
 let offeneGruppen = new Set();
 let isAllOpen = false;
 let sortAscending = true;
 
-// --- TOAST NOTIFICATIONS ---
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
     if(!container) return;
@@ -34,7 +31,6 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-// --- TOUCH UND HOVER LOGIK (LONG PRESS FÜR HANDY) ---
 let hoverPressTimer = null;
 let hoverWasLongPress = false;
 let hoverHideTimer = null;
@@ -113,7 +109,6 @@ function hideResHover() {
     if (box) box.style.display = 'none';
 }
 
-// --- HILFSFUNKTION: INLINE MATHE ---
 function werteMengeAus(eingabe) {
     if (eingabe === undefined || eingabe === null) return 0;
     const saubererString = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
@@ -124,7 +119,6 @@ function werteMengeAus(eingabe) {
     } catch (e) { return 0; }
 }
 
-// --- AUTHENTIFIZIERUNG ---
 document.addEventListener('DOMContentLoaded', async () => {
     const { data: { session } } = await dbClient.auth.getSession();
     if (session) { document.getElementById('login-overlay').style.display = 'none'; ladeAlles(); } 
@@ -147,8 +141,6 @@ async function handleLogin() {
     else { document.getElementById('login-error').style.display = 'none'; document.getElementById('login-password').value = ''; }
 }
 async function handleLogout() { await dbClient.auth.signOut(); }
-
-// --- UI STEUERUNG ---
 
 function openRechtliches(event, modalId) {
     event.preventDefault();
@@ -173,14 +165,12 @@ function openModal() {
     document.getElementById('new-kategorie').value = '';
     document.getElementById('new-einheit').value = 'Stück';
     
-    // Löscht alle zusätzlich angeklickten Zeilen wieder raus
     const container = document.getElementById('new-orte-wrapper');
     const rows = container.querySelectorAll('.lagerort-row');
     for(let i = 1; i < rows.length; i++) {
         rows[i].remove();
     }
     
-    // Setzt die allererste Zeile wieder auf Standard zurück
     const firstRow = rows[0];
     const firstInput = firstRow.querySelector('.new-menge');
     firstInput.value = '0';
@@ -197,7 +187,6 @@ function openModal() {
         firstBtnStrich.setAttribute('data-active', 'false');
     }
 
-    // NEU: Ort auf Standard zurücksetzen
     const firstSelect = firstRow.querySelector('.new-ort');
     const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
     if (defaultOrt && firstSelect) {
@@ -242,7 +231,6 @@ function addOrtRow() {
     container.appendChild(newRow);
 }
 
-// --- DATEN LADEN ---
 async function ladeAlles() {
     await ladeLagerorte();
     
@@ -281,7 +269,6 @@ async function ladeLagerorte() {
             filterOrt.value = aktuellerOrtFilter;
         }
 
-        // NEU: Standard-Ort "Sonstiger Ort im Lager" automatisch auswählen
         const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
         if (defaultOrt) {
             selectsNeu.forEach(sel => sel.value = defaultOrt.id);
@@ -293,7 +280,6 @@ async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // WICHTIG: Die neue Spalte "einheit" wird hier auch mit geladen!
     let { data, error } = await dbClient.from('bestand')
         .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit), lagerorte (id, name)`).order('id');
     
@@ -310,10 +296,9 @@ async function ladeBestand() {
     wendeFilterAn(); 
 }
 
-// === LAGER MODUS LOGIK ===
 function aktualisiereFilterDropdown(daten) {
     const dropdown = document.getElementById('kategorie-filter');
-    const datalist = document.getElementById('kategorie-liste'); // Das ist unsere neue Vorschlagsliste
+    const datalist = document.getElementById('kategorie-liste');
     
     const kategorien = new Set();
     daten.forEach(z => { 
@@ -322,7 +307,6 @@ function aktualisiereFilterDropdown(daten) {
         }
     });
 
-    // 1. Dropdown für den Haupt-Filter befüllen
     if (dropdown) {
         const aktuelleAuswahl = dropdown.value;
         dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
@@ -330,7 +314,6 @@ function aktualisiereFilterDropdown(daten) {
         if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
     }
 
-    // 2. Die unsichtbare Datalist für die Textfelder befüllen
     if (datalist) {
         datalist.innerHTML = '';
         Array.from(kategorien).sort().forEach(kat => {
@@ -348,7 +331,6 @@ function wendeFilterAn() {
     
     let gefilterteDaten = aktuelleDaten;
 
-    // Suchen
     if (suchText !== '') {
         gefilterteDaten = gefilterteDaten.filter(z => 
             (z.artikel?.name || '').toLowerCase().includes(suchText) ||
@@ -425,7 +407,6 @@ function tabelleAktualisieren(daten) {
     for (const katName of sortedKategorien) {
         const zeilenListe = gruppierteDaten[katName];
         
-        // Ordner automatisch öffnen, wenn gesucht wird
         const isOpen = offeneGruppen.has(katName) || isSearching;
         const icon = isOpen ? '📂' : '📁';
 
@@ -466,7 +447,6 @@ function tabelleAktualisieren(daten) {
                 const prefix = parts[0];
                 prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
                 
-                // Summen für die Unterkategorien berechnen
                 if (!prefixSums[prefix]) prefixSums[prefix] = 0;
                 if (Number(z.menge) === -1) {
                     prefixInf[prefix] = true;
@@ -490,7 +470,6 @@ function tabelleAktualisieren(daten) {
         });
 
         let currentPrefix = null;
-        // 1. Gruppieren nach Artikel-ID
         const artikelGruppen = new Map();
         zeilenListe.forEach(z => {
             if (!artikelGruppen.has(z.artikel_id)) {
@@ -502,20 +481,17 @@ function tabelleAktualisieren(daten) {
             artikelGruppen.get(z.artikel_id).bestaende.push(z);
         });
 
-        // 2. Tabellenzeilen für jeden Artikel generieren
         artikelGruppen.forEach((gruppe, artId) => {
             const aName = gruppe.artikel.name.trim();
             const parts = aName.split(' ');
             const isGroup = parts.length > 1 && prefixCounts[parts[0]] > 1;
             const prefix = isGroup ? parts[0] : null;
 
-            // Logik für die grauen Unterordner (Prefix) inklusive Sub-Summe
             if (isGroup && currentPrefix !== prefix) {
                 let pSum = prefixSums[prefix] || 0;
                 let pInf = prefixInf[prefix] || false;
                 let pSumAnzeige = pSum;
                 
-                // Anzeige-Logik, falls unendliche (∞) Artikel im Unterordner liegen
                 if (pInf && pSum > 0) pSumAnzeige = `${pSum} + ∞`;
                 else if (pInf && pSum === 0) pSumAnzeige = `∞`;
 
@@ -551,8 +527,6 @@ function tabelleAktualisieren(daten) {
                 displayName = displayName.substring(prefix.length).trim(); 
             }
 
-            // --- NEU: DATUM FÜR DEN HOVER BERECHNEN ---
-            // Sucht das neueste Änderungsdatum aus allen Lagerorten dieses Artikels
             let latestDate = null;
             gruppe.bestaende.forEach(b => {
                 if(b.created_at) {
@@ -565,9 +539,6 @@ function tabelleAktualisieren(daten) {
             if(latestDate) {
                 dateStr = latestDate.toLocaleDateString('de-DE') + " " + latestDate.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + " Uhr";
             }
-            // ------------------------------------------
-
-            // Reservierungen checken
             let isInfinite = gruppe.bestaende.some(b => Number(b.menge) === -1);
             let resHtml = '';
             const resInfo = reservierungenDetails[artId];
@@ -585,13 +556,12 @@ function tabelleAktualisieren(daten) {
                 </div>`;
             }
 
-            // HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
             let bestandInfoHtml = "";
-            const einheit = gruppe.artikel.einheit || 'Stück'; // Einheit aus der Datenbank holen
+            const einheit = gruppe.artikel.einheit || 'Stück';
 
             gruppe.bestaende.forEach(b => {
                 const isInfLocal = (Number(b.menge) === -1);
-                const isStrichLocal = (Number(b.menge) === -2); // NEU
+                const isStrichLocal = (Number(b.menge) === -2);
                 let mengeZelle = "";
                 
                 if (isInfLocal) {
@@ -645,16 +615,15 @@ function toggleRowInfinite(btn) {
     if (isInfinite) {
         input.disabled = false;
         input.value = input.getAttribute('data-old-value') || '0';
-        btn.style.background = '#95a5a6'; // Grau
+        btn.style.background = '#95a5a6';
         btn.setAttribute('data-active', 'false');
     } else {
         if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
         input.value = '∞';
         input.disabled = true;
-        btn.style.background = '#27ae60'; // Grün
+        btn.style.background = '#27ae60';
         btn.setAttribute('data-active', 'true');
         
-        // Strich-Button deaktivieren falls aktiv
         if(strichBtn && strichBtn.getAttribute('data-active') === 'true') toggleRowStrich(strichBtn);
     }
 }
@@ -667,13 +636,13 @@ function toggleRowStrich(btn) {
     if (isStrich) {
         input.disabled = false;
         input.value = input.getAttribute('data-old-value') || '0';
-        btn.style.background = '#95a5a6'; // Grau
+        btn.style.background = '#95a5a6';
         btn.setAttribute('data-active', 'false');
     } else {
         if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
         input.value = '-';
         input.disabled = true;
-        btn.style.background = '#95a5a6'; // Grau für Strich
+        btn.style.background = '#95a5a6';
         btn.setAttribute('data-active', 'true');
         
         if(infBtn && infBtn.getAttribute('data-active') === 'true') toggleRowInfinite(infBtn);
@@ -686,16 +655,13 @@ function addEditOrtRow(data = null) {
     div.className = 'edit-ort-row';
     div.style = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
     
-    // NEU: Standard-Ort suchen
     const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
     
     let options = alleLagerorte.map(o => {
         let isSelected = false;
-        // Wenn Daten aus der DB kommen, setze den entsprechenden Ort
         if (data && data.lagerort_id == o.id) {
             isSelected = true;
         } 
-        // Wenn eine leere neue Zeile erzeugt wird, setze den Standard-Ort
         else if (!data && defaultOrt && o.id == defaultOrt.id) {
             isSelected = true;
         }
@@ -749,12 +715,11 @@ async function openEditModal(artikelId) {
     document.getElementById('edit-artikel-id').value = artikelId;
     document.getElementById('edit-name').value = art.name;
     document.getElementById('edit-kategorie').value = art.kategorie || '';
-    document.getElementById('edit-einheit').value = art.einheit || 'Stück'; // Lade die gespeicherte Einheit
+    document.getElementById('edit-einheit').value = art.einheit || 'Stück';
 
     const wrapper = document.getElementById('edit-orte-wrapper');
     wrapper.innerHTML = '';
     
-    // Vorhandene Bestände laden
     bestaende.forEach(b => addEditOrtRow(b));
     if(bestaende.length === 0) addEditOrtRow();
 
@@ -766,9 +731,8 @@ async function speichereBearbeitung() {
         const aid = document.getElementById('edit-artikel-id').value;
         const nName = document.getElementById('edit-name').value.trim();
         const nKat = document.getElementById('edit-kategorie').value.trim();
-        const nEinheit = document.getElementById('edit-einheit').value; // Einheit holen
+        const nEinheit = document.getElementById('edit-einheit').value;
 
-        // PRÜFUNG AUF DOPPELTE NAMEN (ohne den aktuell bearbeiteten)
         const doppelt = alleArtikelInfos.find(a => a.name.toLowerCase() === nName.toLowerCase() && String(a.id) !== String(aid));
         if (doppelt) {
             const weiter = confirm(`Hinweis: Ein anderer Artikel heißt bereits "${nName}" (Kategorie: ${doppelt.kategorie || 'Ohne'}). Wirklich umbenennen?`);
@@ -784,11 +748,9 @@ async function speichereBearbeitung() {
             const input = row.querySelector('.edit-menge-input');
             const mRaw = input.value;
             
-            // Lese den versteckten alten Wert aus
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
             const menge = (mRaw === '∞') ? -1 : (mRaw === '-') ? -2 : werteMengeAus(mRaw);
             
-            // Wenn die Menge unendlich/Strich ist, merke dir die alte Zahl.
             const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
             
             inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge, alte_menge: finaleAlteMenge });
@@ -807,7 +769,6 @@ async function speichereBearbeitung() {
 async function artikelLoeschen() {
     if(confirm("Diesen Artikel und alle seine Standorte wirklich komplett löschen?")) {
         const aId = document.getElementById('edit-artikel-id').value;
-        // Erst Bestände löschen, dann den Artikel
         await dbClient.from('bestand').delete().eq('artikel_id', aId);
         await dbClient.from('artikel').delete().eq('id', aId);
         closeModal('editModal'); 
@@ -832,7 +793,6 @@ async function speichereMenge(bId) {
 
     const aktuellesDatum = new Date().toISOString();
     
-    // HIER AUCH alte_menge AKTUALISIEREN:
     let { error } = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge, created_at: aktuellesDatum }).eq('id', bId);
     if (error) {
         const fallback = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge }).eq('id', bId);
@@ -850,11 +810,10 @@ async function artikelAnlegen() {
     try {
         const n = document.getElementById('new-name').value.trim();
         const k = document.getElementById('new-kategorie').value.trim();
-        const e = document.getElementById('new-einheit').value; // Einheit holen
+        const e = document.getElementById('new-einheit').value;
         
         if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
-        // PRÜFUNG AUF DOPPELTE NAMEN
         const existiertBereits = alleArtikelInfos.find(a => a.name.toLowerCase() === n.toLowerCase());
         if (existiertBereits) {
             const weiter = confirm(`Warnung: Ein Artikel mit dem Namen "${n}" existiert bereits in der Kategorie "${existiertBereits.kategorie || 'Ohne Kategorie'}". Möchtest du ihn trotzdem anlegen?`);
@@ -872,7 +831,6 @@ async function artikelAnlegen() {
             const input = row.querySelector('.new-menge');
             const mRaw = input.value;
             
-            // Auslesen und Berechnen
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
             const menge = (mRaw === '∞') ? -1 : (mRaw === '-') ? -2 : werteMengeAus(mRaw);
             const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
@@ -916,7 +874,6 @@ async function speichereNeuenOrt() {
     }
 }
 
-// --- LAGERORTE VERWALTEN ---
 function openOrteVerwalten() {
     const sel = document.getElementById('manage-ort-select');
     sel.innerHTML = '';
@@ -975,7 +932,6 @@ async function loescheOrt() {
 }
 
 
-// === EVENT MODUS LOGIK ===
 async function ladeEventDaten() {
     try {
         const resList = await dbClient.from('packlisten').select('*').order('name');
@@ -1088,7 +1044,7 @@ function openPackItemModal() {
     
     const datalist = document.getElementById('pack-artikel-datalist');
     datalist.innerHTML = '';
-    document.getElementById('pack-artikel-input').value = ''; // Feld beim Öffnen leeren
+    document.getElementById('pack-artikel-input').value = '';
     
     const sortierteArt = [...alleArtikelInfos].sort((a, b) => {
         const aKat = a.kategorie || '';
@@ -1122,7 +1078,6 @@ function aktualisierePackVerfuegbarkeit() {
     if (typ !== 'lager') { infoDiv.innerHTML = ''; return; }
 
     const inputVal = document.getElementById('pack-artikel-input').value;
-    // Suche den passenden Artikelnamen im Hintergrund
     const matchedArt = alleArtikelInfos.find(a => {
         const n = (a.kategorie ? a.kategorie + " > " : "") + a.name;
         return n === inputVal;
@@ -1173,13 +1128,11 @@ async function packPositionSpeichern() {
     if (typ === 'lager') {
         const inputVal = document.getElementById('pack-artikel-input').value;
         
-        // Finde den Artikel anhand des eingetippten/ausgewählten Namens
         const matchedArt = alleArtikelInfos.find(a => {
             const n = (a.kategorie ? a.kategorie + " > " : "") + a.name;
             return n === inputVal;
         });
         
-        // Sicherheits-Check: Hat der User Quatsch eingetippt?
         if (!matchedArt) { 
             showToast("Bitte wähle einen gültigen Artikel aus der Vorschlagsliste!", "warning"); 
             return; 
@@ -1239,10 +1192,6 @@ async function loeschePackliste() {
         else { document.getElementById('packlisten-auswahl').value = ""; showToast("Gelöscht!"); ladeAlles(); }
     }
 }
-
-// ==========================================
-// --- EINKAUFSLISTE UND EXCEL EXPORT ---
-// ==========================================
 
 function startEinkaufsliste() {
     einkaufslisteArray = []; 
