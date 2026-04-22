@@ -15,6 +15,9 @@ let einkaufslisteArray = [];
 let offeneGruppen = new Set();
 let isAllOpen = false;
 let sortAscending = true;
+let autoFehlbestandListe = [];
+let eigeneVorschlaegeListe = [];
+let manuelleEintraegeListe = [];
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -989,16 +992,20 @@ function zeigePackliste() {
             
             let gesamtLager = 0;
             let hatUnendlich = false;
+            let hatStrich = false;
             
             aktuelleDaten.forEach(b => { 
                 if(b.artikel_id === pos.artikel_id) {
                     if(Number(b.menge) === -1) hatUnendlich = true;
+                    else if(Number(b.menge) === -2) hatStrich = true;
                     else if(Number(b.menge) >= 0) gesamtLager += Number(b.menge); 
                 }
             });
             
-            if (hatUnendlich) {
-                availableHtml = `<span style="font-size:1.2em; font-weight:bold;">∞</span>`;
+            if (hatUnendlich || hatStrich) {
+                availableHtml = hatUnendlich
+                    ? `<span style="font-size:1.2em; font-weight:bold;">∞</span>`
+                    : `<span style="font-size:1.2em; font-weight:bold;">-</span>`;
                 statusHtml = `<span class="event-ok">✅ OK</span>`;
             } else {
                 let verbrauchtAndere = 0;
@@ -1088,15 +1095,19 @@ function aktualisierePackVerfuegbarkeit() {
 
     let gesamtLager = 0;
     let hatUnendlich = false;
+    let hatStrich = false;
     aktuelleDaten.forEach(b => { 
         if(b.artikel_id === selId) {
             if(Number(b.menge) === -1) hatUnendlich = true;
+            else if(Number(b.menge) === -2) hatStrich = true;
             else if(Number(b.menge) >= 0) gesamtLager += Number(b.menge); 
         }
     });
 
-    if (hatUnendlich) {
-        infoDiv.innerHTML = `✅ Verbrauchsartikel (Unendlich auf Lager)`;
+    if (hatUnendlich || hatStrich) {
+        infoDiv.innerHTML = hatUnendlich
+            ? `✅ Sonderartikel (Bestand wird nicht limitiert: ∞)`
+            : `✅ Sonderartikel (Bestand wird nicht limitiert: -)`;
         infoDiv.style.color = '#27ae60';
         return;
     }
@@ -1194,14 +1205,17 @@ async function loeschePackliste() {
 }
 
 function startEinkaufsliste() {
-    einkaufslisteArray = []; 
+    einkaufslisteArray = [];
+    autoFehlbestandListe = [];
+    eigeneVorschlaegeListe = [];
+    manuelleEintraegeListe = [];
 
     let artikelBestand = {};
-    let artikelUnendlich = new Set();
+    let artikelIgnorieren = new Set();
     
     aktuelleDaten.forEach(b => {
-        if (Number(b.menge) === -1) {
-            artikelUnendlich.add(b.artikel_id);
+        if (Number(b.menge) === -1 || Number(b.menge) === -2) {
+            artikelIgnorieren.add(b.artikel_id);
         } else if (Number(b.menge) >= 0) {
             artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
         }
@@ -1212,7 +1226,7 @@ function startEinkaufsliste() {
 
     packlistenPositionen.forEach(p => {
         if (p.artikel_id) {
-            if (!artikelUnendlich.has(p.artikel_id)) {
+            if (!artikelIgnorieren.has(p.artikel_id)) {
                 artikelBedarf[p.artikel_id] = (artikelBedarf[p.artikel_id] || 0) + Number(p.menge);
             }
         } else if (p.eigener_name) {
@@ -1221,30 +1235,63 @@ function startEinkaufsliste() {
     });
 
     const ulAuto = document.getElementById('auto-kauf-liste');
+    const ulEigene = document.getElementById('eigene-kauf-liste');
     ulAuto.innerHTML = '';
+    if (ulEigene) ulEigene.innerHTML = '';
 
     alleArtikelInfos.forEach(art => {
         let bestand = artikelBestand[art.id] || 0;
         let bedarf = artikelBedarf[art.id] || 0;
         
-        if (bedarf > bestand && !artikelUnendlich.has(art.id)) {
+        if (bedarf > bestand && !artikelIgnorieren.has(art.id)) {
             let fehlMenge = bedarf - bestand;
-            einkaufslisteArray.push({ artikel: art.name, menge: fehlMenge, grund: 'Fehlt im Lager' });
+            autoFehlbestandListe.push({ artikel: art.name, menge: fehlMenge, grund: 'Fehlt im Lager' });
             ulAuto.innerHTML += `<li>${fehlMenge}x ${art.name}</li>`;
         }
     });
 
     for (let name in eigeneGegenstaende) {
-        einkaufslisteArray.push({ artikel: name, menge: eigeneGegenstaende[name], grund: 'Sonderposten Packliste' });
-        ulAuto.innerHTML += `<li>${eigeneGegenstaende[name]}x ${name} <small style="color:#666;">(Sonderposten)</small></li>`;
+        eigeneVorschlaegeListe.push({ artikel: name, menge: eigeneGegenstaende[name], grund: 'Sonderposten Packliste' });
     }
 
-    if (einkaufslisteArray.length === 0) {
+    if (ulEigene) {
+        if (eigeneVorschlaegeListe.length === 0) {
+            ulEigene.innerHTML = '<li style="color:#7f8c8d;">Keine eigenen Gegenstände gefunden.</li>';
+        } else {
+            eigeneVorschlaegeListe.forEach((item, index) => {
+                ulEigene.innerHTML += `
+                    <li style="margin-bottom: 6px;">
+                        <label style="display:flex; gap:8px; align-items:center; cursor:pointer;">
+                            <input type="checkbox" class="eigene-kauf-check" data-index="${index}" checked onchange="aktualisiereEinkaufslisteAuswahl()">
+                            <span>${item.menge}x ${item.artikel}</span>
+                        </label>
+                    </li>`;
+            });
+        }
+    }
+
+    aktualisiereEinkaufslisteAuswahl();
+
+    if (autoFehlbestandListe.length === 0 && eigeneVorschlaegeListe.length === 0) {
         ulAuto.innerHTML = '<li style="color:#27ae60;">Alles grün! Das Lager deckt alle Listen ab.</li>';
     }
 
     document.getElementById('manuell-kauf-liste').innerHTML = '';
     document.getElementById('kauflisteModal').style.display = 'block';
+}
+
+function aktualisiereEinkaufslisteAuswahl() {
+    const checks = document.querySelectorAll('.eigene-kauf-check');
+    const ausgewaehlteEigene = [];
+
+    checks.forEach(chk => {
+        if (!chk.checked) return;
+        const idx = Number(chk.getAttribute('data-index'));
+        const item = eigeneVorschlaegeListe[idx];
+        if (item) ausgewaehlteEigene.push(item);
+    });
+
+    einkaufslisteArray = [...autoFehlbestandListe, ...ausgewaehlteEigene, ...manuelleEintraegeListe];
 }
 
 function manuellAufZettel() {
@@ -1255,7 +1302,8 @@ function manuellAufZettel() {
 
     if (!name || menge <= 0) return;
 
-    einkaufslisteArray.push({ artikel: name, menge: menge, grund: 'Manuell hinzugefügt' });
+    manuelleEintraegeListe.push({ artikel: name, menge: menge, grund: 'Manuell hinzugefügt' });
+    aktualisiereEinkaufslisteAuswahl();
     
     const ulManuell = document.getElementById('manuell-kauf-liste');
     ulManuell.innerHTML += `<li>${menge}x ${name}</li>`;
@@ -1340,22 +1388,94 @@ function druckePackliste() {
     const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf("/") + 1);
 
     const printWindow = window.open('', '_blank');
+
+    const gruppen = {};
+
+    positionen.forEach(pos => {
+        let kategorie = 'Ohne Kategorie';
+        let name = '';
+        let ort = '-';
+
+        if (pos.artikel_id && pos.artikel) {
+            kategorie = (pos.artikel.kategorie || 'Ohne Kategorie').trim() || 'Ohne Kategorie';
+            name = pos.artikel.name;
+
+            const ortNamen = aktuelleDaten
+                .filter(b => b.artikel_id === pos.artikel_id && b.lagerorte && b.lagerorte.name)
+                .map(b => b.lagerorte.name);
+
+            const eindeutigeOrte = Array.from(new Set(ortNamen));
+            ort = eindeutigeOrte.length > 0 ? eindeutigeOrte.join(', ') : '-';
+        } else {
+            kategorie = 'Eigene Gegenstaende';
+            name = (pos.eigener_name || 'Unbenannt') + ' (Manuell)';
+            ort = 'Nicht im Lager';
+        }
+
+        if (!gruppen[kategorie]) gruppen[kategorie] = [];
+        gruppen[kategorie].push({ name, menge: pos.menge, ort });
+    });
+
+    const kategorienSortiert = Object.keys(gruppen).sort((a, b) => {
+        if (a === 'Ohne Kategorie') return 1;
+        if (b === 'Ohne Kategorie') return -1;
+        if (a === 'Eigene Gegenstaende') return 1;
+        if (b === 'Eigene Gegenstaende') return -1;
+        return a.localeCompare(b, 'de');
+    });
+
+    let rowsHtml = '';
+    kategorienSortiert.forEach(kategorie => {
+        rowsHtml += `
+            <tr class="category-row">
+                <td colspan="4">📁 ${kategorie}</td>
+            </tr>`;
+
+        gruppen[kategorie]
+            .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+            .forEach(item => {
+                rowsHtml += `
+                    <tr>
+                        <td style="text-align:center; width: 60px;"><div class="check"></div></td>
+                        <td><strong>${item.name}</strong></td>
+                        <td style="width: 80px;">${item.menge}</td>
+                        <td>${item.ort}</td>
+                    </tr>`;
+            });
+    });
+
+    if (!rowsHtml) {
+        rowsHtml = '<tr><td colspan="4" style="text-align:center; color:#666;">Keine Positionen in dieser Packliste.</td></tr>';
+    }
     
     let html = `
         <html>
         <head>
             <title>Packliste: ${liste.name}</title>
             <style>
-                body { font-family: sans-serif; padding: 20px; color: #333; }
-                .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e3000f; padding-bottom: 15px; margin-bottom: 20px; }
+                body { font-family: sans-serif; margin: 0; padding: 16px; color: #333; }
+                .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e3000f; padding-bottom: 15px; margin-bottom: 16px; }
                 .header-text h1 { color: #e3000f; margin: 0 0 5px 0; }
                 .header-text p { margin: 0; color: #666; }
                 .corner-logo { height: 60px; width: auto; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
+                thead { display: table-header-group; }
+                th, td { border: 1px solid #ddd; padding: 10px; text-align: left; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                th:nth-child(1), td:nth-child(1) { width: 60px; text-align: center; }
+                th:nth-child(2), td:nth-child(2) { width: 44%; }
+                th:nth-child(3), td:nth-child(3) { width: 80px; }
+                th:nth-child(4), td:nth-child(4) { width: 36%; }
                 th { background-color: #f2f2f2; }
+                .category-row td { background:#eef3f8; font-weight:bold; color:#2c3e50; }
                 .check { width: 30px; border: 1px solid #333; height: 20px; display: inline-block; }
-                @media print { .no-print { display: none; } tr { page-break-inside: avoid; } }
+                @media print {
+                    @page { size: A4 portrait; margin: 10mm; }
+                    .no-print { display: none; }
+                    tr { page-break-inside: avoid; }
+                    .category-row { page-break-after: avoid; }
+                    .category-row + tr { page-break-before: avoid; }
+                    body { padding: 0; }
+                }
             </style>
         </head>
         <body>
@@ -1371,33 +1491,8 @@ function druckePackliste() {
                 <thead>
                     <tr><th>Gepackt</th><th>Gegenstand / Material</th><th>Menge</th><th>Lagerort</th></tr>
                 </thead>
-                <tbody>`;
-
-    positionen.forEach(pos => {
-        let name = "";
-        let ort = "-";
-
-        if (pos.artikel_id && pos.artikel) {
-            name = (pos.artikel.kategorie ? pos.artikel.kategorie + " > " : "") + pos.artikel.name;
-            const bestandInfo = aktuelleDaten.find(b => b.artikel_id === pos.artikel_id);
-            if (bestandInfo && bestandInfo.lagerorte) {
-                ort = bestandInfo.lagerorte.name;
-            }
-        } else {
-            name = pos.eigener_name + " (Manuell)";
-            ort = "Nicht im Lager";
-        }
-
-        html += `
-            <tr>
-                <td style="text-align:center; width: 60px;"><div class="check"></div></td>
-                <td><strong>${name}</strong></td>
-                <td style="width: 80px;">${pos.menge}</td>
-                <td>${ort}</td>
-            </tr>`;
-    });
-
-    html += `
+                <tbody>
+                    ${rowsHtml}
                 </tbody>
             </table>
             <div style="margin-top: 30px; font-size: 0.8em; color: #666; text-align: center;">Trisport Erding Lager-Verwaltung</div>
