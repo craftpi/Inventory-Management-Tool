@@ -540,6 +540,22 @@ function tabelleAktualisieren(daten) {
                 displayName = displayName.substring(prefix.length).trim(); 
             }
 
+            // --- NEU: DATUM FÜR DEN HOVER BERECHNEN ---
+            // Sucht das neueste Änderungsdatum aus allen Lagerorten dieses Artikels
+            let latestDate = null;
+            gruppe.bestaende.forEach(b => {
+                if(b.created_at) {
+                    const d = new Date(b.created_at);
+                    if(!latestDate || d > latestDate) latestDate = d;
+                }
+            });
+            
+            let dateStr = "Unbekannt";
+            if(latestDate) {
+                dateStr = latestDate.toLocaleDateString('de-DE') + " " + latestDate.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + " Uhr";
+            }
+            // ------------------------------------------
+
             // Reservierungen checken
             let isInfinite = gruppe.bestaende.some(b => Number(b.menge) === -1);
             let resHtml = '';
@@ -558,7 +574,7 @@ function tabelleAktualisieren(daten) {
                 </div>`;
             }
 
-// HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
+            // HTML für die verschiedenen Lagerorte und Mengen des Artikels zusammenbauen
             let bestandInfoHtml = "";
             const einheit = gruppe.artikel.einheit || 'Stück'; // Einheit aus der Datenbank holen
 
@@ -575,26 +591,20 @@ function tabelleAktualisieren(daten) {
                         </div>`;
                 }
 
-                // NEU: Datum für den Hover-Effekt formatieren
-                let dateStr = "Unbekannt";
-                if(b.created_at) {
-                    const d = new Date(b.created_at);
-                    dateStr = d.toLocaleDateString('de-DE') + " " + d.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + " Uhr";
-                }
-
-                // NEU: Die Event-Listener und Attribute wieder zum HTML-Container hinzufügen
+                // HINWEIS: Die Hover-Events wurden hier vom div entfernt und in das td für den Artikelnamen gepackt
                 bestandInfoHtml += `
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;"
-                         data-hover-type="date" data-hover-content="${dateStr}"
-                         onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
-                         ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;">
                         <span style="font-size: 0.9em; color: #666;">📍 ${b.lagerorte.name}</span>
                         ${mengeZelle}
                     </div>`;
             });
 
+            // Die Hover-Attribute liegen jetzt exakt auf dem <td> mit dem Artikelnamen
             tr.innerHTML = `
-                <td class="no-select" style="padding-left: ${indent}px; color:#333; vertical-align: top;">
+                <td class="no-select" style="padding-left: ${indent}px; color:#333; vertical-align: top;"
+                    data-hover-type="date" data-hover-content="${dateStr}"
+                    onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
+                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
                     ${iconLabel} <strong>${displayName}</strong>
                 </td>
                 <td colspan="2" style="vertical-align: top;">
@@ -1030,8 +1040,9 @@ function openPackItemModal() {
     const listId = document.getElementById('packlisten-auswahl').value;
     if (!listId) { showToast("Bitte wähle zuerst eine Packliste aus!", "warning"); return; }
     
-    const sel = document.getElementById('pack-artikel-select');
-    sel.innerHTML = '';
+    const datalist = document.getElementById('pack-artikel-datalist');
+    datalist.innerHTML = '';
+    document.getElementById('pack-artikel-input').value = ''; // Feld beim Öffnen leeren
     
     const sortierteArt = [...alleArtikelInfos].sort((a, b) => {
         const aKat = a.kategorie || '';
@@ -1042,7 +1053,9 @@ function openPackItemModal() {
 
     sortierteArt.forEach(art => {
         const nameString = (art.kategorie ? art.kategorie + " > " : "") + art.name;
-        sel.add(new Option(nameString, art.id));
+        const option = document.createElement('option');
+        option.value = nameString;
+        datalist.appendChild(option);
     });
     
     document.getElementById('packItemModal').style.display = 'block';
@@ -1062,8 +1075,15 @@ function aktualisierePackVerfuegbarkeit() {
 
     if (typ !== 'lager') { infoDiv.innerHTML = ''; return; }
 
-    const selId = Number(document.getElementById('pack-artikel-select').value);
-    if (!selId) { infoDiv.innerHTML = ''; return; }
+    const inputVal = document.getElementById('pack-artikel-input').value;
+    // Suche den passenden Artikelnamen im Hintergrund
+    const matchedArt = alleArtikelInfos.find(a => {
+        const n = (a.kategorie ? a.kategorie + " > " : "") + a.name;
+        return n === inputVal;
+    });
+
+    if (!matchedArt) { infoDiv.innerHTML = ''; return; }
+    const selId = matchedArt.id;
 
     let gesamtLager = 0;
     let hatUnendlich = false;
@@ -1105,7 +1125,20 @@ async function packPositionSpeichern() {
     let dbObj = { packliste_id: listId, menge: menge };
 
     if (typ === 'lager') {
-        dbObj.artikel_id = document.getElementById('pack-artikel-select').value;
+        const inputVal = document.getElementById('pack-artikel-input').value;
+        
+        // Finde den Artikel anhand des eingetippten/ausgewählten Namens
+        const matchedArt = alleArtikelInfos.find(a => {
+            const n = (a.kategorie ? a.kategorie + " > " : "") + a.name;
+            return n === inputVal;
+        });
+        
+        // Sicherheits-Check: Hat der User Quatsch eingetippt?
+        if (!matchedArt) { 
+            showToast("Bitte wähle einen gültigen Artikel aus der Vorschlagsliste!", "warning"); 
+            return; 
+        }
+        dbObj.artikel_id = matchedArt.id;
     } else {
         const en = document.getElementById('pack-eigener-name').value;
         if (!en) { showToast("Bitte Namen eingeben!", "warning"); return; }

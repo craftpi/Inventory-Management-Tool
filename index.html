@@ -387,8 +387,9 @@
             </select>
         </div>
         <div class="form-group" id="div-pack-lager">
-            <label>Lager-Artikel auswählen</label>
-            <select id="pack-artikel-select" onchange="aktualisierePackVerfuegbarkeit()"></select>
+            <label>Lager-Artikel suchen & auswählen</label>
+            <input type="text" id="pack-artikel-input" list="pack-artikel-datalist" oninput="aktualisierePackVerfuegbarkeit()" placeholder="🔍 Tippen zum Suchen..." autocomplete="off">
+            <datalist id="pack-artikel-datalist"></datalist>
             <div id="pack-artikel-info" style="margin-top: 5px; font-size: 0.9em; font-weight: bold;"></div>
         </div>
         <div class="form-group" id="div-pack-custom" style="display:none;">
