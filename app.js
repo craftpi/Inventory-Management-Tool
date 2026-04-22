@@ -567,7 +567,7 @@ function tabelleAktualisieren(daten) {
                 if (isInfLocal) {
                     mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small style="color: #888; font-size: 0.8em; margin-left: 3px;">${einheit}</small>`;
                 } else if (isStrichLocal) {
-                    mengeZelle = `<span style="font-size: 1.4em; color: #f39c12; font-weight: bold;" title="Ohne Wert / Nicht zutreffend">-</span>`;
+                    mengeZelle = `<span style="font-size: 1.4em; color: #7f8c8d; font-weight: bold;" title="Ohne Wert / Nicht zutreffend">-</span>`;
                 } else {
                     mengeZelle = `
                         <div style="display: flex; align-items: center; gap: 5px; justify-content: flex-end;">
@@ -642,7 +642,7 @@ function toggleRowStrich(btn) {
         if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
         input.value = '-';
         input.disabled = true;
-        btn.style.background = '#95a5a6';
+        btn.style.background = '#7f8c8d' ;
         btn.setAttribute('data-active', 'true');
         
         if(infBtn && infBtn.getAttribute('data-active') === 'true') toggleRowInfinite(infBtn);
@@ -682,7 +682,7 @@ function addEditOrtRow(data = null) {
     const isInf = (displayVal === '∞');
     const isStrich = (displayVal === '-');
     const btnColorInf = isInf ? '#27ae60' : '#95a5a6'; 
-    const btnColorStrich = isStrich ? '#f39c12' : '#95a5a6'; 
+    const btnColorStrich = isStrich ? '#7f8c8d' : '#95a5a6'; 
 
     div.innerHTML = `
         <select class="edit-ort-select" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
