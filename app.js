@@ -191,6 +191,12 @@ function openModal() {
     firstBtnInf.style.background = '#95a5a6';
     firstBtnInf.setAttribute('data-active', 'false'); 
 
+    const firstBtnStrich = firstRow.querySelector('.btn-strich');
+    if(firstBtnStrich) {
+        firstBtnStrich.style.background = '#95a5a6';
+        firstBtnStrich.setAttribute('data-active', 'false');
+    }
+
     // NEU: Ort auf Standard zurücksetzen
     const firstSelect = firstRow.querySelector('.new-ort');
     const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
@@ -215,7 +221,12 @@ function addOrtRow() {
     btnInf.style.background = '#95a5a6';
     btnInf.setAttribute('data-active', 'false'); 
 
-    // NEU: Setze den neuen Dropdown direkt auf den Standard-Ort
+    const btnStrich = newRow.querySelector('.btn-strich');
+    if(btnStrich) {
+        btnStrich.style.background = '#95a5a6';
+        btnStrich.setAttribute('data-active', 'false');
+    }
+
     const newSelect = newRow.querySelector('.new-ort');
     const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
     if (defaultOrt && newSelect) {
@@ -422,7 +433,7 @@ function tabelleAktualisieren(daten) {
         let hatUnendlich = false;
         zeilenListe.forEach(z => {
             if(Number(z.menge) === -1) hatUnendlich = true;
-            else ordnerSumme += Number(z.menge);
+            else if(Number(z.menge) >= 0) ordnerSumme += Number(z.menge);
         });
         
         let summenAnzeige = ordnerSumme;
@@ -459,7 +470,7 @@ function tabelleAktualisieren(daten) {
                 if (!prefixSums[prefix]) prefixSums[prefix] = 0;
                 if (Number(z.menge) === -1) {
                     prefixInf[prefix] = true;
-                } else {
+                } else if (Number(z.menge) >= 0) {
                     prefixSums[prefix] += Number(z.menge);
                 }
             }
@@ -580,9 +591,13 @@ function tabelleAktualisieren(daten) {
 
             gruppe.bestaende.forEach(b => {
                 const isInfLocal = (Number(b.menge) === -1);
+                const isStrichLocal = (Number(b.menge) === -2); // NEU
                 let mengeZelle = "";
+                
                 if (isInfLocal) {
                     mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small style="color: #888; font-size: 0.8em; margin-left: 3px;">${einheit}</small>`;
+                } else if (isStrichLocal) {
+                    mengeZelle = `<span style="font-size: 1.4em; color: #f39c12; font-weight: bold;" title="Ohne Wert / Nicht zutreffend">-</span>`;
                 } else {
                     mengeZelle = `
                         <div style="display: flex; align-items: center; gap: 5px; justify-content: flex-end;">
@@ -591,7 +606,6 @@ function tabelleAktualisieren(daten) {
                         </div>`;
                 }
 
-                // HINWEIS: Die Hover-Events wurden hier vom div entfernt und in das td für den Artikelnamen gepackt
                 bestandInfoHtml += `
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;">
                         <span style="font-size: 0.9em; color: #666;">📍 ${b.lagerorte.name}</span>
@@ -599,7 +613,6 @@ function tabelleAktualisieren(daten) {
                     </div>`;
             });
 
-            // Die Hover-Attribute liegen jetzt exakt auf dem <td> mit dem Artikelnamen
             tr.innerHTML = `
                 <td class="no-select" style="padding-left: ${indent}px; color:#333; vertical-align: top;"
                     data-hover-type="date" data-hover-content="${dateStr}"
@@ -625,9 +638,8 @@ function toggleEditMode() {
 }
 
 function toggleRowInfinite(btn) {
-    const input = btn.previousElementSibling;
-    
-    // Prüfen ob der Button aktuell "aktiv" ist (bulletproof)
+    const input = btn.parentElement.querySelector('input');
+    const strichBtn = btn.parentElement.querySelector('.btn-strich');
     const isInfinite = btn.getAttribute('data-active') === 'true';
 
     if (isInfinite) {
@@ -636,13 +648,35 @@ function toggleRowInfinite(btn) {
         btn.style.background = '#95a5a6'; // Grau
         btn.setAttribute('data-active', 'false');
     } else {
-        if (input.value !== '∞') {
-            input.setAttribute('data-old-value', input.value);
-        }
+        if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
         input.value = '∞';
         input.disabled = true;
         btn.style.background = '#27ae60'; // Grün
         btn.setAttribute('data-active', 'true');
+        
+        // Strich-Button deaktivieren falls aktiv
+        if(strichBtn && strichBtn.getAttribute('data-active') === 'true') toggleRowStrich(strichBtn);
+    }
+}
+
+function toggleRowStrich(btn) {
+    const input = btn.parentElement.querySelector('input');
+    const infBtn = btn.parentElement.querySelector('.btn-inf');
+    const isStrich = btn.getAttribute('data-active') === 'true';
+
+    if (isStrich) {
+        input.disabled = false;
+        input.value = input.getAttribute('data-old-value') || '0';
+        btn.style.background = '#95a5a6'; // Grau
+        btn.setAttribute('data-active', 'false');
+    } else {
+        if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
+        input.value = '-';
+        input.disabled = true;
+        btn.style.background = '#95a5a6'; // Grau für Strich
+        btn.setAttribute('data-active', 'true');
+        
+        if(infBtn && infBtn.getAttribute('data-active') === 'true') toggleRowInfinite(infBtn);
     }
 }
 
@@ -672,19 +706,25 @@ function addEditOrtRow(data = null) {
     let hiddenOldVal = '0'; 
     
     if (data) {
-        displayVal = (data.menge == -1) ? '∞' : data.menge;
-        hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge == -1 ? '0' : data.menge);
+        if (data.menge == -1) displayVal = '∞';
+        else if (data.menge == -2) displayVal = '-';
+        else displayVal = data.menge;
+        
+        hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge < 0 ? '0' : data.menge);
     }
 
     const isInf = (displayVal === '∞');
-    const btnColor = isInf ? '#27ae60' : '#95a5a6'; 
+    const isStrich = (displayVal === '-');
+    const btnColorInf = isInf ? '#27ae60' : '#95a5a6'; 
+    const btnColorStrich = isStrich ? '#f39c12' : '#95a5a6'; 
 
     div.innerHTML = `
         <select class="edit-ort-select" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
         
         <div style="flex: 1; display: flex; gap: 4px;">
-            <input type="text" class="edit-menge-input" value="${displayVal}" data-old-value="${hiddenOldVal}" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;" ${isInf ? 'disabled' : ''}>
-            <button type="button" class="btn" style="background: ${btnColor}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" data-active="${isInf}" onclick="toggleRowInfinite(this)">∞</button>
+            <input type="text" class="edit-menge-input" value="${displayVal}" data-old-value="${hiddenOldVal}" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;" ${(isInf || isStrich) ? 'disabled' : ''}>
+            <button type="button" class="btn btn-inf" style="background: ${btnColorInf}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" data-active="${isInf}" onclick="toggleRowInfinite(this)">∞</button>
+            <button type="button" class="btn btn-strich" style="background: ${btnColorStrich}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Ohne Bestand umschalten" data-active="${isStrich}" onclick="toggleRowStrich(this)">-</button>
         </div>
 
         <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeEditRow(this)">🗑️</button>
@@ -746,10 +786,10 @@ async function speichereBearbeitung() {
             
             // Lese den versteckten alten Wert aus
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
-            const menge = (mRaw === '∞') ? -1 : werteMengeAus(mRaw);
+            const menge = (mRaw === '∞') ? -1 : (mRaw === '-') ? -2 : werteMengeAus(mRaw);
             
-            // Wenn die Menge unendlich ist, merke dir die alte Zahl.
-            const finaleAlteMenge = (menge === -1) ? alteMengeAusFeld : menge;
+            // Wenn die Menge unendlich/Strich ist, merke dir die alte Zahl.
+            const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
             
             inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge, alte_menge: finaleAlteMenge });
         });
@@ -780,8 +820,14 @@ async function speichereMenge(bId) {
     const f = document.getElementById(`menge-${bId}`);
     if(!f) return;
     
-    const neueMenge = werteMengeAus(f.value);
-    f.value = neueMenge; 
+    let neueMenge;
+    if (f.value.trim() === '-') {
+        neueMenge = -2;
+    } else {
+        neueMenge = werteMengeAus(f.value);
+    }
+    
+    f.value = neueMenge === -2 ? '-' : neueMenge; 
     f.style.backgroundColor = '#fff3cd'; 
 
     const aktuellesDatum = new Date().toISOString();
@@ -795,7 +841,7 @@ async function speichereMenge(bId) {
     
     if (!error) {
         f.style.backgroundColor = '#d4edda'; 
-        showToast(`Bestand gespeichert: ${neueMenge}`);
+        showToast(`Bestand gespeichert: ${f.value}`);
         setTimeout(() => { if(f) f.style.backgroundColor = ''; ladeAlles(); }, 800); 
     } else { showToast("Speicherfehler!", "error"); }
 }
@@ -828,8 +874,8 @@ async function artikelAnlegen() {
             
             // Auslesen und Berechnen
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
-            const menge = (mRaw === '∞') ? -1 : werteMengeAus(mRaw);
-            const finaleAlteMenge = (menge === -1) ? alteMengeAusFeld : menge;
+            const menge = (mRaw === '∞') ? -1 : (mRaw === '-') ? -2 : werteMengeAus(mRaw);
+            const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
             
             bestandInserts.push({ 
                 artikel_id: nA[0].id, 
@@ -991,7 +1037,7 @@ function zeigePackliste() {
             aktuelleDaten.forEach(b => { 
                 if(b.artikel_id === pos.artikel_id) {
                     if(Number(b.menge) === -1) hatUnendlich = true;
-                    gesamtLager += Number(b.menge); 
+                    else if(Number(b.menge) >= 0) gesamtLager += Number(b.menge); 
                 }
             });
             
@@ -1090,7 +1136,7 @@ function aktualisierePackVerfuegbarkeit() {
     aktuelleDaten.forEach(b => { 
         if(b.artikel_id === selId) {
             if(Number(b.menge) === -1) hatUnendlich = true;
-            gesamtLager += Number(b.menge); 
+            else if(Number(b.menge) >= 0) gesamtLager += Number(b.menge); 
         }
     });
 
@@ -1207,7 +1253,7 @@ function startEinkaufsliste() {
     aktuelleDaten.forEach(b => {
         if (Number(b.menge) === -1) {
             artikelUnendlich.add(b.artikel_id);
-        } else {
+        } else if (Number(b.menge) >= 0) {
             artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
         }
     });
