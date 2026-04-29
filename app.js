@@ -18,6 +18,7 @@ let sortAscending = true;
 let autoFehlbestandListe = [];
 let eigeneVorschlaegeListe = [];
 let manuelleEintraegeListe = [];
+let zeigeAlleArtikel = false;
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -167,6 +168,8 @@ function openModal() {
     document.getElementById('new-name').value = '';
     document.getElementById('new-kategorie').value = '';
     document.getElementById('new-einheit').value = 'Stück';
+    const newWichtig = document.getElementById('new-wichtig');
+    if (newWichtig) newWichtig.checked = false;
     
     const container = document.getElementById('new-orte-wrapper');
     const rows = container.querySelectorAll('.lagerort-row');
@@ -294,7 +297,11 @@ async function ladeBestand() {
         if (fallback.error) { showToast("Datenbank-Fehler", "error"); return; }
     }
 
-    aktuelleDaten = data || []; 
+    const wichtigMap = new Map(alleArtikelInfos.map(art => [String(art.id), Boolean(art.wichtig)]));
+    aktuelleDaten = (data || []).map(zeile => ({
+        ...zeile,
+        artikel: zeile.artikel ? { ...zeile.artikel, wichtig: wichtigMap.get(String(zeile.artikel_id)) || Boolean(zeile.artikel.wichtig) } : zeile.artikel
+    })); 
     aktualisiereFilterDropdown(aktuelleDaten); 
     wendeFilterAn(); 
 }
@@ -391,8 +398,9 @@ function tabelleAktualisieren(daten) {
         }
     });
 
+    const anzeigeDaten = zeigeAlleArtikel ? daten : daten.filter(zeile => zeile.artikel && zeile.artikel.wichtig);
     const gruppierteDaten = {}; 
-    daten.forEach(zeile => {
+    anzeigeDaten.forEach(zeile => {
         if (!zeile.artikel) return; 
         const katName = zeile.artikel.kategorie || 'Ohne Kategorie';
         if (!gruppierteDaten[katName]) { gruppierteDaten[katName] = []; }
@@ -406,6 +414,16 @@ function tabelleAktualisieren(daten) {
         if (b === specialFolder) return -1;
         return a.localeCompare(b, 'de') * sortFactor;
     });
+
+    if (anzeigeDaten.length === 0) {
+        const emptyTr = document.createElement('tr');
+        emptyTr.innerHTML = `
+            <td colspan="3" style="text-align:center; padding:24px; color:#666;">
+                ${zeigeAlleArtikel ? 'Keine Artikel vorhanden.' : 'Keine markierten Artikel sichtbar.'}
+            </td>
+        `;
+        tbody.appendChild(emptyTr);
+    }
     
     for (const katName of sortedKategorien) {
         const zeilenListe = gruppierteDaten[katName];
@@ -523,6 +541,7 @@ function tabelleAktualisieren(daten) {
             let displayName = gruppe.artikel.name;
             let indent = 25;
             let iconLabel = '↳';
+            const wichtigBadge = gruppe.artikel.wichtig ? '<span style="display:inline-block; margin-left:8px; padding:2px 8px; border-radius:999px; background:#f39c12; color:#fff; font-size:0.75em; font-weight:bold; vertical-align:middle;">MARKIERT</span>' : '';
 
             if (isGroup) {
                 indent = 45;
@@ -591,7 +610,7 @@ function tabelleAktualisieren(daten) {
                     data-hover-type="date" data-hover-content="${dateStr}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
-                    ${iconLabel} <strong>${displayName}</strong>
+                    ${iconLabel} <strong>${displayName}</strong>${wichtigBadge}
                 </td>
                 <td colspan="2" style="vertical-align: top;">
                     ${bestandInfoHtml}
@@ -601,6 +620,29 @@ function tabelleAktualisieren(daten) {
             tbody.appendChild(tr);
         });
     }
+
+    const hiddenArtikel = new Set(
+        aktuelleDaten
+            .filter(zeile => zeile.artikel && !zeile.artikel.wichtig)
+            .map(zeile => zeile.artikel_id)
+    );
+
+    if (hiddenArtikel.size > 0) {
+        const footerTr = document.createElement('tr');
+        footerTr.innerHTML = `
+            <td colspan="3" style="padding:14px; text-align:center; background:#f8fafc; border-top:1px solid #dfe6e9;">
+                <button class="btn" onclick="toggleAlleArtikelSichtbarkeit()" style="background:#34495e; width:auto; min-width:220px;">
+                    ${zeigeAlleArtikel ? 'Weniger anzeigen' : `Mehr anzeigen (${hiddenArtikel.size} weitere)`}
+                </button>
+            </td>
+        `;
+        tbody.appendChild(footerTr);
+    }
+}
+
+function toggleAlleArtikelSichtbarkeit() {
+    zeigeAlleArtikel = !zeigeAlleArtikel;
+    wendeFilterAn();
 }
 
 function toggleEditMode() {
@@ -719,6 +761,8 @@ async function openEditModal(artikelId) {
     document.getElementById('edit-name').value = art.name;
     document.getElementById('edit-kategorie').value = art.kategorie || '';
     document.getElementById('edit-einheit').value = art.einheit || 'Stück';
+    const editWichtig = document.getElementById('edit-wichtig');
+    if (editWichtig) editWichtig.checked = Boolean(art.wichtig);
 
     const wrapper = document.getElementById('edit-orte-wrapper');
     wrapper.innerHTML = '';
@@ -735,6 +779,7 @@ async function speichereBearbeitung() {
         const nName = document.getElementById('edit-name').value.trim();
         const nKat = document.getElementById('edit-kategorie').value.trim();
         const nEinheit = document.getElementById('edit-einheit').value;
+        const nWichtig = Boolean(document.getElementById('edit-wichtig')?.checked);
 
         const doppelt = alleArtikelInfos.find(a => a.name.toLowerCase() === nName.toLowerCase() && String(a.id) !== String(aid));
         if (doppelt) {
@@ -742,7 +787,7 @@ async function speichereBearbeitung() {
             if (!weiter) return;
         }
 
-        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, einheit: nEinheit }).eq('id', aid);
+        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, einheit: nEinheit, wichtig: nWichtig }).eq('id', aid);
         await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
         const inserts = [];
@@ -814,6 +859,7 @@ async function artikelAnlegen() {
         const n = document.getElementById('new-name').value.trim();
         const k = document.getElementById('new-kategorie').value.trim();
         const e = document.getElementById('new-einheit').value;
+        const w = Boolean(document.getElementById('new-wichtig')?.checked);
         
         if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
 
@@ -823,7 +869,7 @@ async function artikelAnlegen() {
             if (!weiter) return;
         }
 
-        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, einheit: e }]).select();
+        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, einheit: e, wichtig: w }]).select();
         if (err) { showToast("Fehler: " + err.message, "error"); return; }
         
         const bestandInserts = [];
