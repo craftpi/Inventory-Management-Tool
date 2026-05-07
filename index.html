@@ -445,7 +445,19 @@
         </div>
     </div>
 </div>
-
+<div id="kommentarModal" class="modal">
+    <div class="modal-content">
+        <h2 style="color: #3498db; margin-top: 0;">💬 Kommentar zu: <br><small id="kommentar-artikel-name" style="color: #333;"></small></h2>
+        <input type="hidden" id="kommentar-artikel-id">
+        <div class="form-group">
+            <textarea id="kommentar-text" rows="5" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; font-family: inherit; resize: vertical; box-sizing: border-box;" placeholder="Hinterlasse hier Notizen, Warnungen oder Infos zu diesem Artikel..."></textarea>
+        </div>
+        <div class="flex-buttons" style="margin-top: 15px;">
+            <button class="btn btn-save" style="background-color: #3498db;" onclick="speichereKommentar()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('kommentarModal')">Schließen</button>
+        </div>
+    </div>
+</div>
 
 <div class="app-footer">
     Bugs gefunden oder Verbesserungsvorschläge?<br>

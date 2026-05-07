@@ -285,14 +285,13 @@ async function ladeLagerorte() {
 async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
-
     let { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit), lagerorte (id, name)`).order('id');
+        .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit, kommentar), lagerorte (id, name)`).order('id');
     
     if (error) {
         console.warn("Spalte created_at fehlt in Supabase. Lade ohne Datum.");
         const fallback = await dbClient.from('bestand')
-            .select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit), lagerorte (id, name)`).order('id');
+            .select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit, kommentar), lagerorte (id, name)`).order('id');
         data = fallback.data;
         if (fallback.error) { showToast("Datenbank-Fehler", "error"); return; }
     }
@@ -542,7 +541,17 @@ function tabelleAktualisieren(daten) {
             let indent = 25;
             let iconLabel = '↳';
             const wichtigBadge = gruppe.artikel.wichtig ? '<span style="display:inline-block; margin-left:8px; padding:2px 8px; border-radius:999px; background:#f39c12; color:#fff; font-size:0.75em; font-weight:bold; vertical-align:middle;">MARKIERT</span>' : '';
-
+            const hatKommentar = gruppe.artikel.kommentar && gruppe.artikel.kommentar.trim() !== '';
+            const bubbleColor = hatKommentar ? '#3498db' : '#bdc3c7'; 
+            const bubbleFill = hatKommentar ? '#3498db' : 'none'; 
+            const bubbleOpacity = hatKommentar ? '1' : '0.5'; 
+            
+            const kommentarIcon = `
+                <span onclick="openKommentarModal('${artId}', event)" style="cursor: pointer; margin-left: 8px; vertical-align: middle; opacity: ${bubbleOpacity}; display: inline-block; padding-top: 2px;" title="${hatKommentar ? 'Kommentar ansehen/bearbeiten' : 'Kommentar hinzufügen'}">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="${bubbleFill}" stroke="${bubbleColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                    </svg>
+                </span>`;
             if (isGroup) {
                 indent = 45;
                 iconLabel = '◦';
@@ -610,7 +619,7 @@ function tabelleAktualisieren(daten) {
                     data-hover-type="date" data-hover-content="${dateStr}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
-                    ${iconLabel} <strong>${displayName}</strong>${wichtigBadge}
+                    ${iconLabel} <strong>${displayName}</strong>${wichtigBadge}${kommentarIcon}
                 </td>
                 <td colspan="2" style="vertical-align: top;">
                     ${bestandInfoHtml}
@@ -1547,4 +1556,39 @@ function druckePackliste() {
 
     printWindow.document.write(html);
     printWindow.document.close();
+}
+// --- KOMMENTAR FUNKTIONEN ---
+
+function openKommentarModal(artikelId, event) {
+    // Verhindert, dass der Klick auf die Sprechblase versehentlich 
+    // den Artikel-Bearbeiten-Modus öffnet
+    if (event) event.stopPropagation(); 
+    
+    // Artikel suchen
+    const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
+    if (!art) return;
+    
+    document.getElementById('kommentar-artikel-id').value = artikelId;
+    document.getElementById('kommentar-artikel-name').innerText = art.name;
+    document.getElementById('kommentar-text').value = art.kommentar || '';
+    
+    document.getElementById('kommentarModal').style.display = 'block';
+}
+
+async function speichereKommentar() {
+    const artId = document.getElementById('kommentar-artikel-id').value;
+    const neuerKommentar = document.getElementById('kommentar-text').value;
+    
+    // In Supabase speichern
+    const { error } = await dbClient.from('artikel')
+        .update({ kommentar: neuerKommentar })
+        .eq('id', artId);
+        
+    if (error) {
+        showToast("Fehler beim Speichern des Kommentars: " + error.message, "error");
+    } else {
+        closeModal('kommentarModal');
+        showToast("Kommentar gespeichert!");
+        ladeAlles(); // Lädt die Tabelle neu, damit sich die Farbe der Sprechblase aktualisiert
+    }
 }
