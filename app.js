@@ -1,6 +1,8 @@
 const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const FORMULAR_TABLE = 'formular_antworten';
+const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular') === '1';
 
 let aktuelleDaten = [];
 let packlisten = [];
@@ -123,13 +125,65 @@ function werteMengeAus(eingabe) {
     } catch (e) { return 0; }
 }
 
+function gibFormularLink() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('formular', '1');
+    return url.toString();
+}
+
+function initFormularLink() {
+    const linkEl = document.getElementById('formular-share-link');
+    if (!linkEl) return;
+    const formularLink = gibFormularLink();
+    linkEl.href = formularLink;
+    linkEl.innerText = formularLink;
+}
+
+function initFormularModus() {
+    const formularView = document.getElementById('formular-ansicht');
+    if (formularView) formularView.style.display = 'block';
+
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) loginOverlay.style.display = 'none';
+
+    const appContainer = document.querySelector('.container');
+    if (appContainer) appContainer.style.display = 'none';
+
+    const appFooter = document.querySelector('.app-footer');
+    if (appFooter) appFooter.style.display = 'none';
+
+    const hoverDate = document.getElementById('hover-date-info');
+    const hoverRes = document.getElementById('hover-res-info');
+    if (hoverDate) hoverDate.style.display = 'none';
+    if (hoverRes) hoverRes.style.display = 'none';
+}
+
+function escapeHtml(input) {
+    return String(input || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+    initFormularLink();
+
+    if (FORMULAR_MODUS) {
+        initFormularModus();
+        return;
+    }
+
     const { data: { session } } = await dbClient.auth.getSession();
     if (session) { document.getElementById('login-overlay').style.display = 'none'; ladeAlles(); } 
     else { document.getElementById('login-overlay').style.display = 'flex'; }
 });
 
 dbClient.auth.onAuthStateChange(async (event, session) => {
+    if (FORMULAR_MODUS) return;
     const overlay = document.getElementById('login-overlay');
     if (event === 'SIGNED_IN') { overlay.style.display = 'none'; showToast('Erfolgreich angemeldet!'); ladeAlles(); } 
     else if (event === 'SIGNED_OUT') {
@@ -1591,4 +1645,72 @@ async function speichereKommentar() {
         showToast("Kommentar gespeichert!");
         ladeAlles(); // Lädt die Tabelle neu, damit sich die Farbe der Sprechblase aktualisiert
     }
+}
+
+async function formularAntwortSpeichern() {
+    const frage1 = document.getElementById('formular-frage1')?.value.trim() || '';
+    const frage2 = document.getElementById('formular-frage2')?.value.trim() || '';
+
+    if (!frage1 && !frage2) {
+        showToast('Bitte beantworte mindestens eine Frage.', 'warning');
+        return;
+    }
+
+    const { error } = await dbClient.from(FORMULAR_TABLE).insert([
+        { frage1, frage2 }
+    ]);
+
+    if (error) {
+        console.error(error);
+        showToast('Speichern fehlgeschlagen. Tabelle "formular_antworten" prüfen.', 'error');
+        return;
+    }
+
+    showToast('Antwort gespeichert. Danke!');
+    const q1 = document.getElementById('formular-frage1');
+    const q2 = document.getElementById('formular-frage2');
+    if (q1) q1.value = '';
+    if (q2) q2.value = '';
+}
+
+async function formularAntwortenLaden() {
+    const ziel = document.getElementById('formular-antworten');
+    if (!ziel) return;
+
+    const { data, error } = await dbClient
+        .from(FORMULAR_TABLE)
+        .select('frage1, frage2, created_at')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+    if (error) {
+        console.error(error);
+        ziel.style.display = 'block';
+        ziel.innerHTML = '<p style="color:#c0392b; margin:0;">Antworten konnten nicht geladen werden. Bitte Supabase-Tabelle "formular_antworten" inkl. Spalten "frage1", "frage2", "created_at" prüfen.</p>';
+        return;
+    }
+
+    if (!data || data.length === 0) {
+        ziel.style.display = 'block';
+        ziel.innerHTML = '<p style="margin:0; color:#7f8c8d;">Noch keine Antworten vorhanden.</p>';
+        return;
+    }
+
+    let html = '';
+    data.forEach((eintrag, index) => {
+        const zeit = eintrag.created_at
+            ? new Date(eintrag.created_at).toLocaleString('de-DE')
+            : 'Unbekannt';
+
+        html += `
+            <div class="survey-answer-item">
+                <h4>Antwort ${index + 1} - ${escapeHtml(zeit)}</h4>
+                <p><strong>Frage 1:</strong><br>${escapeHtml(eintrag.frage1) || '<em>-</em>'}</p>
+                <p><strong>Frage 2:</strong><br>${escapeHtml(eintrag.frage2) || '<em>-</em>'}</p>
+            </div>
+        `;
+    });
+
+    ziel.style.display = 'block';
+    ziel.innerHTML = html;
 }
