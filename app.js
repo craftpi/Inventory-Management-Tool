@@ -1648,6 +1648,7 @@ async function speichereKommentar() {
 }
 
 async function formularAntwortSpeichern() {
+    const formname = document.getElementById('formular-name')?.value.trim() || 'Anonyme Person';
     const frage1 = document.getElementById('formular-frage1')?.value.trim() || '';
     const frage2 = document.getElementById('formular-frage2')?.value.trim() || '';
 
@@ -1657,7 +1658,7 @@ async function formularAntwortSpeichern() {
     }
 
     const { error } = await dbClient.from(FORMULAR_TABLE).insert([
-        { frage1, frage2 }
+        { name: formname, frage1, frage2 }
     ]);
 
     if (error) {
@@ -1667,8 +1668,10 @@ async function formularAntwortSpeichern() {
     }
 
     showToast('Antwort gespeichert. Danke!');
+    const nameFeld = document.getElementById('formular-name');
     const q1 = document.getElementById('formular-frage1');
     const q2 = document.getElementById('formular-frage2');
+    if (nameFeld) nameFeld.value = '';
     if (q1) q1.value = '';
     if (q2) q2.value = '';
 }
@@ -1679,14 +1682,14 @@ async function formularAntwortenLaden() {
 
     const { data, error } = await dbClient
         .from(FORMULAR_TABLE)
-        .select('frage1, frage2, created_at')
+        .select('name, frage1, frage2, created_at')
         .order('created_at', { ascending: false })
         .limit(200);
 
     if (error) {
         console.error(error);
         ziel.style.display = 'block';
-        ziel.innerHTML = '<p style="color:#c0392b; margin:0;">Antworten konnten nicht geladen werden. Bitte Supabase-Tabelle "formular_antworten" inkl. Spalten "frage1", "frage2", "created_at" prüfen.</p>';
+        ziel.innerHTML = '<p style="color:#c0392b; margin:0;">Antworten konnten nicht geladen werden. Bitte Supabase-Tabelle "formular_antworten" inkl. Spalten "frage1", "frage2", "name", "created_at" prüfen.</p>';
         return;
     }
 
@@ -1705,6 +1708,7 @@ async function formularAntwortenLaden() {
         html += `
             <div class="survey-answer-item">
                 <h4>Antwort ${index + 1} - ${escapeHtml(zeit)}</h4>
+                <p><strong>Name:</strong><br>${escapeHtml(eintrag.name) || '<em>-</em>'}</p>
                 <p><strong>Frage 1:</strong><br>${escapeHtml(eintrag.frage1) || '<em>-</em>'}</p>
                 <p><strong>Frage 2:</strong><br>${escapeHtml(eintrag.frage2) || '<em>-</em>'}</p>
             </div>
