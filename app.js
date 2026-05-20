@@ -3,6 +3,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const FORMULAR_TABLE = 'formular_antworten';
 const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular') === '1';
+const QRGEN_MODUS = new URLSearchParams(window.location.search).get('qrgen') === '1';
+const INITIAL_REGAL_FILTER = new URLSearchParams(window.location.search).get('regal') || '';
 
 let aktuelleDaten = [];
 let packlisten = [];
@@ -21,6 +23,7 @@ let autoFehlbestandListe = [];
 let eigeneVorschlaegeListe = [];
 let manuelleEintraegeListe = [];
 let zeigeAlleArtikel = false;
+let aktiverRegalFilter = extrahiereRegalName(INITIAL_REGAL_FILTER);
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -133,6 +136,228 @@ function gibFormularLink() {
     return url.toString();
 }
 
+function normalisiereRegalText(text) {
+    return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function extrahiereRegalName(text) {
+    const roherText = String(text || '').trim();
+    if (!roherText) return '';
+
+    const match = roherText.match(/\(([^)]+)\)\s*$/);
+    if (match && match[1]) {
+        return match[1].trim();
+    }
+
+    return roherText;
+}
+
+function vergleicheRegalNamen(a, b, sortFactor = 1) {
+    const aName = extrahiereRegalName(a) || String(a || '').trim();
+    const bName = extrahiereRegalName(b) || String(b || '').trim();
+    return aName.localeCompare(bName, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
+}
+
+function ermittleRegalSchluessel(bestaende) {
+    const regale = (bestaende || [])
+        .map(b => extrahiereRegalName(b.lagerorte?.name || ''))
+        .filter(Boolean)
+        .sort((a, b) => vergleicheRegalNamen(a, b));
+
+    return regale[0] || '';
+}
+
+function textEnthaeltRegal(text, regalName) {
+    const normRegal = normalisiereRegalText(regalName);
+    const roherText = String(text || '');
+    const normText = normalisiereRegalText(roherText);
+
+    if (!normRegal || !normText) return false;
+    if (normText.includes(`(${normRegal})`)) return true;
+
+    const parenTreffer = [...roherText.matchAll(/\(([^)]+)\)/g)].some(match => normalisiereRegalText(match[1]) === normRegal);
+    if (parenTreffer) return true;
+
+    return normText.includes(normRegal);
+}
+
+function gibRegalLink(regalText) {
+    const regalName = extrahiereRegalName(regalText);
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    if (regalName) {
+        url.searchParams.set('regal', regalName);
+    }
+    return url.toString();
+}
+
+function setzeRegalFilter(regalText, syncUrl = true) {
+    aktiverRegalFilter = extrahiereRegalName(regalText);
+
+    if (syncUrl) {
+        const url = new URL(window.location.href);
+        if (aktiverRegalFilter) {
+            url.searchParams.set('regal', aktiverRegalFilter);
+        } else {
+            url.searchParams.delete('regal');
+        }
+        window.history.replaceState({}, '', url.toString());
+    }
+
+    const comboDropdown = document.getElementById('ort-filter-combo');
+    if (comboDropdown) {
+        comboDropdown.value = aktiverRegalFilter ? 'regal:' + aktiverRegalFilter : '';
+    }
+
+    const input = document.getElementById('regal-qr-input');
+    if (input && input.value !== regalText) {
+        input.value = regalText || '';
+    }
+
+    aktualisiereRegalQrVorschau();
+    wendeFilterAn();
+}
+
+function ortComboChanged() {
+    const val = document.getElementById('ort-filter-combo')?.value || '';
+    if (val.startsWith('regal:')) {
+        setzeRegalFilter(val.substring(6), true);
+    } else if (val.startsWith('ort:')) {
+        setzeRegalFilter('', false);
+        wendeFilterAn();
+    } else {
+        setzeRegalFilter('', false);
+        wendeFilterAn();
+    }
+}
+
+function aktualisiereRegalQrVorschau() {
+    const input = document.getElementById('regal-qr-input');
+    const preview = document.getElementById('regal-qr-preview');
+    const linkEl = document.getElementById('regal-qr-link');
+    const hinweis = document.getElementById('regal-qr-hinweis');
+
+    if (!input || !preview || !linkEl) return;
+
+    const eingabe = input.value.trim();
+    if (!eingabe) {
+        preview.innerHTML = '';
+        preview.style.display = 'none';
+        linkEl.innerText = '';
+        linkEl.href = '#';
+        if (hinweis) hinweis.innerText = 'QR-Text eingeben, zum Beispiel: Fach Briefumschläge (Regal A)';
+        return;
+    }
+
+    const regalName = extrahiereRegalName(eingabe);
+    const qrLink = gibRegalLink(regalName);
+
+    preview.innerHTML = '';
+    new QRCode(preview, {
+        text: qrLink,
+        width: 220,
+        height: 220,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
+    });
+    preview.dataset.qrLink = qrLink;
+    preview.style.display = 'flex';
+    linkEl.href = qrLink;
+    linkEl.innerText = qrLink;
+
+    if (hinweis) {
+        hinweis.innerText = `QR-Ziel: ${regalName}`;
+    }
+}
+
+function initRegalQrTool() {
+    const input = document.getElementById('regal-qr-input');
+    if (!input) return;
+
+    if (aktiverRegalFilter) {
+        input.value = aktiverRegalFilter;
+    }
+
+    aktualisiereRegalQrVorschau();
+}
+
+function downloadRegalQrDatei(format = 'png') {
+    const input = document.getElementById('regal-qr-input');
+    const preview = document.getElementById('regal-qr-preview');
+    if (!input || !preview) return;
+
+    const eingabe = input.value.trim();
+    if (!eingabe) {
+        showToast('Bitte zuerst einen Regalnamen eingeben.', 'warning');
+        return;
+    }
+
+    const canvas = preview.querySelector('canvas');
+    if (!canvas) {
+        showToast('QR-Code konnte nicht erzeugt werden.', 'error');
+        return;
+    }
+
+    const safeName = extrahiereRegalName(eingabe).replace(/[^a-z0-9-_]+/gi, '_') || 'qr-code';
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = canvas.width;
+    exportCanvas.height = canvas.height;
+    const ctx = exportCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(canvas, 0, 0);
+
+    const mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
+    const dataUrl = format === 'jpg'
+        ? exportCanvas.toDataURL(mimeType, 0.95)
+        : exportCanvas.toDataURL(mimeType);
+
+    const anchor = document.createElement('a');
+    anchor.href = dataUrl;
+    anchor.download = `${safeName}.${format === 'jpg' ? 'jpg' : 'png'}`;
+    anchor.click();
+}
+
+function initQrGenModus() {
+    const qrView = document.getElementById('qrgen-ansicht');
+    if (qrView) qrView.style.display = 'block';
+
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) loginOverlay.style.display = 'none';
+
+    const appContainer = document.querySelector('.container');
+    if (appContainer) {
+        appContainer.style.background = 'transparent';
+        appContainer.style.boxShadow = 'none';
+        appContainer.style.maxWidth = '1000px';
+        appContainer.style.padding = '0';
+        Array.from(appContainer.children).forEach(child => {
+            if (child.id !== 'qrgen-ansicht') child.style.display = 'none';
+        });
+    }
+
+    const appFooter = document.querySelector('.app-footer');
+    if (appFooter) appFooter.style.display = 'none';
+
+    const hoverDate = document.getElementById('hover-date-info');
+    const hoverRes = document.getElementById('hover-res-info');
+    if (hoverDate) hoverDate.style.display = 'none';
+    if (hoverRes) hoverRes.style.display = 'none';
+
+    document.title = 'QR-Code Generator';
+    initRegalQrTool();
+}
+
+function oeffneQrGeneratorFenster() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('qrgen', '1');
+    window.open(url.toString(), '_blank', 'noopener');
+}
+
 function initFormularLink() {
     const linkEl = document.getElementById('formular-share-link');
     if (!linkEl) return;
@@ -171,6 +396,13 @@ function escapeHtml(input) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     initFormularLink();
+
+    if (QRGEN_MODUS) {
+        initQrGenModus();
+        return;
+    }
+
+    initRegalQrTool();
 
     if (FORMULAR_MODUS) {
         initFormularModus();
@@ -311,23 +543,15 @@ async function ladeLagerorte() {
 
         const selectsNeu = document.querySelectorAll('.new-ort');
         const selectEdit = document.getElementById('edit-ort');
-        const filterOrt = document.getElementById('lagerort-filter'); 
-        
-        let aktuellerOrtFilter = filterOrt ? filterOrt.value : 'ALLE';
         
         selectsNeu.forEach(sel => sel.innerHTML = ''); 
         if(selectEdit) selectEdit.innerHTML = '';
-        if(filterOrt) filterOrt.innerHTML = '<option value="ALLE">Alle Lagerorte</option>';
 
         data.forEach(o => {
             selectsNeu.forEach(sel => sel.add(new Option(o.name, o.id)));
             if(selectEdit) selectEdit.add(new Option(o.name, o.id));
-            if(filterOrt) filterOrt.add(new Option(o.name, o.id));
         });
 
-        if(filterOrt && Array.from(filterOrt.options).some(opt => opt.value === aktuellerOrtFilter)) {
-            filterOrt.value = aktuellerOrtFilter;
-        }
 
         const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
         if (defaultOrt) {
@@ -362,11 +586,18 @@ async function ladeBestand() {
 function aktualisiereFilterDropdown(daten) {
     const dropdown = document.getElementById('kategorie-filter');
     const datalist = document.getElementById('kategorie-liste');
+    const regalDropdown = document.getElementById('regal-filter-select');
     
     const kategorien = new Set();
+    const regale = new Set();
+    
     daten.forEach(z => { 
         if (z.artikel && z.artikel.kategorie && z.artikel.kategorie.trim() !== '') {
             kategorien.add(z.artikel.kategorie.trim()); 
+        }
+        const regalName = extrahiereRegalName(z.lagerorte?.name || '');
+        if (regalName) {
+            regale.add(regalName);
         }
     });
 
@@ -375,6 +606,32 @@ function aktualisiereFilterDropdown(daten) {
         dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
         Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
         if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
+    }
+
+    if (regalDropdown) {
+        const aktuelleRegalAuswahl = aktiverRegalFilter || regalDropdown.value;
+        regalDropdown.innerHTML = '<option value="">Alle Regale</option>';
+        Array.from(regale).sort((a,b) => vergleicheRegalNamen(a, b)).forEach(reg => regalDropdown.add(new Option('Regal: ' + reg, reg)));
+        if (Array.from(regalDropdown.options).some(opt => opt.value === aktuelleRegalAuswahl)) {
+            regalDropdown.value = aktuelleRegalAuswahl;
+        }
+    }
+    const comboDropdown = document.getElementById('ort-filter-combo');
+    if (comboDropdown) {
+        const aktuelleComboAuswahl = comboDropdown.value;
+        comboDropdown.innerHTML = '<option value="">Alle Orte</option>';
+        
+        Array.from(alleLagerorte).sort((a,b) => a.name.localeCompare(b.name, 'de')).forEach(ort => {
+            comboDropdown.add(new Option('📍 ' + ort.name, 'ort:' + ort.id));
+        });
+        
+        Array.from(regale).sort((a,b) => vergleicheRegalNamen(a, b)).forEach(reg => {
+            comboDropdown.add(new Option('🏷️ Regal: ' + reg, 'regal:' + reg));
+        });
+        
+        if (Array.from(comboDropdown.options).some(opt => opt.value === aktuelleComboAuswahl)) {
+            comboDropdown.value = aktuelleComboAuswahl;
+        }
     }
 
     if (datalist) {
@@ -389,8 +646,16 @@ function aktualisiereFilterDropdown(daten) {
 
 function wendeFilterAn() {
     const katFilter = document.getElementById('kategorie-filter')?.value || 'ALLE';
-    const ortFilter = document.getElementById('lagerort-filter')?.value || 'ALLE';
+    const comboFilter = document.getElementById('ort-filter-combo')?.value || '';
     const suchText = document.getElementById('such-filter')?.value.toLowerCase().trim() || '';
+    
+    let ortFilter = 'ALLE';
+    let regalFilterTemp = '';
+    if (comboFilter.startsWith('ort:')) {
+        ortFilter = comboFilter.substring(4);
+    } else if (comboFilter.startsWith('regal:')) {
+        regalFilterTemp = comboFilter.substring(6);
+    }
     
     let gefilterteDaten = aktuelleDaten;
 
@@ -400,6 +665,21 @@ function wendeFilterAn() {
             (z.artikel?.kategorie || '').toLowerCase().includes(suchText) ||
             (z.lagerorte?.name || '').toLowerCase().includes(suchText)
         );
+    }
+
+    if (regalFilterTemp !== '') {
+        setzeRegalFilter(regalFilterTemp, true);
+    }
+    if (aktiverRegalFilter !== '') {
+        gefilterteDaten = gefilterteDaten.filter(z => {
+            const suchfelder = [
+                z.artikel?.name || '',
+                z.artikel?.kategorie || '',
+                z.lagerorte?.name || ''
+            ];
+
+            return suchfelder.some(text => textEnthaeltRegal(text, aktiverRegalFilter));
+        });
     }
 
     if (katFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
@@ -434,7 +714,7 @@ function tabelleAktualisieren(daten) {
     tbody.innerHTML = ''; 
     
     const suchText = document.getElementById('such-filter')?.value.trim() || '';
-    const isSearching = suchText.length > 0;
+    const isSearching = suchText.length > 0 || aktiverRegalFilter !== '';
     
     const reservierungenDetails = {};
     packlistenPositionen.forEach(p => {
@@ -451,7 +731,7 @@ function tabelleAktualisieren(daten) {
         }
     });
 
-    const anzeigeDaten = zeigeAlleArtikel ? daten : daten.filter(zeile => zeile.artikel && zeile.artikel.wichtig);
+    const anzeigeDaten = (zeigeAlleArtikel || aktiverRegalFilter !== '') ? daten : daten.filter(zeile => zeile.artikel && zeile.artikel.wichtig);
     const gruppierteDaten = {}; 
     anzeigeDaten.forEach(zeile => {
         if (!zeile.artikel) return; 
@@ -531,6 +811,9 @@ function tabelleAktualisieren(daten) {
         });
 
         zeilenListe.sort((a, b) => {
+            const regalCmp = vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor);
+            if (regalCmp !== 0) return regalCmp;
+
             const aName = a.artikel.name.trim();
             const bName = b.artikel.name.trim();
             const aParts = aName.split(' ');
@@ -555,7 +838,20 @@ function tabelleAktualisieren(daten) {
             artikelGruppen.get(z.artikel_id).bestaende.push(z);
         });
 
-        artikelGruppen.forEach((gruppe, artId) => {
+        const gruppenSortiert = Array.from(artikelGruppen.entries()).map(([artId, gruppe]) => ({
+            artId,
+            gruppe,
+            sortRegal: ermittleRegalSchluessel(gruppe.bestaende),
+            sortName: gruppe.artikel.name.trim()
+        })).sort((a, b) => {
+            const regalCmp = vergleicheRegalNamen(a.sortRegal, b.sortRegal, sortFactor);
+            if (regalCmp !== 0) return regalCmp;
+            return a.sortName.localeCompare(b.sortName, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
+        });
+
+        gruppenSortiert.forEach(({ gruppe, artId }) => {
+            gruppe.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
+
             const aName = gruppe.artikel.name.trim();
             const parts = aName.split(' ');
             const isGroup = parts.length > 1 && prefixCounts[parts[0]] > 1;
@@ -690,7 +986,7 @@ function tabelleAktualisieren(daten) {
             .map(zeile => zeile.artikel_id)
     );
 
-    if (hiddenArtikel.size > 0) {
+    if (hiddenArtikel.size > 0 && aktiverRegalFilter === '') {
         const footerTr = document.createElement('tr');
         footerTr.innerHTML = `
             <td colspan="3" style="padding:14px; text-align:center; background:#f8fafc; border-top:1px solid #dfe6e9;">

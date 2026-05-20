@@ -6,6 +6,7 @@
     <title>Lager Verwaltung Trisport Erding</title>
     <link rel="icon" type="image/png" href="tri.ico">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background-color: #e3000f; color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); }
@@ -113,6 +114,52 @@
             word-break: break-all;
         }
 
+        .regal-qr-tool {
+            margin: 0 0 18px 0;
+            padding: 14px;
+            border: 1px solid #d9e3ec;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #fbfdff 0%, #f4f8fb 100%);
+        }
+        .regal-qr-tool h3 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            font-size: 1.02em;
+        }
+        .regal-qr-grid {
+            display: grid;
+            grid-template-columns: 1.4fr 0.9fr;
+            gap: 14px;
+            align-items: start;
+        }
+        .regal-qr-preview-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            background: white;
+            border: 1px dashed #c9d5df;
+            border-radius: 10px;
+        }
+        .regal-qr-preview-wrap #regal-qr-preview {
+            width: 220px;
+            height: 220px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+        }
+        .regal-qr-preview-wrap #regal-qr-preview canvas,
+        .regal-qr-preview-wrap #regal-qr-preview table {
+            display: block;
+        }
+        .regal-qr-preview-wrap small {
+            text-align: center;
+            color: #5f6b77;
+            line-height: 1.35;
+        }
+
         .survey-page {
             max-width: 760px;
             margin: 0 auto;
@@ -165,6 +212,8 @@
             .flex-buttons { flex-direction: column; }
             .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; }
             .survey-page { padding: 18px 12px; }
+            .regal-qr-grid { grid-template-columns: 1fr; }
+            .regal-qr-preview-wrap #regal-qr-preview { width: 180px; height: 180px; }
         }
     </style>
 </head>
@@ -242,6 +291,35 @@
     <div class="share-link-wrap">
         Anforderungsabfrage zum Teilen:
         <a id="formular-share-link" href="?formular=1" target="_blank" rel="noopener">Formular öffnen</a>
+        <button class="btn" style="background:#1f5f8b; width:auto; margin-left:10px; padding:8px 12px;" onclick="oeffneQrGeneratorFenster()">QR-Generator öffnen</button>
+    </div>
+
+    <div id="qrgen-ansicht" style="display:none; padding: 30px 0;">
+        <div class="survey-page" style="max-width: 900px;">
+            <h1>QR-Code für Regal-Beschriftungen</h1>
+            <p class="survey-note">Dieses Fenster erzeugt einen QR-Code, der das Lager direkt auf das Regal aus der Klammer filtert.</p>
+            <div class="regal-qr-tool" style="margin-bottom:0;">
+                <h3>QR-Code erzeugen</h3>
+                <div class="regal-qr-grid">
+                    <div>
+                        <div class="form-group">
+                            <label for="regal-qr-input">Beschriftung eingeben</label>
+                            <input type="text" id="regal-qr-input" placeholder="z.B. Fach Briefumschläge (Regal A)" oninput="aktualisiereRegalQrVorschau()">
+                        </div>
+                        <p id="regal-qr-hinweis" style="margin:0 0 10px 0; color:#5f6b77; line-height:1.4;">QR-Text eingeben, zum Beispiel: Fach Briefumschläge (Regal A)</p>
+                        <div class="flex-buttons" style="margin-top: 12px; flex-wrap: wrap;">
+                            <button class="btn" style="background:#34495e; flex:1; min-width: 180px;" onclick="navigator.clipboard?.writeText(document.getElementById('regal-qr-link').innerText || '')">Link kopieren</button>
+                            <button class="btn" style="background:#1f5f8b; flex:1; min-width: 180px;" onclick="downloadRegalQrDatei('png')">PNG herunterladen</button>
+                        </div>
+                        <p style="margin:10px 0 0 0; font-size:0.9em; color:#5f6b77; word-break:break-all;"><a id="regal-qr-link" href="#" target="_blank" rel="noopener"></a></p>
+                    </div>
+                    <div class="regal-qr-preview-wrap">
+                        <div id="regal-qr-preview"></div>
+                        <small>Der QR-Code öffnet das Lagertool direkt mit Regal-Filter.</small>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     
     <div class="modus-switch">
@@ -263,9 +341,9 @@
                 <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Kategorien</option>
                 </select>
-                <select id="lagerort-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                    <option value="ALLE">Alle Lagerorte</option>
-                </select>
+                    <select id="ort-filter-combo" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="ortComboChanged()">
+                        <option value="">Alle Orte</option>
+                    </select>
 
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn" style="background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
