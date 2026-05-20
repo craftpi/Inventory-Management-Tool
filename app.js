@@ -149,7 +149,7 @@ function extrahiereRegalName(text) {
         return match[1].trim();
     }
 
-    return roherText;
+    return '';
 }
 
 function vergleicheRegalNamen(a, b, sortFactor = 1) {
