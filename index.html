@@ -200,6 +200,44 @@
             line-height: 1.4;
         }
 
+        .entnahme-page {
+            max-width: 980px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+        }
+        .entnahme-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+        .entnahme-card {
+            border: 1px solid #dbe3ea;
+            border-radius: 12px;
+            padding: 14px;
+            background: #f9fbfd;
+        }
+        .entnahme-lock {
+            border: 1px solid #f1c7c7;
+            background: #fff3f3;
+            color: #8a1f1f;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .entnahme-material-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .entnahme-material-table th,
+        .entnahme-material-table td {
+            padding: 10px;
+            border-bottom: 1px solid #dbe3ea;
+            vertical-align: middle;
+        }
+
         @media (max-width: 600px) {
             body { padding: 10px 5px; }
             .container { padding: 15px 10px; }
@@ -292,6 +330,89 @@
         Anforderungsabfrage zum Teilen:
         <a id="formular-share-link" href="?formular=1" target="_blank" rel="noopener">Formular öffnen</a>
         <button class="btn" style="background:#1f5f8b; width:auto; margin-left:10px; padding:8px 12px;" onclick="oeffneQrGeneratorFenster()">QR-Generator öffnen</button>
+        <button class="btn" style="background:#7d3c98; width:auto; margin-left:10px; padding:8px 12px;" onclick="oeffneEntnahmeFenster()">Entnahme-Protokoll öffnen</button>
+    </div>
+
+    <div id="entnahme-ansicht" style="display:none; padding: 30px 0;">
+        <div class="entnahme-page">
+            <h1>📋 Lager-Entnahmeprotokoll</h1>
+            <p class="survey-note">Nur nach erfolgreichem Login auf der Hauptseite nutzbar. Hier wird erfasst, wer im Lager war und welche Materialien entnommen wurden.</p>
+
+            <div id="entnahme-lock" class="entnahme-lock" style="display:none;">
+                <strong>Geschützt:</strong> Diese Seite ist nur mit aktiver Sitzung aus dem Hauptbereich erreichbar. Bitte zuerst auf der Hauptseite anmelden.
+                <div style="margin-top: 12px;">
+                    <a class="btn" href="./" style="display:inline-block; text-decoration:none; background:#34495e; width:auto;">Zur Hauptseite</a>
+                </div>
+            </div>
+
+            <div id="entnahme-content">
+                <div class="entnahme-grid">
+                    <div class="entnahme-card">
+                        <div class="form-group">
+                            <label for="entnahme-benutzer-vorlage">Benutzer-Vorlage auswählen</label>
+                            <select id="entnahme-benutzer-vorlage" onchange="entnahmeBenutzerVorlageAuswaehlen()"></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="entnahme-name">Name</label>
+                            <input type="text" id="entnahme-name" placeholder="Vor- und Nachname">
+                        </div>
+                        <div class="form-group">
+                            <label for="entnahme-kontakt">Kontakt optional</label>
+                            <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis">
+                        </div>
+                        <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                            <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Benutzer-Vorlage speichern</button>
+                        </div>
+                    </div>
+
+                    <div class="entnahme-card">
+                        <div class="form-group">
+                            <label for="entnahme-sammelvorlage">Sammelforlage auswählen</label>
+                            <select id="entnahme-sammelvorlage" onchange="entnahmeSammelvorlageAuswaehlen()"></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="entnahme-sammelvorlagenname">Sammelforlage benennen</label>
+                            <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst">
+                        </div>
+                        <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                            <button class="btn" style="background:#7d3c98; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Sammelforlage speichern</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="entnahme-card" style="margin-top: 14px;">
+                    <h3 style="margin-top: 0;">Material auswählen</h3>
+                    <div class="entnahme-grid" style="grid-template-columns: 1.5fr 0.45fr auto; align-items: end;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="entnahme-artikel-input">Material</label>
+                            <input type="text" id="entnahme-artikel-input" list="entnahme-artikel-datalist" placeholder="Artikel suchen..." autocomplete="off">
+                            <datalist id="entnahme-artikel-datalist"></datalist>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="entnahme-artikel-menge">Menge</label>
+                            <input type="text" id="entnahme-artikel-menge" value="1">
+                        </div>
+                        <button class="btn" style="background:#27ae60; width:auto; height: 42px;" onclick="entnahmeMaterialHinzufuegen()">+ Hinzufügen</button>
+                    </div>
+
+                    <div style="margin-top: 14px; overflow-x:auto;">
+                        <table class="entnahme-material-table">
+                            <thead>
+                                <tr><th>Artikel</th><th>Menge</th><th></th></tr>
+                            </thead>
+                            <tbody id="entnahme-material-liste">
+                                <tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div style="display:flex; gap:10px; flex-wrap: wrap; margin-top: 14px;">
+                        <button class="btn btn-save" style="background:#1f5f8b; width:auto;" onclick="entnahmeProtokollSpeichern()">Entnahme speichern</button>
+                        <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeFormularZuruecksetzen()">Formular leeren</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="qrgen-ansicht" style="display:none; padding: 30px 0;">

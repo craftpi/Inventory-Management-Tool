@@ -2,8 +2,12 @@ const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const FORMULAR_TABLE = 'formular_antworten';
+const ENTNAHME_PROTOKOLL_TABLE = 'lager_entnahmen';
+const ENTNAHME_BENUTZER_TABLE = 'lager_entnahme_benutzer_vorlagen';
+const ENTNAHME_SAMMEL_TABLE = 'lager_entnahme_sammelvorlagen';
 const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular') === '1';
 const QRGEN_MODUS = new URLSearchParams(window.location.search).get('qrgen') === '1';
+const ENTNAHME_MODUS = new URLSearchParams(window.location.search).get('entnahme') === '1';
 const INITIAL_REGAL_FILTER = new URLSearchParams(window.location.search).get('regal') || '';
 
 let aktuelleDaten = [];
@@ -24,6 +28,9 @@ let eigeneVorschlaegeListe = [];
 let manuelleEintraegeListe = [];
 let zeigeAlleArtikel = false;
 let aktiverRegalFilter = extrahiereRegalName(INITIAL_REGAL_FILTER);
+let entnahmeBenutzerVorlagen = [];
+let entnahmeSammelvorlagen = [];
+let entnahmeMaterialien = [];
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -134,6 +141,19 @@ function gibFormularLink() {
     url.hash = '';
     url.searchParams.set('formular', '1');
     return url.toString();
+}
+
+function gibEntnahmeLink() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('entnahme', '1');
+    return url.toString();
+}
+
+function gibEntnahmeArtikelLabel(artikel) {
+    if (!artikel) return '';
+    return (artikel.kategorie ? artikel.kategorie + ' > ' : '') + artikel.name;
 }
 
 function normalisiereRegalText(text) {
@@ -385,6 +405,359 @@ function initFormularModus() {
     if (hoverRes) hoverRes.style.display = 'none';
 }
 
+function setzeEntnahmeSicht(istGesperrt) {
+    const lock = document.getElementById('entnahme-lock');
+    const content = document.getElementById('entnahme-content');
+
+    if (lock) lock.style.display = istGesperrt ? 'block' : 'none';
+    if (content) content.style.display = istGesperrt ? 'none' : 'block';
+}
+
+function aktualisiereEntnahmeMaterialDatalist() {
+    const datalist = document.getElementById('entnahme-artikel-datalist');
+    if (!datalist) return;
+
+    datalist.innerHTML = '';
+    [...alleArtikelInfos]
+        .sort((a, b) => {
+            const aLabel = gibEntnahmeArtikelLabel(a);
+            const bLabel = gibEntnahmeArtikelLabel(b);
+            return aLabel.localeCompare(bLabel, 'de', { numeric: true, sensitivity: 'base' });
+        })
+        .forEach(art => {
+            const option = document.createElement('option');
+            option.value = gibEntnahmeArtikelLabel(art);
+            datalist.appendChild(option);
+        });
+}
+
+function renderEntnahmeMaterialien() {
+    const tbody = document.getElementById('entnahme-material-liste');
+    if (!tbody) return;
+
+    if (entnahmeMaterialien.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    entnahmeMaterialien.forEach((item, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${escapeHtml(item.label)}</strong><br><small style="color:#666;">${escapeHtml(item.einheit || 'Stück')}</small></td>
+            <td style="width:120px;"><input type="text" value="${escapeHtml(item.menge)}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; text-align:center;" onchange="entnahmeMaterialMengeAendern(${index}, this.value)"></td>
+            <td style="width:70px; text-align:right;"><button class="btn" style="background:#e74c3c; width:auto; padding:8px 10px;" onclick="entnahmeMaterialLoeschen(${index})">🗑️</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function fillEntnahmeVorlagenDropdowns() {
+    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
+    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
+
+    if (benutzerSelect) {
+        const current = benutzerSelect.value;
+        benutzerSelect.innerHTML = '<option value="">-- Benutzer auswählen --</option>';
+        entnahmeBenutzerVorlagen
+            .slice()
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
+            .forEach(vorlage => {
+                const label = vorlage.kontakt ? `${vorlage.name} - ${vorlage.kontakt}` : vorlage.name;
+                benutzerSelect.add(new Option(label, vorlage.id));
+            });
+        if (Array.from(benutzerSelect.options).some(opt => opt.value === current)) {
+            benutzerSelect.value = current;
+        }
+    }
+
+    if (sammelSelect) {
+        const current = sammelSelect.value;
+        sammelSelect.innerHTML = '<option value="">-- Sammelforlage auswählen --</option>';
+        entnahmeSammelvorlagen
+            .slice()
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
+            .forEach(vorlage => sammelSelect.add(new Option(vorlage.name, vorlage.id)));
+        if (Array.from(sammelSelect.options).some(opt => opt.value === current)) {
+            sammelSelect.value = current;
+        }
+    }
+}
+
+async function ladeEntnahmeVorlagen() {
+    const [benutzerRes, sammelRes] = await Promise.all([
+        dbClient.from(ENTNAHME_BENUTZER_TABLE).select('*').order('name'),
+        dbClient.from(ENTNAHME_SAMMEL_TABLE).select('*').order('name')
+    ]);
+
+    if (benutzerRes.error) {
+        console.warn('Benutzer-Vorlagen konnten nicht geladen werden.', benutzerRes.error);
+    }
+    if (sammelRes.error) {
+        console.warn('Sammelvorlagen konnten nicht geladen werden.', sammelRes.error);
+    }
+
+    entnahmeBenutzerVorlagen = benutzerRes.data || [];
+    entnahmeSammelvorlagen = sammelRes.data || [];
+    fillEntnahmeVorlagenDropdowns();
+}
+
+async function initEntnahmeModus() {
+    const entnahmeView = document.getElementById('entnahme-ansicht');
+    if (entnahmeView) entnahmeView.style.display = 'block';
+
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) loginOverlay.style.display = 'none';
+
+    const appContainer = document.querySelector('.container');
+    if (appContainer) {
+        appContainer.style.background = 'transparent';
+        appContainer.style.boxShadow = 'none';
+        appContainer.style.maxWidth = '1000px';
+        appContainer.style.padding = '0';
+        Array.from(appContainer.children).forEach(child => {
+            if (child.id === 'entnahme-ansicht') child.style.display = 'block';
+            else child.style.display = 'none';
+        });
+    }
+
+    const appFooter = document.querySelector('.app-footer');
+    if (appFooter) appFooter.style.display = 'none';
+
+    const hoverDate = document.getElementById('hover-date-info');
+    const hoverRes = document.getElementById('hover-res-info');
+    if (hoverDate) hoverDate.style.display = 'none';
+    if (hoverRes) hoverRes.style.display = 'none';
+
+    document.title = 'Lager-Entnahmeprotokoll';
+
+    const { data: { session } } = await dbClient.auth.getSession();
+    if (!session) {
+        setzeEntnahmeSicht(true);
+        return;
+    }
+
+    setzeEntnahmeSicht(false);
+    await ladeAlles();
+    aktualisiereEntnahmeMaterialDatalist();
+    renderEntnahmeMaterialien();
+    await ladeEntnahmeVorlagen();
+}
+
+function oeffneEntnahmeFenster() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('entnahme', '1');
+    window.open(url.toString(), '_blank', 'noopener');
+}
+
+function entnahmeBenutzerVorlageAuswaehlen() {
+    const vorlagenId = document.getElementById('entnahme-benutzer-vorlage')?.value || '';
+    if (!vorlagenId) return;
+
+    const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(vorlagenId));
+    if (!vorlage) return;
+
+    const nameFeld = document.getElementById('entnahme-name');
+    const kontaktFeld = document.getElementById('entnahme-kontakt');
+    if (nameFeld) nameFeld.value = vorlage.name || '';
+    if (kontaktFeld) kontaktFeld.value = vorlage.kontakt || '';
+}
+
+function entnahmeSammelvorlageAuswaehlen() {
+    const vorlagenId = document.getElementById('entnahme-sammelvorlage')?.value || '';
+    if (!vorlagenId) return;
+
+    const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
+    if (!vorlage) return;
+
+    const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
+    if (nameFeld) nameFeld.value = vorlage.name || '';
+
+    const materialien = Array.isArray(vorlage.materialien)
+        ? vorlage.materialien
+        : (typeof vorlage.materialien === 'string' ? JSON.parse(vorlage.materialien || '[]') : []);
+    entnahmeMaterialien = materialien.map(item => ({
+        artikel_id: item.artikel_id || null,
+        label: item.label || item.name || '',
+        kategorie: item.kategorie || '',
+        einheit: item.einheit || 'Stück',
+        menge: Number(item.menge) || 0
+    }));
+    renderEntnahmeMaterialien();
+}
+
+function entnahmeMaterialHinzufuegen() {
+    const input = document.getElementById('entnahme-artikel-input');
+    const mengeInput = document.getElementById('entnahme-artikel-menge');
+    if (!input || !mengeInput) return;
+
+    const label = input.value.trim();
+    if (!label) {
+        showToast('Bitte zuerst ein Material auswählen.', 'warning');
+        return;
+    }
+
+    const artikel = alleArtikelInfos.find(item => gibEntnahmeArtikelLabel(item) === label);
+    if (!artikel) {
+        showToast('Bitte einen Artikel aus der Vorschlagsliste auswählen.', 'warning');
+        return;
+    }
+
+    const menge = werteMengeAus(mengeInput.value);
+    if (menge <= 0) {
+        showToast('Bitte eine Menge größer 0 eingeben.', 'warning');
+        return;
+    }
+
+    const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
+    if (vorhandenerEintrag) {
+        vorhandenerEintrag.menge += menge;
+    } else {
+        entnahmeMaterialien.push({
+            artikel_id: artikel.id,
+            label: label,
+            kategorie: artikel.kategorie || '',
+            einheit: artikel.einheit || 'Stück',
+            menge: menge
+        });
+    }
+
+    input.value = '';
+    mengeInput.value = '1';
+    renderEntnahmeMaterialien();
+}
+
+function entnahmeMaterialMengeAendern(index, neueMenge) {
+    if (!entnahmeMaterialien[index]) return;
+
+    const menge = werteMengeAus(neueMenge);
+    if (menge <= 0) {
+        entnahmeMaterialien.splice(index, 1);
+    } else {
+        entnahmeMaterialien[index].menge = menge;
+    }
+
+    renderEntnahmeMaterialien();
+}
+
+function entnahmeMaterialLoeschen(index) {
+    if (!entnahmeMaterialien[index]) return;
+    entnahmeMaterialien.splice(index, 1);
+    renderEntnahmeMaterialien();
+}
+
+function entnahmeFormularZuruecksetzen() {
+    const nameFeld = document.getElementById('entnahme-name');
+    const kontaktFeld = document.getElementById('entnahme-kontakt');
+    const benutzerVorlage = document.getElementById('entnahme-benutzer-vorlage');
+    const sammelVorlage = document.getElementById('entnahme-sammelvorlage');
+    const sammelName = document.getElementById('entnahme-sammelvorlagenname');
+    const artikelInput = document.getElementById('entnahme-artikel-input');
+    const mengeInput = document.getElementById('entnahme-artikel-menge');
+
+    if (nameFeld) nameFeld.value = '';
+    if (kontaktFeld) kontaktFeld.value = '';
+    if (benutzerVorlage) benutzerVorlage.value = '';
+    if (sammelVorlage) sammelVorlage.value = '';
+    if (sammelName) sammelName.value = '';
+    if (artikelInput) artikelInput.value = '';
+    if (mengeInput) mengeInput.value = '1';
+
+    entnahmeMaterialien = [];
+    renderEntnahmeMaterialien();
+}
+
+async function entnahmeBenutzerVorlageSpeichern() {
+    const name = document.getElementById('entnahme-name')?.value.trim() || '';
+    const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
+    const bestehendeId = document.getElementById('entnahme-benutzer-vorlage')?.value || '';
+
+    if (!name) {
+        showToast('Bitte zuerst einen Namen eingeben.', 'warning');
+        return;
+    }
+
+    const payload = { name, kontakt };
+    const result = bestehendeId
+        ? await dbClient.from(ENTNAHME_BENUTZER_TABLE).update(payload).eq('id', bestehendeId)
+        : await dbClient.from(ENTNAHME_BENUTZER_TABLE).insert([payload]);
+
+    if (result.error) {
+        showToast('Benutzer-Vorlage konnte nicht gespeichert werden.', 'error');
+        console.error(result.error);
+        return;
+    }
+
+    showToast('Benutzer-Vorlage gespeichert.');
+    await ladeEntnahmeVorlagen();
+}
+
+async function entnahmeSammelvorlageSpeichern() {
+    const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
+    const bestehendeId = document.getElementById('entnahme-sammelvorlage')?.value || '';
+
+    if (!name) {
+        showToast('Bitte einen Namen für die Sammelforlage eingeben.', 'warning');
+        return;
+    }
+
+    if (entnahmeMaterialien.length === 0) {
+        showToast('Die Sammelforlage braucht mindestens ein Material.', 'warning');
+        return;
+    }
+
+    const payload = { name, materialien: entnahmeMaterialien.map(item => ({ ...item })) };
+    const result = bestehendeId
+        ? await dbClient.from(ENTNAHME_SAMMEL_TABLE).update(payload).eq('id', bestehendeId)
+        : await dbClient.from(ENTNAHME_SAMMEL_TABLE).insert([payload]);
+
+    if (result.error) {
+        showToast('Sammelforlage konnte nicht gespeichert werden.', 'error');
+        console.error(result.error);
+        return;
+    }
+
+    showToast('Sammelforlage gespeichert.');
+    await ladeEntnahmeVorlagen();
+}
+
+async function entnahmeProtokollSpeichern() {
+    const name = document.getElementById('entnahme-name')?.value.trim() || '';
+    const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
+    const benutzerVorlageId = document.getElementById('entnahme-benutzer-vorlage')?.value || null;
+    const sammelvorlageId = document.getElementById('entnahme-sammelvorlage')?.value || null;
+
+    if (!name) {
+        showToast('Bitte einen Namen eingeben.', 'warning');
+        return;
+    }
+
+    if (entnahmeMaterialien.length === 0) {
+        showToast('Bitte mindestens ein Material auswählen.', 'warning');
+        return;
+    }
+
+    const payload = {
+        name,
+        kontakt,
+        materialien: entnahmeMaterialien.map(item => ({ ...item })),
+        benutzer_vorlage_id: benutzerVorlageId,
+        sammelvorlage_id: sammelvorlageId
+    };
+
+    const { error } = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).insert([payload]);
+    if (error) {
+        showToast('Entnahme konnte nicht gespeichert werden.', 'error');
+        console.error(error);
+        return;
+    }
+
+    showToast('Entnahmeprotokoll gespeichert.');
+    entnahmeFormularZuruecksetzen();
+}
+
 function escapeHtml(input) {
     return String(input || '')
         .replace(/&/g, '&amp;')
@@ -402,6 +775,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
+    if (ENTNAHME_MODUS) {
+        await initEntnahmeModus();
+        return;
+    }
+
     initRegalQrTool();
 
     if (FORMULAR_MODUS) {
@@ -415,8 +793,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 dbClient.auth.onAuthStateChange(async (event, session) => {
-    if (FORMULAR_MODUS) return;
+    if (FORMULAR_MODUS || QRGEN_MODUS) return;
     const overlay = document.getElementById('login-overlay');
+    if (ENTNAHME_MODUS) {
+        await initEntnahmeModus();
+        return;
+    }
     if (event === 'SIGNED_IN') { overlay.style.display = 'none'; showToast('Erfolgreich angemeldet!'); ladeAlles(); } 
     else if (event === 'SIGNED_OUT') {
         overlay.style.display = 'flex';
@@ -581,6 +963,7 @@ async function ladeBestand() {
     })); 
     aktualisiereFilterDropdown(aktuelleDaten); 
     wendeFilterAn(); 
+    aktualisiereEntnahmeMaterialDatalist();
 }
 
 function aktualisiereFilterDropdown(daten) {
