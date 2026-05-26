@@ -1,6 +1,24 @@
 const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
-const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+function storageAvailable(type) {
+    try {
+        var storage = window[type];
+        var x = '__storage_test__';
+        storage.setItem(x, x);
+        storage.removeItem(x);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+const _persistSession = storageAvailable('localStorage');
+console.log('localStorage available for session persistence:', _persistSession);
+const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+        persistSession: _persistSession
+    }
+});
 const FORMULAR_TABLE = 'formular_antworten';
 const ENTNAHME_PROTOKOLL_TABLE = 'lager_entnahmen';
 const ENTNAHME_BENUTZER_TABLE = 'lager_entnahme_benutzer_vorlagen';
@@ -544,12 +562,15 @@ async function initEntnahmeModus() {
     await ladeEntnahmeVorlagen();
 }
 
-function oeffneEntnahmeFenster() {
+async function oeffneEntnahmeFenster() {
     const url = new URL(window.location.href);
     url.search = '';
     url.hash = '';
     url.searchParams.set('entnahme', '1');
-    window.open(url.toString(), '_blank', 'noopener');
+
+    // URL anpassen ohne Neuladen, damit in-memory Session erhalten bleibt
+    window.history.replaceState({}, '', url.toString());
+    await initEntnahmeModus();
 }
 
 function entnahmeBenutzerVorlageAuswaehlen() {
@@ -674,24 +695,32 @@ async function entnahmeBenutzerVorlageSpeichern() {
     const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
     const bestehendeId = document.getElementById('entnahme-benutzer-vorlage')?.value || '';
 
+    console.log('entnahmeBenutzerVorlageSpeichern called', { name, kontakt, bestehendeId });
+    showToast('Speichere Benutzer-Vorlage...', 'success');
+
     if (!name) {
         showToast('Bitte zuerst einen Namen eingeben.', 'warning');
         return;
     }
 
-    const payload = { name, kontakt };
-    const result = bestehendeId
-        ? await dbClient.from(ENTNAHME_BENUTZER_TABLE).update(payload).eq('id', bestehendeId)
-        : await dbClient.from(ENTNAHME_BENUTZER_TABLE).insert([payload]);
+    try {
+        const payload = { name, kontakt };
+        const res = bestehendeId
+            ? await dbClient.from(ENTNAHME_BENUTZER_TABLE).update(payload).eq('id', bestehendeId).select()
+            : await dbClient.from(ENTNAHME_BENUTZER_TABLE).insert([payload]).select();
 
-    if (result.error) {
-        showToast('Benutzer-Vorlage konnte nicht gespeichert werden.', 'error');
-        console.error(result.error);
-        return;
+        if (res.error) {
+            showToast('Benutzer-Vorlage konnte nicht gespeichert werden.', 'error');
+            console.error('Supabase error saving benutzer vorlage:', res.error);
+            return;
+        }
+
+        showToast('Benutzer-Vorlage gespeichert.');
+        await ladeEntnahmeVorlagen();
+    } catch (e) {
+        showToast('Fehler beim Speichern der Vorlage.', 'error');
+        console.error('Exception in entnahmeBenutzerVorlageSpeichern:', e);
     }
-
-    showToast('Benutzer-Vorlage gespeichert.');
-    await ladeEntnahmeVorlagen();
 }
 
 async function entnahmeSammelvorlageSpeichern() {
