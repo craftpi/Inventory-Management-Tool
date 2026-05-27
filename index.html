@@ -315,6 +315,21 @@
             .survey-page { padding: 18px 12px; }
             .regal-qr-grid { grid-template-columns: 1fr; }
             .regal-qr-preview-wrap #regal-qr-preview { width: 180px; height: 180px; }
+
+            /* Mobile-specific adjustments for the Entnahme / Protokoll view */
+            .entnahme-page { padding: 18px 12px; max-width: 100%; }
+            .entnahme-grid { grid-template-columns: 1fr !important; }
+            .entnahme-card { min-width: 0; }
+
+            /* Ensure form controls don't force horizontal scroll */
+            .entnahme-card .form-group input,
+            .entnahme-card .form-group select,
+            .entnahme-card input,
+            .entnahme-card select,
+            .entnahme-card textarea { max-width: 100%; box-sizing: border-box; }
+
+            /* Allow info boxes and labels to wrap nicely */
+            #entnahme-benutzer-info, #entnahme-sammel-info { word-break: break-word; white-space: normal; }
         }
     </style>
 </head>
