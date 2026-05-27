@@ -511,13 +511,14 @@ function renderEntnahmeMaterialien() {
 
 function setzeEntnahmeVorlagenFormSichtbarkeit() {
     const bodies = document.querySelectorAll('.entnahme-vorlagen-form');
+    const sammelAuswahl = document.getElementById('entnahme-sammelvorlage')?.value || '';
     bodies.forEach(body => {
         const istBenutzerForm = Boolean(body.querySelector('#entnahme-name'));
         const istSammelForm = Boolean(body.querySelector('#entnahme-sammelvorlagenname'));
         const show = istBenutzerForm
             ? (entnahmeVorlagenBearbeiten || entnahmeBenutzerNeuAktiv || !entnahmeAuswahlBenutzerId)
             : istSammelForm
-                ? (entnahmeVorlagenBearbeiten || entnahmeSammelNeuAktiv)
+                ? (entnahmeSammelNeuAktiv || (entnahmeVorlagenBearbeiten && !!sammelAuswahl && sammelAuswahl !== '__new__'))
                 : Boolean(entnahmeVorlagenBearbeiten);
 
         body.style.display = show ? 'block' : 'none';
@@ -546,10 +547,15 @@ function aktualisiereEntnahmeVorlagenInfo() {
     }
 
     if (sammelInfo) {
+        const sammelSelectValue = document.getElementById('entnahme-sammelvorlage')?.value || '';
         const materialAnzahl = Array.isArray(sammel?.materialien) ? sammel.materialien.length : 0;
-        sammelInfo.innerHTML = sammel
-            ? `<strong>Ausgewählt:</strong> ${escapeHtml(sammel.name || '')}<br><small style="color:#6a4a8e;">${materialAnzahl} Material${materialAnzahl === 1 ? '' : 'ien'} gespeichert</small>`
-            : 'Keine Sammel-Vorlage ausgewählt.';
+        if (sammel) {
+            sammelInfo.innerHTML = `<strong>Ausgewählt:</strong> ${escapeHtml(sammel.name || '')}<br><small style="color:#6a4a8e;">${materialAnzahl} Material${materialAnzahl === 1 ? '' : 'ien'} gespeichert</small>`;
+        } else if (sammelSelectValue === '__new__') {
+            sammelInfo.innerHTML = '<strong>Neue Vorlage:</strong> Neue Sammel-Vorlage wird angelegt.';
+        } else {
+            sammelInfo.innerHTML = '<strong>Standardvorlage aktiv:</strong> Keine Vorlage ausgewählt, es wird eine leere Vorlage verwendet.';
+        }
     }
 }
 
@@ -670,7 +676,7 @@ function fillEntnahmeVorlagenDropdowns() {
 
     if (sammelSelect) {
         const current = sammelSelect.value;
-        sammelSelect.innerHTML = '<option value="">-- Leere Sammelformular-Vorlage --</option><option value="__new__">-- Neue Sammelformular-Vorlage --</option>';
+        sammelSelect.innerHTML = '<option value="">-- Keine Vorlage --</option><option value="__new__">-- Neue Sammel-Vorlage --</option>';
         entnahmeSammelvorlagen
             .slice()
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
@@ -1233,19 +1239,10 @@ async function zurHauptseiteZurueck(nachSpeichern = false) {
     if (/\/index\.html?$/i.test(url.pathname)) {
         url.pathname = url.pathname.replace(/\/index\.html?$/i, '/');
     }
-    window.history.replaceState({}, '', url.toString());
 
-    setzeHauptansichtZurueck();
-
-    document.title = 'Lager Verwaltung Trisport Erding';
-
-    const { data: { session } } = await dbClient.auth.getSession();
-    const overlay = document.getElementById('login-overlay');
-    if (overlay) overlay.style.display = session ? 'none' : 'flex';
-
-    if (nachSpeichern) {
-        showToast('Zur Hauptseite gewechselt.');
-    }
+    // Einen echten Neustart des Hauptbereichs erzwingen, damit die Seite exakt
+    // so initialisiert wird wie bei einem frischen Aufruf.
+    window.location.replace(url.toString());
 }
 
 function escapeHtml(input) {
