@@ -385,7 +385,7 @@ function initQrGenModus() {
     }
 
     const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = 'none';
+    if (appFooter) appFooter.style.display = '';
 
     const hoverDate = document.getElementById('hover-date-info');
     const hoverRes = document.getElementById('hover-res-info');
@@ -423,7 +423,7 @@ function initFormularModus() {
     if (appContainer) appContainer.style.display = 'none';
 
     const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = 'none';
+    if (appFooter) appFooter.style.display = '';
 
     const hoverDate = document.getElementById('hover-date-info');
     const hoverRes = document.getElementById('hover-res-info');
@@ -772,7 +772,7 @@ async function initEntnahmeModus() {
     }
 
     const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = 'none';
+    if (appFooter) appFooter.style.display = '';
 
     const hoverDate = document.getElementById('hover-date-info');
     const hoverRes = document.getElementById('hover-res-info');
