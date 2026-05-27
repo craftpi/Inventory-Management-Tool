@@ -412,6 +412,14 @@ function initFormularLink() {
     linkEl.innerText = formularLink;
 }
 
+function initEntnahmeLink() {
+    const linkEl = document.getElementById('entnahme-share-link');
+    if (!linkEl) return;
+    const entnahmeLink = gibEntnahmeLink();
+    linkEl.href = entnahmeLink;
+    linkEl.innerText = entnahmeLink;
+}
+
 function initFormularModus() {
     const formularView = document.getElementById('formular-ansicht');
     if (formularView) formularView.style.display = 'block';
@@ -770,9 +778,6 @@ async function initEntnahmeModus() {
     const entnahmeView = document.getElementById('entnahme-ansicht');
     if (entnahmeView) entnahmeView.style.display = 'block';
 
-    const loginOverlay = document.getElementById('login-overlay');
-    if (loginOverlay) loginOverlay.style.display = 'none';
-
     const appContainer = document.querySelector('.container');
     if (appContainer) {
         appContainer.style.background = 'transparent';
@@ -797,9 +802,14 @@ async function initEntnahmeModus() {
 
     const { data: { session } } = await dbClient.auth.getSession();
     if (!session) {
+        const loginOverlay = document.getElementById('login-overlay');
+        if (loginOverlay) loginOverlay.style.display = 'flex';
         setzeEntnahmeSicht(true);
         return;
     }
+
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) loginOverlay.style.display = 'none';
 
     setzeEntnahmeSicht(false);
     await ladeAlles();
@@ -1343,6 +1353,7 @@ function escapeHtml(input) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     initFormularLink();
+    initEntnahmeLink();
 
     if (QRGEN_MODUS) {
         initQrGenModus();
