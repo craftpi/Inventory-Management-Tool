@@ -56,6 +56,7 @@ let entnahmeAuswahlBenutzerId = '';
 let entnahmeAuswahlSammelId = '';
 let entnahmeBenutzerNeuAktiv = false;
 let entnahmeSammelNeuAktiv = false;
+let entnahmeVerbrauchProArtikel = {};
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -507,6 +508,50 @@ function renderEntnahmeMaterialien() {
         `;
         tbody.appendChild(tr);
     });
+}
+
+async function ladeAktuelleEntnahmeVerbraeuche() {
+    const result = await dbClient
+        .from(ENTNAHME_PROTOKOLL_TABLE)
+        .select('materialien');
+
+    if (result.error) {
+        console.warn('Aktuelle Entnahme-Verbräuche konnten nicht geladen werden.', result.error);
+        entnahmeVerbrauchProArtikel = {};
+        return;
+    }
+
+    const verbrauchMap = {};
+    (result.data || []).forEach(entnahme => {
+        const materialien = Array.isArray(entnahme.materialien) ? entnahme.materialien : [];
+        materialien.forEach(material => {
+            const artikelId = material?.artikel_id;
+            const menge = Number(material?.menge) || 0;
+            if (!artikelId || menge <= 0) return;
+            verbrauchMap[String(artikelId)] = (verbrauchMap[String(artikelId)] || 0) + menge;
+        });
+    });
+
+    entnahmeVerbrauchProArtikel = verbrauchMap;
+}
+
+function berechneArtikelVerfuegbarkeit(artId, bestaende = []) {
+    let gesamtBestand = 0;
+    let hatUnendlich = false;
+    let hatStrich = false;
+
+    bestaende.forEach(b => {
+        const menge = Number(b.menge);
+        if (menge === -1) hatUnendlich = true;
+        else if (menge === -2) hatStrich = true;
+        else if (menge >= 0) gesamtBestand += menge;
+    });
+
+    if (hatUnendlich) return '∞';
+    if (hatStrich && gesamtBestand === 0) return '-';
+
+    const entnommen = Number(entnahmeVerbrauchProArtikel[String(artId)] || 0);
+    return Math.max(0, gesamtBestand - entnommen);
 }
 
 function setzeEntnahmeVorlagenFormSichtbarkeit() {
@@ -1402,9 +1447,10 @@ async function ladeAlles() {
     packlistenPositionen = resPos.data || [];
 
     await ladeBestand();
+    await ladeAktuelleEntnahmeVerbraeuche();
+    wendeFilterAn();
     if(aktuellerModus === 'event') await ladeEventDaten();
 }
-
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
     if (data) {
@@ -1809,6 +1855,13 @@ function tabelleAktualisieren(daten) {
 
             let bestandInfoHtml = "";
             const einheit = gruppe.artikel.einheit || 'Stück';
+            const verfuegbarkeit = berechneArtikelVerfuegbarkeit(artId, gruppe.bestaende);
+            const verfuegbarkeitLabel = verfuegbarkeit === '∞' || verfuegbarkeit === '-'
+                ? verfuegbarkeit
+                : `${verfuegbarkeit}`;
+            const verfuegbarkeitFarbe = verfuegbarkeit === '∞'
+                ? '#7f8c8d'
+                : (Number(verfuegbarkeit) > 0 ? '#27ae60' : '#c0392b');
 
             gruppe.bestaende.forEach(b => {
                 const isInfLocal = (Number(b.menge) === -1);
@@ -1840,6 +1893,9 @@ function tabelleAktualisieren(daten) {
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
                     ${iconLabel} <strong>${displayName}</strong>${wichtigBadge}${kommentarIcon}
+                    <div style="margin-top: 6px; font-size: 0.82em; color: ${verfuegbarkeitFarbe};">
+                        Verfügbar: <strong>${verfuegbarkeitLabel}</strong>
+                    </div>
                 </td>
                 <td colspan="2" style="vertical-align: top;">
                     ${bestandInfoHtml}
