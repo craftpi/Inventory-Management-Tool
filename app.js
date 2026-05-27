@@ -721,11 +721,25 @@ function fillEntnahmeVorlagenDropdowns() {
 
     if (sammelSelect) {
         const current = sammelSelect.value;
+        // base options
         sammelSelect.innerHTML = '<option value="">-- Keine Vorlage --</option><option value="__new__">-- Neue Sammel-Vorlage --</option>';
+
+        // add stored Sammel-Vorlagen
         entnahmeSammelvorlagen
             .slice()
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
             .forEach(vorlage => sammelSelect.add(new Option(vorlage.name, vorlage.id)));
+
+        // add Packlisten as additional selectable options
+        if (Array.isArray(packlisten) && packlisten.length) {
+            // separator-like option (disabled)
+            sammelSelect.add(new Option('──────── Packlisten ────────', '', undefined, undefined));
+            packlisten.slice().sort((a,b) => String(a.name||'').localeCompare(String(b.name||''), 'de', { numeric:true })).forEach(pl => {
+                // prefix value with pack: to distinguish from normal sammelvorlagen
+                sammelSelect.add(new Option(`Packliste: ${pl.name}`, `pack:${pl.id}`));
+            });
+        }
+
         if (Array.from(sammelSelect.options).some(opt => opt.value === current)) {
             sammelSelect.value = current;
         }
@@ -845,6 +859,28 @@ function entnahmeSammelvorlageAuswaehlen() {
     aktualisiereEntnahmeVorlagenInfo();
 
     const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
+    // support selecting a packliste (value prefixed with 'pack:')
+    if (vorlagenId && vorlagenId.startsWith('pack:')) {
+        const packId = String(vorlagenId).split(':')[1];
+        const pl = packlisten.find(p => String(p.id) === String(packId));
+        if (nameFeld) nameFeld.value = pl?.name || '';
+
+        const positionen = packlistenPositionen.filter(p => String(p.packliste_id) === String(packId));
+        entnahmeMaterialien = positionen.map(p => {
+            const art = p.artikel || {};
+            return {
+                artikel_id: p.artikel_id || art.id || null,
+                label: art.name || p.name || '',
+                kategorie: art.kategorie || '',
+                einheit: art.einheit || p.einheit || 'Stück',
+                menge: Number(p.menge) || 0
+            };
+        });
+        renderEntnahmeMaterialien();
+        setzeEntnahmeVorlagenFormSichtbarkeit();
+        return;
+    }
+
     const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
     if (!vorlage) {
         if (nameFeld) nameFeld.value = '';
