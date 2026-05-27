@@ -1276,7 +1276,13 @@ async function entnahmeProtokollSpeichern() {
     const name = document.getElementById('entnahme-name')?.value.trim() || '';
     const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
     const benutzerVorlageId = document.getElementById('entnahme-benutzer-vorlage')?.value || null;
-    const sammelvorlageId = document.getElementById('entnahme-sammelvorlage')?.value || null;
+    let sammelvorlageId = document.getElementById('entnahme-sammelvorlage')?.value || null;
+
+    // If a packlist was chosen, its value is prefixed with 'pack:<id>'.
+    // The database expects a UUID for sammelvorlage_id — don't send the 'pack:' token.
+    if (sammelvorlageId && String(sammelvorlageId).startsWith('pack:')) {
+        sammelvorlageId = null;
+    }
 
     if (!name) {
         showToast('Bitte einen Namen eingeben.', 'warning');
