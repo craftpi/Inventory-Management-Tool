@@ -1845,7 +1845,7 @@ function tabelleAktualisieren(daten) {
                     const safeLName = lName.replace(/'/g, "´").replace(/"/g, "´´");
                     hoverText += `• ${lMenge}x in <i>${safeLName}</i><br>`;
                 }
-                resHtml = `<div class="no-select" style="font-size: 0.75em; color: #d35400; margin-top: 5px; font-weight: normal; cursor: help; display: inline-block;"
+                resHtml = `<div class="no-select" style="font-size: 0.82em; color: #d35400; font-weight: normal; cursor: help; display: inline-flex; align-items: center; white-space: nowrap;"
                     data-hover-type="res" data-hover-content="${hoverText}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
@@ -1893,13 +1893,17 @@ function tabelleAktualisieren(daten) {
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
                     ${iconLabel} <strong>${displayName}</strong>${wichtigBadge}${kommentarIcon}
-                    <div style="margin-top: 6px; font-size: 0.82em; color: ${verfuegbarkeitFarbe};">
-                        Verfügbar: <strong>${verfuegbarkeitLabel}</strong>
-                    </div>
                 </td>
                 <td colspan="2" style="vertical-align: top;">
-                    ${bestandInfoHtml}
-                    ${resHtml ? '<div>' + resHtml + '</div>' : ''}
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        ${bestandInfoHtml}
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 2px; font-size: 0.82em; line-height: 1.2; font-family: inherit;">
+                            ${resHtml ? '<div>' + resHtml + '</div>' : ''}
+                            <div style="min-width: 120px; display: flex; justify-content: flex-start; color: ${verfuegbarkeitFarbe}; white-space: nowrap; font-size: inherit; font-family: inherit; font-weight: normal;">
+                                Verfügbar: <strong>${verfuegbarkeitLabel}</strong>
+                            </div>
+                        </div>
+                    </div>
                 </td>
             `;
             tbody.appendChild(tr);
