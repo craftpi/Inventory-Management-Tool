@@ -438,6 +438,38 @@ function setzeEntnahmeSicht(istGesperrt) {
     if (content) content.style.display = istGesperrt ? 'none' : 'block';
 }
 
+function setzeHauptansichtZurueck() {
+    const appContainer = document.querySelector('.container');
+    if (appContainer) {
+        appContainer.style.background = '';
+        appContainer.style.boxShadow = '';
+        appContainer.style.maxWidth = '';
+        appContainer.style.padding = '';
+        Array.from(appContainer.children).forEach(child => {
+            child.style.display = '';
+        });
+    }
+
+    const specialViews = [
+        'entnahme-ansicht',
+        'qrgen-ansicht',
+        'formular-ansicht'
+    ];
+
+    specialViews.forEach(viewId => {
+        const view = document.getElementById(viewId);
+        if (view) view.style.display = 'none';
+    });
+
+    const appFooter = document.querySelector('.app-footer');
+    if (appFooter) appFooter.style.display = '';
+
+    const hoverDate = document.getElementById('hover-date-info');
+    const hoverRes = document.getElementById('hover-res-info');
+    if (hoverDate) hoverDate.style.display = '';
+    if (hoverRes) hoverRes.style.display = '';
+}
+
 function aktualisiereEntnahmeMaterialDatalist() {
     const datalist = document.getElementById('entnahme-artikel-datalist');
     if (!datalist) return;
@@ -479,15 +511,25 @@ function renderEntnahmeMaterialien() {
 
 function setzeEntnahmeVorlagenFormSichtbarkeit() {
     const bodies = document.querySelectorAll('.entnahme-vorlagen-form');
-    const show = Boolean(entnahmeVorlagenBearbeiten);
     bodies.forEach(body => {
+        const istBenutzerForm = Boolean(body.querySelector('#entnahme-name'));
+        const istSammelForm = Boolean(body.querySelector('#entnahme-sammelvorlagenname'));
+        const show = istBenutzerForm
+            ? (entnahmeVorlagenBearbeiten || entnahmeBenutzerNeuAktiv || !entnahmeAuswahlBenutzerId)
+            : istSammelForm
+                ? (entnahmeVorlagenBearbeiten || entnahmeSammelNeuAktiv)
+                : Boolean(entnahmeVorlagenBearbeiten);
+
         body.style.display = show ? 'block' : 'none';
+
+        const panel = body.closest('details.entnahme-accordion');
+        if (panel) panel.open = show;
     });
 
-    const benutzerPanel = document.getElementById('entnahme-benutzer-panel');
-    const sammelPanel = document.getElementById('entnahme-sammel-panel');
-    if (benutzerPanel) benutzerPanel.open = show && (Boolean(entnahmeAuswahlBenutzerId) || entnahmeBenutzerNeuAktiv);
-    if (sammelPanel) sammelPanel.open = show && (Boolean(entnahmeAuswahlSammelId) || entnahmeSammelNeuAktiv);
+    const toggleButton = document.getElementById('entnahme-vorlagen-bearbeiten-toggle');
+    if (toggleButton) {
+        toggleButton.textContent = entnahmeVorlagenBearbeiten ? '✏️ Vorlagen-Bearbeiten: AN' : '✏️ Vorlagen-Bearbeiten: AUS';
+    }
 }
 
 function aktualisiereEntnahmeVorlagenInfo() {
@@ -512,8 +554,7 @@ function aktualisiereEntnahmeVorlagenInfo() {
 }
 
 function entnahmeVorlagenBearbeitenUmschalten() {
-    const checkbox = document.getElementById('entnahme-vorlagen-bearbeiten');
-    entnahmeVorlagenBearbeiten = Boolean(checkbox?.checked);
+    entnahmeVorlagenBearbeiten = !entnahmeVorlagenBearbeiten;
     showToast(entnahmeVorlagenBearbeiten ? 'Vorlagen-Bearbeitungsmodus aktiviert.' : 'Vorlagen-Bearbeitungsmodus deaktiviert.');
     setzeEntnahmeVorlagenFormSichtbarkeit();
 }
@@ -629,7 +670,7 @@ function fillEntnahmeVorlagenDropdowns() {
 
     if (sammelSelect) {
         const current = sammelSelect.value;
-        sammelSelect.innerHTML = '<option value="">-- Sammelforlage auswählen --</option>';
+        sammelSelect.innerHTML = '<option value="">-- Leere Sammelformular-Vorlage --</option>';
         entnahmeSammelvorlagen
             .slice()
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
@@ -718,40 +759,37 @@ async function oeffneEntnahmeFenster() {
 function entnahmeBenutzerVorlageAuswaehlen() {
     const selectElement = document.getElementById('entnahme-benutzer-vorlage');
     const vorlagenId = selectElement?.value || '';
-    entnahmeBenutzerNeuAktiv = false;
+    entnahmeBenutzerNeuAktiv = !vorlagenId;
     entnahmeAuswahlBenutzerId = vorlagenId;
     aktualisiereEntnahmeVorlagenInfo();
-    if (!vorlagenId) return;
-
-    if (!entnahmeVorlagenBearbeiten) {
-        return;
-    }
 
     const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(vorlagenId));
-    if (!vorlage) return;
 
     const nameFeld = document.getElementById('entnahme-name');
     const kontaktFeld = document.getElementById('entnahme-kontakt');
-    if (nameFeld) nameFeld.value = vorlage.name || '';
-    if (kontaktFeld) kontaktFeld.value = vorlage.kontakt || '';
+    if (nameFeld) nameFeld.value = vorlage?.name || '';
+    if (kontaktFeld) kontaktFeld.value = vorlage?.kontakt || '';
+
+    setzeEntnahmeVorlagenFormSichtbarkeit();
 }
 
 function entnahmeSammelvorlageAuswaehlen() {
     const selectElement = document.getElementById('entnahme-sammelvorlage');
     const vorlagenId = selectElement?.value || '';
-    entnahmeSammelNeuAktiv = false;
+    entnahmeSammelNeuAktiv = !vorlagenId;
     entnahmeAuswahlSammelId = vorlagenId;
     aktualisiereEntnahmeVorlagenInfo();
-    if (!vorlagenId) return;
 
-    if (!entnahmeVorlagenBearbeiten) {
+    const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
+    const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
+    if (!vorlage) {
+        if (nameFeld) nameFeld.value = '';
+        entnahmeMaterialien = [];
+        renderEntnahmeMaterialien();
+        setzeEntnahmeVorlagenFormSichtbarkeit();
         return;
     }
 
-    const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
-    if (!vorlage) return;
-
-    const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
     if (nameFeld) nameFeld.value = vorlage.name || '';
 
     const materialien = Array.isArray(vorlage.materialien)
@@ -765,14 +803,13 @@ function entnahmeSammelvorlageAuswaehlen() {
         menge: Number(item.menge) || 0
     }));
     renderEntnahmeMaterialien();
+    setzeEntnahmeVorlagenFormSichtbarkeit();
 }
 
 function entnahmeBenutzerVorlageNeu() {
     entnahmeVorlagenBearbeiten = true;
     entnahmeBenutzerNeuAktiv = true;
     entnahmeSammelNeuAktiv = false;
-    const checkbox = document.getElementById('entnahme-vorlagen-bearbeiten');
-    if (checkbox) checkbox.checked = true;
     entnahmeAuswahlBenutzerId = '';
     const selectElement = document.getElementById('entnahme-benutzer-vorlage');
     if (selectElement) selectElement.value = '';
@@ -788,8 +825,6 @@ function entnahmeSammelvorlageNeu() {
     entnahmeVorlagenBearbeiten = true;
     entnahmeSammelNeuAktiv = true;
     entnahmeBenutzerNeuAktiv = false;
-    const checkbox = document.getElementById('entnahme-vorlagen-bearbeiten');
-    if (checkbox) checkbox.checked = true;
     entnahmeAuswahlSammelId = '';
     const selectElement = document.getElementById('entnahme-sammelvorlage');
     if (selectElement) selectElement.value = '';
@@ -886,12 +921,23 @@ async function entnahmeBenutzerVorlageSpeichern() {
     const name = document.getElementById('entnahme-name')?.value.trim() || '';
     const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
     const bestehendeId = entnahmeAuswahlBenutzerId || document.getElementById('entnahme-benutzer-vorlage')?.value || '';
+    const normName = name.toLowerCase();
 
     console.log('entnahmeBenutzerVorlageSpeichern called', { name, kontakt, bestehendeId });
     showToast('Speichere Benutzer-Vorlage...', 'success');
 
     if (!name) {
         showToast('Bitte zuerst einen Namen eingeben.', 'warning');
+        return;
+    }
+
+    const doppelteVorlage = entnahmeBenutzerVorlagen.find(vorlage =>
+        String(vorlage.id) !== String(bestehendeId) &&
+        String(vorlage.name || '').trim().toLowerCase() === normName
+    );
+
+    if (doppelteVorlage) {
+        showToast('Benutzer-Vorlage mit diesem Namen existiert bereits und konnte nicht angelegt werden.', 'error');
         return;
     }
 
@@ -1116,18 +1162,12 @@ async function entnahmeProtokollSpeichern() {
 async function zurHauptseiteZurueck(nachSpeichern = false) {
     const url = new URL(window.location.href);
     url.searchParams.delete('entnahme');
+    if (/\/index\.html?$/i.test(url.pathname)) {
+        url.pathname = url.pathname.replace(/\/index\.html?$/i, '/');
+    }
     window.history.replaceState({}, '', url.toString());
 
-    const entnahmeView = document.getElementById('entnahme-ansicht');
-    if (entnahmeView) entnahmeView.style.display = 'none';
-
-    const appContainer = document.querySelector('.container');
-    if (appContainer) {
-        Array.from(appContainer.children).forEach(child => {
-            if (child.id === 'entnahme-ansicht') child.style.display = 'none';
-            else child.style.display = '';
-        });
-    }
+    setzeHauptansichtZurueck();
 
     document.title = 'Lager Verwaltung Trisport Erding';
 
