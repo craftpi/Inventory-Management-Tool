@@ -49,6 +49,13 @@ let aktiverRegalFilter = extrahiereRegalName(INITIAL_REGAL_FILTER);
 let entnahmeBenutzerVorlagen = [];
 let entnahmeSammelvorlagen = [];
 let entnahmeMaterialien = [];
+let entnahmeHistorie = [];
+let entnahmeVorlagenBearbeiten = false;
+let entnahmeHistorieGeoeffnet = new Set();
+let entnahmeAuswahlBenutzerId = '';
+let entnahmeAuswahlSammelId = '';
+let entnahmeBenutzerNeuAktiv = false;
+let entnahmeSammelNeuAktiv = false;
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -470,6 +477,138 @@ function renderEntnahmeMaterialien() {
     });
 }
 
+function setzeEntnahmeVorlagenFormSichtbarkeit() {
+    const bodies = document.querySelectorAll('.entnahme-vorlagen-form');
+    const show = Boolean(entnahmeVorlagenBearbeiten);
+    bodies.forEach(body => {
+        body.style.display = show ? 'block' : 'none';
+    });
+
+    const benutzerPanel = document.getElementById('entnahme-benutzer-panel');
+    const sammelPanel = document.getElementById('entnahme-sammel-panel');
+    if (benutzerPanel) benutzerPanel.open = show && (Boolean(entnahmeAuswahlBenutzerId) || entnahmeBenutzerNeuAktiv);
+    if (sammelPanel) sammelPanel.open = show && (Boolean(entnahmeAuswahlSammelId) || entnahmeSammelNeuAktiv);
+}
+
+function aktualisiereEntnahmeVorlagenInfo() {
+    const benutzerInfo = document.getElementById('entnahme-benutzer-info');
+    const sammelInfo = document.getElementById('entnahme-sammel-info');
+
+    const benutzer = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(entnahmeAuswahlBenutzerId));
+    const sammel = entnahmeSammelvorlagen.find(item => String(item.id) === String(entnahmeAuswahlSammelId));
+
+    if (benutzerInfo) {
+        benutzerInfo.innerHTML = benutzer
+            ? `<strong>Ausgewählt:</strong> ${escapeHtml(benutzer.name || '')}<br><small style="color:#56697c;">${escapeHtml(benutzer.kontakt || 'Kein Kontakt gespeichert')}</small>`
+            : 'Keine Benutzer-Vorlage ausgewählt.';
+    }
+
+    if (sammelInfo) {
+        const materialAnzahl = Array.isArray(sammel?.materialien) ? sammel.materialien.length : 0;
+        sammelInfo.innerHTML = sammel
+            ? `<strong>Ausgewählt:</strong> ${escapeHtml(sammel.name || '')}<br><small style="color:#6a4a8e;">${materialAnzahl} Material${materialAnzahl === 1 ? '' : 'ien'} gespeichert</small>`
+            : 'Kein Sammelformular ausgewählt.';
+    }
+}
+
+function entnahmeVorlagenBearbeitenUmschalten() {
+    const checkbox = document.getElementById('entnahme-vorlagen-bearbeiten');
+    entnahmeVorlagenBearbeiten = Boolean(checkbox?.checked);
+    showToast(entnahmeVorlagenBearbeiten ? 'Vorlagen-Bearbeitungsmodus aktiviert.' : 'Vorlagen-Bearbeitungsmodus deaktiviert.');
+    setzeEntnahmeVorlagenFormSichtbarkeit();
+}
+
+function entnahmeDatumAnzeigen(wert) {
+    if (!wert) return '';
+    try {
+        return new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(wert));
+    } catch (e) {
+        return String(wert);
+    }
+}
+
+function entnahmeHistorieMaterialLabel(material) {
+    const menge = Number(material?.menge) || 0;
+    const einheit = material?.einheit || 'Stück';
+    return `${menge} ${einheit} ${material?.label || material?.name || 'Material'}`;
+}
+
+function renderEntnahmeHistorie() {
+    const container = document.getElementById('entnahme-historie-liste');
+    if (!container) return;
+
+    if (!entnahmeHistorie.length) {
+        container.innerHTML = '<p style="color:#666; margin:0;">Noch keine gespeicherten Entnahmen vorhanden.</p>';
+        return;
+    }
+
+    container.innerHTML = '';
+    entnahmeHistorie.forEach(entnahme => {
+        const materialien = Array.isArray(entnahme.materialien) ? entnahme.materialien : [];
+        const details = document.createElement('details');
+        details.className = 'entnahme-history-item';
+        details.open = entnahmeHistorieGeoeffnet.has(String(entnahme.id));
+        details.dataset.entnahmeId = String(entnahme.id);
+
+        const summary = document.createElement('summary');
+        summary.innerHTML = `
+            <div style="display:flex; flex-direction:column; gap:4px; text-align:left;">
+                <span>${escapeHtml(entnahme.name || 'Ohne Namen')}</span>
+                <small style="color:#5f6b77; font-weight:normal;">${escapeHtml(entnahmeDatumAnzeigen(entnahme.created_at))} · ${materialien.length} Position${materialien.length === 1 ? '' : 'en'}</small>
+            </div>
+        `;
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'entnahme-history-materials';
+        body.innerHTML = `
+            <div style="color:#5f6b77; line-height:1.45; margin-bottom:10px;">${escapeHtml(entnahme.kontakt || 'Kein Kontakt angegeben')}</div>
+            <div>
+                ${materialien.map((material, materialIndex) => {
+                    const menge = Number(material.menge) || 0;
+                    const label = escapeHtml(entnahmeHistorieMaterialLabel(material));
+                    const rowId = `entnahme-history-${String(entnahme.id).replace(/"/g, '')}-${materialIndex}`;
+                    return `
+                        <div class="entnahme-return-row" data-index="${materialIndex}" style="display:grid; grid-template-columns: 26px 1fr 110px; gap:10px; align-items:center; margin-bottom:8px;">
+                            <input type="checkbox" id="${rowId}-check" data-role="return-check" aria-label="${label}">
+                            <label for="${rowId}-check" style="margin:0; font-weight:normal; cursor:pointer;">${label}</label>
+                            <input type="text" data-role="return-qty" value="${menge}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; text-align:center;" inputmode="numeric">
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+            <div class="entnahme-history-actions">
+                <button class="btn" style="background:#1f5f8b; width:auto;" onclick="entnahmeHistorieLaden('${String(entnahme.id)}')">Laden</button>
+                <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeTeilRueckgabeSpeichern('${String(entnahme.id)}')">Teilrückgabe speichern</button>
+                <button class="btn" style="background:#c0392b; width:auto;" onclick="entnahmeKomplettZurueckgeben('${String(entnahme.id)}')">Komplett zurückgeben</button>
+            </div>
+        `;
+
+        details.appendChild(body);
+        details.addEventListener('toggle', () => {
+            if (details.open) entnahmeHistorieGeoeffnet.add(String(entnahme.id));
+            else entnahmeHistorieGeoeffnet.delete(String(entnahme.id));
+        });
+        container.appendChild(details);
+    });
+}
+
+async function ladeEntnahmeHistorie() {
+    const result = await dbClient
+        .from(ENTNAHME_PROTOKOLL_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+    if (result.error) {
+        console.warn('Entnahme-Historie konnte nicht geladen werden.', result.error);
+        return;
+    }
+
+    entnahmeHistorie = result.data || [];
+    renderEntnahmeHistorie();
+}
+
 function fillEntnahmeVorlagenDropdowns() {
     const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
     const sammelSelect = document.getElementById('entnahme-sammelvorlage');
@@ -481,8 +620,7 @@ function fillEntnahmeVorlagenDropdowns() {
             .slice()
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
             .forEach(vorlage => {
-                const label = vorlage.kontakt ? `${vorlage.name} - ${vorlage.kontakt}` : vorlage.name;
-                benutzerSelect.add(new Option(label, vorlage.id));
+                benutzerSelect.add(new Option(vorlage.name, vorlage.id));
             });
         if (Array.from(benutzerSelect.options).some(opt => opt.value === current)) {
             benutzerSelect.value = current;
@@ -500,6 +638,8 @@ function fillEntnahmeVorlagenDropdowns() {
             sammelSelect.value = current;
         }
     }
+
+    aktualisiereEntnahmeVorlagenInfo();
 }
 
 async function ladeEntnahmeVorlagen() {
@@ -560,6 +700,8 @@ async function initEntnahmeModus() {
     aktualisiereEntnahmeMaterialDatalist();
     renderEntnahmeMaterialien();
     await ladeEntnahmeVorlagen();
+    await ladeEntnahmeHistorie();
+    setzeEntnahmeVorlagenFormSichtbarkeit();
 }
 
 async function oeffneEntnahmeFenster() {
@@ -574,8 +716,16 @@ async function oeffneEntnahmeFenster() {
 }
 
 function entnahmeBenutzerVorlageAuswaehlen() {
-    const vorlagenId = document.getElementById('entnahme-benutzer-vorlage')?.value || '';
+    const selectElement = document.getElementById('entnahme-benutzer-vorlage');
+    const vorlagenId = selectElement?.value || '';
+    entnahmeBenutzerNeuAktiv = false;
+    entnahmeAuswahlBenutzerId = vorlagenId;
+    aktualisiereEntnahmeVorlagenInfo();
     if (!vorlagenId) return;
+
+    if (!entnahmeVorlagenBearbeiten) {
+        return;
+    }
 
     const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(vorlagenId));
     if (!vorlage) return;
@@ -587,8 +737,16 @@ function entnahmeBenutzerVorlageAuswaehlen() {
 }
 
 function entnahmeSammelvorlageAuswaehlen() {
-    const vorlagenId = document.getElementById('entnahme-sammelvorlage')?.value || '';
+    const selectElement = document.getElementById('entnahme-sammelvorlage');
+    const vorlagenId = selectElement?.value || '';
+    entnahmeSammelNeuAktiv = false;
+    entnahmeAuswahlSammelId = vorlagenId;
+    aktualisiereEntnahmeVorlagenInfo();
     if (!vorlagenId) return;
+
+    if (!entnahmeVorlagenBearbeiten) {
+        return;
+    }
 
     const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
     if (!vorlage) return;
@@ -607,6 +765,40 @@ function entnahmeSammelvorlageAuswaehlen() {
         menge: Number(item.menge) || 0
     }));
     renderEntnahmeMaterialien();
+}
+
+function entnahmeBenutzerVorlageNeu() {
+    entnahmeVorlagenBearbeiten = true;
+    entnahmeBenutzerNeuAktiv = true;
+    entnahmeSammelNeuAktiv = false;
+    const checkbox = document.getElementById('entnahme-vorlagen-bearbeiten');
+    if (checkbox) checkbox.checked = true;
+    entnahmeAuswahlBenutzerId = '';
+    const selectElement = document.getElementById('entnahme-benutzer-vorlage');
+    if (selectElement) selectElement.value = '';
+    const nameFeld = document.getElementById('entnahme-name');
+    const kontaktFeld = document.getElementById('entnahme-kontakt');
+    if (nameFeld) nameFeld.value = '';
+    if (kontaktFeld) kontaktFeld.value = '';
+    setzeEntnahmeVorlagenFormSichtbarkeit();
+    aktualisiereEntnahmeVorlagenInfo();
+}
+
+function entnahmeSammelvorlageNeu() {
+    entnahmeVorlagenBearbeiten = true;
+    entnahmeSammelNeuAktiv = true;
+    entnahmeBenutzerNeuAktiv = false;
+    const checkbox = document.getElementById('entnahme-vorlagen-bearbeiten');
+    if (checkbox) checkbox.checked = true;
+    entnahmeAuswahlSammelId = '';
+    const selectElement = document.getElementById('entnahme-sammelvorlage');
+    if (selectElement) selectElement.value = '';
+    const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
+    if (nameFeld) nameFeld.value = '';
+    entnahmeMaterialien = [];
+    renderEntnahmeMaterialien();
+    setzeEntnahmeVorlagenFormSichtbarkeit();
+    aktualisiereEntnahmeVorlagenInfo();
 }
 
 function entnahmeMaterialHinzufuegen() {
@@ -693,7 +885,7 @@ function entnahmeFormularZuruecksetzen() {
 async function entnahmeBenutzerVorlageSpeichern() {
     const name = document.getElementById('entnahme-name')?.value.trim() || '';
     const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
-    const bestehendeId = document.getElementById('entnahme-benutzer-vorlage')?.value || '';
+    const bestehendeId = entnahmeAuswahlBenutzerId || document.getElementById('entnahme-benutzer-vorlage')?.value || '';
 
     console.log('entnahmeBenutzerVorlageSpeichern called', { name, kontakt, bestehendeId });
     showToast('Speichere Benutzer-Vorlage...', 'success');
@@ -715,6 +907,12 @@ async function entnahmeBenutzerVorlageSpeichern() {
             return;
         }
 
+        if (res.data && res.data[0]?.id) {
+            entnahmeAuswahlBenutzerId = String(res.data[0].id);
+            const selectElement = document.getElementById('entnahme-benutzer-vorlage');
+            if (selectElement) selectElement.value = entnahmeAuswahlBenutzerId;
+        }
+
         showToast('Benutzer-Vorlage gespeichert.');
         await ladeEntnahmeVorlagen();
     } catch (e) {
@@ -725,7 +923,7 @@ async function entnahmeBenutzerVorlageSpeichern() {
 
 async function entnahmeSammelvorlageSpeichern() {
     const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
-    const bestehendeId = document.getElementById('entnahme-sammelvorlage')?.value || '';
+    const bestehendeId = entnahmeAuswahlSammelId || document.getElementById('entnahme-sammelvorlage')?.value || '';
 
     if (!name) {
         showToast('Bitte einen Namen für die Sammelforlage eingeben.', 'warning');
@@ -748,8 +946,129 @@ async function entnahmeSammelvorlageSpeichern() {
         return;
     }
 
+    if (result.data && result.data[0]?.id) {
+        entnahmeAuswahlSammelId = String(result.data[0].id);
+        const selectElement = document.getElementById('entnahme-sammelvorlage');
+        if (selectElement) selectElement.value = entnahmeAuswahlSammelId;
+    }
+
     showToast('Sammelforlage gespeichert.');
     await ladeEntnahmeVorlagen();
+}
+
+async function entnahmeHistorieLaden(entnahmeId) {
+    const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
+    if (!entnahme) return;
+
+    const nameFeld = document.getElementById('entnahme-name');
+    const kontaktFeld = document.getElementById('entnahme-kontakt');
+    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
+    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
+
+    if (nameFeld) nameFeld.value = entnahme.name || '';
+    if (kontaktFeld) kontaktFeld.value = entnahme.kontakt || '';
+    if (benutzerSelect) benutzerSelect.value = entnahme.benutzer_vorlage_id || '';
+    if (sammelSelect) sammelSelect.value = entnahme.sammelvorlage_id || '';
+
+    entnahmeMaterialien = Array.isArray(entnahme.materialien)
+        ? entnahme.materialien.map(item => ({ ...item }))
+        : [];
+    renderEntnahmeMaterialien();
+    showToast('Entnahme in Formular geladen.');
+}
+
+function entnahmeRueckgabeMaterialienAuslesen(entnahmeId) {
+    const safeId = String(entnahmeId).replace(/"/g, '');
+    const details = document.querySelector(`[data-entnahme-id="${safeId}"]`);
+    if (!details) return [];
+
+    const rows = details.querySelectorAll('.entnahme-return-row');
+    const rueckgaenge = [];
+
+    rows.forEach(row => {
+        const checked = row.querySelector('[data-role="return-check"]')?.checked;
+        if (!checked) return;
+
+        const index = Number(row.dataset.index);
+        const qtyInput = row.querySelector('[data-role="return-qty"]');
+        const menge = werteMengeAus(qtyInput?.value);
+        if (index >= 0 && menge > 0) {
+            rueckgaenge.push({ index, menge });
+        }
+    });
+
+    return rueckgaenge;
+}
+
+async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
+    const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
+    if (!entnahme) return;
+
+    const rueckgaenge = entnahmeRueckgabeMaterialienAuslesen(entnahmeId);
+    if (rueckgaenge.length === 0) {
+        showToast('Bitte mindestens ein Material für die Rückgabe auswählen.', 'warning');
+        return;
+    }
+
+    const neueMaterialien = Array.isArray(entnahme.materialien)
+        ? entnahme.materialien.map(item => ({ ...item }))
+        : [];
+
+    rueckgaenge.sort((a, b) => b.index - a.index).forEach(({ index, menge }) => {
+        const material = neueMaterialien[index];
+        if (!material) return;
+
+        const aktuelleMenge = Number(material.menge) || 0;
+        const rest = aktuelleMenge - menge;
+        material.menge = rest > 0 ? rest : 0;
+
+        if (material.menge <= 0) {
+            neueMaterialien.splice(index, 1);
+        }
+    });
+
+    if (neueMaterialien.length === 0) {
+        const loeschRes = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).delete().eq('id', entnahmeId);
+        if (loeschRes.error) {
+            showToast('Rückgabe konnte nicht gespeichert werden.', 'error');
+            console.error(loeschRes.error);
+            return;
+        }
+
+        showToast('Entnahme vollständig zurückgegeben und entfernt.');
+    } else {
+        const { error } = await dbClient
+            .from(ENTNAHME_PROTOKOLL_TABLE)
+            .update({ materialien: neueMaterialien })
+            .eq('id', entnahmeId);
+
+        if (error) {
+            showToast('Rückgabe konnte nicht gespeichert werden.', 'error');
+            console.error(error);
+            return;
+        }
+
+        showToast('Teilrückgabe gespeichert.');
+    }
+
+    await ladeEntnahmeHistorie();
+}
+
+async function entnahmeKomplettZurueckgeben(entnahmeId) {
+    const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
+    if (!entnahme) return;
+
+    if (!confirm(`Die Entnahme "${entnahme.name || 'ohne Namen'}" wirklich komplett zurückgeben und entfernen?`)) return;
+
+    const { error } = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).delete().eq('id', entnahmeId);
+    if (error) {
+        showToast('Entnahme konnte nicht entfernt werden.', 'error');
+        console.error(error);
+        return;
+    }
+
+    showToast('Entnahme entfernt.');
+    await ladeEntnahmeHistorie();
 }
 
 async function entnahmeProtokollSpeichern() {
@@ -785,6 +1104,40 @@ async function entnahmeProtokollSpeichern() {
 
     showToast('Entnahmeprotokoll gespeichert.');
     entnahmeFormularZuruecksetzen();
+    setTimeout(async () => {
+        await ladeAlles();
+        await ladeEntnahmeVorlagen();
+        await ladeEntnahmeHistorie();
+        setzeEntnahmeVorlagenFormSichtbarkeit();
+    }, 500);
+    await zurHauptseiteZurueck(true);
+}
+
+async function zurHauptseiteZurueck(nachSpeichern = false) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('entnahme');
+    window.history.replaceState({}, '', url.toString());
+
+    const entnahmeView = document.getElementById('entnahme-ansicht');
+    if (entnahmeView) entnahmeView.style.display = 'none';
+
+    const appContainer = document.querySelector('.container');
+    if (appContainer) {
+        Array.from(appContainer.children).forEach(child => {
+            if (child.id === 'entnahme-ansicht') child.style.display = 'none';
+            else child.style.display = '';
+        });
+    }
+
+    document.title = 'Lager Verwaltung Trisport Erding';
+
+    const { data: { session } } = await dbClient.auth.getSession();
+    const overlay = document.getElementById('login-overlay');
+    if (overlay) overlay.style.display = session ? 'none' : 'flex';
+
+    if (nachSpeichern) {
+        showToast('Zur Hauptseite gewechselt.');
+    }
 }
 
 function escapeHtml(input) {

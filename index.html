@@ -219,6 +219,69 @@
             padding: 14px;
             background: #f9fbfd;
         }
+        .entnahme-accordion {
+            border: 1px solid #dbe3ea;
+            border-radius: 12px;
+            background: #f9fbfd;
+            overflow: hidden;
+        }
+        .entnahme-accordion summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 14px 16px;
+            font-weight: bold;
+            color: #2c3e50;
+            background: linear-gradient(180deg, #ffffff 0%, #f2f6fa 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .entnahme-accordion summary::-webkit-details-marker { display: none; }
+        .entnahme-accordion summary::after {
+            content: '▾';
+            color: #7f8c8d;
+            transition: transform 0.2s ease;
+        }
+        .entnahme-accordion[open] summary::after {
+            transform: rotate(180deg);
+        }
+        .entnahme-accordion-body {
+            padding: 14px;
+            border-top: 1px solid #dbe3ea;
+        }
+        .entnahme-history-item {
+            border: 1px solid #dbe3ea;
+            border-radius: 10px;
+            background: #ffffff;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .entnahme-history-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+        .entnahme-history-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .entnahme-history-materials {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px dashed #dbe3ea;
+        }
+        .entnahme-history-materials label {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin: 6px 0;
+            font-weight: normal;
+        }
         .entnahme-lock {
             border: 1px solid #f1c7c7;
             background: #fff3f3;
@@ -346,37 +409,62 @@
             </div>
 
             <div id="entnahme-content">
+                <div class="entnahme-card" style="margin-bottom: 14px;">
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-weight:bold;">
+                            <input type="checkbox" id="entnahme-vorlagen-bearbeiten" onchange="entnahmeVorlagenBearbeitenUmschalten()" style="width:18px; height:18px; accent-color:#e3000f;">
+                            Vorlagen-Bearbeitungsmodus aktivieren
+                        </label>
+                        <button class="btn" style="background:#34495e; width:auto;" onclick="zurHauptseiteZurueck()">Zur Hauptseite</button>
+                    </div>
+                    <p style="margin:8px 0 0 28px; color:#5f6b77; line-height:1.4;">Im Normalmodus kannst du nur auswählen. Erst im Bearbeitungsmodus werden die Felder zum Ändern sichtbar.</p>
+                </div>
+
                 <div class="entnahme-grid">
                     <div class="entnahme-card">
                         <div class="form-group">
                             <label for="entnahme-benutzer-vorlage">Benutzer-Vorlage auswählen</label>
                             <select id="entnahme-benutzer-vorlage" onchange="entnahmeBenutzerVorlageAuswaehlen()"></select>
                         </div>
-                        <div class="form-group">
-                            <label for="entnahme-name">Name</label>
-                            <input type="text" id="entnahme-name" placeholder="Vor- und Nachname">
-                        </div>
-                        <div class="form-group">
-                            <label for="entnahme-kontakt">Kontakt optional</label>
-                            <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis">
-                        </div>
-                        <div style="display:flex; gap:10px; flex-wrap: wrap;">
-                            <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Benutzer-Vorlage speichern</button>
-                        </div>
+                        <div id="entnahme-benutzer-info" style="margin: 0 0 10px 0; padding: 10px 12px; background:#eef7ff; border:1px solid #d6eaf8; border-radius:8px; color:#24415a; line-height:1.4; font-size:0.92em;">Keine Benutzer-Vorlage ausgewählt.</div>
+                        <button class="btn" style="background:#1f5f8b; width:auto; margin-bottom:10px;" onclick="entnahmeBenutzerVorlageNeu()">Neue Benutzer-Vorlage</button>
+                        <details class="entnahme-accordion" id="entnahme-benutzer-panel">
+                            <summary>Name und Kontakt bearbeiten</summary>
+                            <div class="entnahme-accordion-body entnahme-vorlagen-form">
+                                <div class="form-group">
+                                    <label for="entnahme-name">Name</label>
+                                    <input type="text" id="entnahme-name" placeholder="Vor- und Nachname">
+                                </div>
+                                <div class="form-group">
+                                    <label for="entnahme-kontakt">Kontakt optional</label>
+                                    <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis">
+                                </div>
+                                <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                                    <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Benutzer-Vorlage speichern</button>
+                                </div>
+                            </div>
+                        </details>
                     </div>
 
                     <div class="entnahme-card">
                         <div class="form-group">
-                            <label for="entnahme-sammelvorlage">Sammelforlage auswählen</label>
+                            <label for="entnahme-sammelvorlage">Sammelformular auswählen</label>
                             <select id="entnahme-sammelvorlage" onchange="entnahmeSammelvorlageAuswaehlen()"></select>
                         </div>
-                        <div class="form-group">
-                            <label for="entnahme-sammelvorlagenname">Sammelforlage benennen</label>
-                            <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst">
-                        </div>
-                        <div style="display:flex; gap:10px; flex-wrap: wrap;">
-                            <button class="btn" style="background:#7d3c98; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Sammelforlage speichern</button>
-                        </div>
+                        <div id="entnahme-sammel-info" style="margin: 0 0 10px 0; padding: 10px 12px; background:#f4ecff; border:1px solid #e6d9fb; border-radius:8px; color:#4a2c73; line-height:1.4; font-size:0.92em;">Kein Sammelformular ausgewählt.</div>
+                        <button class="btn" style="background:#7d3c98; width:auto; margin-bottom:10px;" onclick="entnahmeSammelvorlageNeu()">Neues Sammelformular</button>
+                        <details class="entnahme-accordion" id="entnahme-sammel-panel">
+                            <summary>Materialien und Name bearbeiten</summary>
+                            <div class="entnahme-accordion-body entnahme-vorlagen-form">
+                                <div class="form-group">
+                                    <label for="entnahme-sammelvorlagenname">Sammelformular benennen</label>
+                                    <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst">
+                                </div>
+                                <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                                    <button class="btn" style="background:#7d3c98; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Sammelforlage speichern</button>
+                                </div>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
@@ -411,6 +499,14 @@
                         <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeFormularZuruecksetzen()">Formular leeren</button>
                     </div>
                 </div>
+
+                <details class="entnahme-accordion" style="margin-top: 14px;" id="entnahme-historie-panel">
+                    <summary>Bereits gespeicherte Entnahmen</summary>
+                    <div class="entnahme-accordion-body">
+                        <p style="margin-top: 0; color:#5f6b77;">Hier kannst du frühere Entnahmen laden, einzelne Positionen zurückgeben oder einen Vorgang ganz entfernen.</p>
+                        <div id="entnahme-historie-liste"></div>
+                    </div>
+                </details>
             </div>
         </div>
     </div>
