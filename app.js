@@ -549,7 +549,7 @@ function aktualisiereEntnahmeVorlagenInfo() {
         const materialAnzahl = Array.isArray(sammel?.materialien) ? sammel.materialien.length : 0;
         sammelInfo.innerHTML = sammel
             ? `<strong>Ausgewählt:</strong> ${escapeHtml(sammel.name || '')}<br><small style="color:#6a4a8e;">${materialAnzahl} Material${materialAnzahl === 1 ? '' : 'ien'} gespeichert</small>`
-            : 'Kein Sammelformular ausgewählt.';
+            : 'Keine Sammel-Vorlage ausgewählt.';
     }
 }
 
@@ -670,7 +670,7 @@ function fillEntnahmeVorlagenDropdowns() {
 
     if (sammelSelect) {
         const current = sammelSelect.value;
-        sammelSelect.innerHTML = '<option value="">-- Leere Sammelformular-Vorlage --</option>';
+        sammelSelect.innerHTML = '<option value="">-- Leere Sammelformular-Vorlage --</option><option value="__new__">-- Neue Sammelformular-Vorlage --</option>';
         entnahmeSammelvorlagen
             .slice()
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
@@ -776,7 +776,20 @@ function entnahmeBenutzerVorlageAuswaehlen() {
 function entnahmeSammelvorlageAuswaehlen() {
     const selectElement = document.getElementById('entnahme-sammelvorlage');
     const vorlagenId = selectElement?.value || '';
-    entnahmeSammelNeuAktiv = !vorlagenId;
+    if (vorlagenId === '__new__') {
+        entnahmeSammelNeuAktiv = true;
+        entnahmeAuswahlSammelId = '';
+        aktualisiereEntnahmeVorlagenInfo();
+
+        const nameFeldNeu = document.getElementById('entnahme-sammelvorlagenname');
+        if (nameFeldNeu) nameFeldNeu.value = '';
+        entnahmeMaterialien = [];
+        renderEntnahmeMaterialien();
+        setzeEntnahmeVorlagenFormSichtbarkeit();
+        return;
+    }
+
+    entnahmeSammelNeuAktiv = false;
     entnahmeAuswahlSammelId = vorlagenId;
     aktualisiereEntnahmeVorlagenInfo();
 
@@ -927,7 +940,34 @@ async function entnahmeBenutzerVorlageSpeichern() {
     showToast('Speichere Benutzer-Vorlage...', 'success');
 
     if (!name) {
-        showToast('Bitte zuerst einen Namen eingeben.', 'warning');
+        if (!bestehendeId) {
+            showToast('Bitte zuerst einen Namen eingeben.', 'warning');
+            return;
+        }
+
+        if (!confirm('Der Name der Benutzer-Vorlage ist leer. Soll diese Vorlage gelöscht werden?')) {
+            return;
+        }
+
+        const loeschRes = await dbClient.from(ENTNAHME_BENUTZER_TABLE).delete().eq('id', bestehendeId);
+        if (loeschRes.error) {
+            showToast('Benutzer-Vorlage konnte nicht gelöscht werden.', 'error');
+            console.error('Supabase error deleting benutzer vorlage:', loeschRes.error);
+            return;
+        }
+
+        entnahmeAuswahlBenutzerId = '';
+        entnahmeBenutzerNeuAktiv = false;
+        const selectElement = document.getElementById('entnahme-benutzer-vorlage');
+        if (selectElement) selectElement.value = '';
+        const nameFeld = document.getElementById('entnahme-name');
+        const kontaktFeld = document.getElementById('entnahme-kontakt');
+        if (nameFeld) nameFeld.value = '';
+        if (kontaktFeld) kontaktFeld.value = '';
+
+        showToast('Benutzer-Vorlage gelöscht.');
+        await ladeEntnahmeVorlagen();
+        setzeEntnahmeVorlagenFormSichtbarkeit();
         return;
     }
 
@@ -969,15 +1009,43 @@ async function entnahmeBenutzerVorlageSpeichern() {
 
 async function entnahmeSammelvorlageSpeichern() {
     const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
-    const bestehendeId = entnahmeAuswahlSammelId || document.getElementById('entnahme-sammelvorlage')?.value || '';
+    const selectValue = document.getElementById('entnahme-sammelvorlage')?.value || '';
+    const bestehendeId = entnahmeAuswahlSammelId || (selectValue && selectValue !== '__new__' ? selectValue : '');
 
-    if (!name) {
-        showToast('Bitte einen Namen für die Sammelforlage eingeben.', 'warning');
+    if (entnahmeMaterialien.length === 0) {
+        if (!bestehendeId) {
+            showToast('Die Sammel-Vorlage braucht mindestens ein Material.', 'warning');
+            return;
+        }
+
+        if (!confirm('Diese Sammel-Vorlage enthält keine Materialien mehr. Soll sie gelöscht werden?')) {
+            return;
+        }
+
+        const loeschRes = await dbClient.from(ENTNAHME_SAMMEL_TABLE).delete().eq('id', bestehendeId);
+        if (loeschRes.error) {
+            showToast('Sammelforlage konnte nicht gelöscht werden.', 'error');
+            console.error('Supabase error deleting sammel vorlage:', loeschRes.error);
+            return;
+        }
+
+        entnahmeAuswahlSammelId = '';
+        entnahmeSammelNeuAktiv = false;
+        entnahmeMaterialien = [];
+        const selectElement = document.getElementById('entnahme-sammelvorlage');
+        if (selectElement) selectElement.value = '';
+        const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
+        if (nameFeld) nameFeld.value = '';
+
+        renderEntnahmeMaterialien();
+        showToast('Sammelforlage gelöscht.');
+        await ladeEntnahmeVorlagen();
+        setzeEntnahmeVorlagenFormSichtbarkeit();
         return;
     }
 
-    if (entnahmeMaterialien.length === 0) {
-        showToast('Die Sammelforlage braucht mindestens ein Material.', 'warning');
+    if (!name) {
+        showToast('Bitte einen Namen für die Sammelforlage eingeben.', 'warning');
         return;
     }
 
