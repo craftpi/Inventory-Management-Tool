@@ -224,7 +224,10 @@ function textEnthaeltRegal(text, regalName) {
     const parenTreffer = [...roherText.matchAll(/\(([^)]+)\)/g)].some(match => normalisiereRegalText(match[1]) === normRegal);
     if (parenTreffer) return true;
 
-    return normText.includes(normRegal);
+    const wortTreffer = new RegExp(`(^|[^a-z0-9])${normRegal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(normText);
+    if (wortTreffer) return true;
+
+    return normRegal.length > 3 && normText.includes(normRegal);
 }
 
 function gibRegalLink(regalText) {
@@ -270,10 +273,16 @@ function ortComboChanged() {
     if (val.startsWith('regal:')) {
         setzeRegalFilter(val.substring(6), true);
     } else if (val.startsWith('ort:')) {
-        setzeRegalFilter('', false);
+        aktiverRegalFilter = '';
+        const url = new URL(window.location.href);
+        url.searchParams.delete('regal');
+        window.history.replaceState({}, '', url.toString());
         wendeFilterAn();
     } else {
-        setzeRegalFilter('', false);
+        aktiverRegalFilter = '';
+        const url = new URL(window.location.href);
+        url.searchParams.delete('regal');
+        window.history.replaceState({}, '', url.toString());
         wendeFilterAn();
     }
 }
@@ -1637,7 +1646,9 @@ function wendeFilterAn() {
     }
 
     if (regalFilterTemp !== '') {
-        setzeRegalFilter(regalFilterTemp, true);
+        aktiverRegalFilter = regalFilterTemp;
+    } else if (comboFilter.startsWith('ort:') || comboFilter === '') {
+        aktiverRegalFilter = '';
     }
     if (aktiverRegalFilter !== '') {
         gefilterteDaten = gefilterteDaten.filter(z => {
