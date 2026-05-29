@@ -1596,7 +1596,7 @@ function aktualisiereFilterDropdown(daten) {
     }
     const comboDropdown = document.getElementById('ort-filter-combo');
     if (comboDropdown) {
-        const aktuelleComboAuswahl = comboDropdown.value;
+        const aktuelleComboAuswahl = aktiverRegalFilter ? 'regal:' + aktiverRegalFilter : comboDropdown.value;
         comboDropdown.innerHTML = '<option value="">Alle Orte</option>';
         
         Array.from(alleLagerorte).sort((a,b) => a.name.localeCompare(b.name, 'de')).forEach(ort => {
