@@ -23,6 +23,8 @@ const FORMULAR_TABLE = 'formular_antworten';
 const ENTNAHME_PROTOKOLL_TABLE = 'lager_entnahmen';
 const ENTNAHME_BENUTZER_TABLE = 'lager_entnahme_benutzer_vorlagen';
 const ENTNAHME_SAMMEL_TABLE = 'lager_entnahme_sammelvorlagen';
+// append-only audit table for immutable entnahme records
+const ENTNAHME_AUDIT_TABLE = 'lager_entnahme_audit';
 const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular') === '1';
 const QRGEN_MODUS = new URLSearchParams(window.location.search).get('qrgen') === '1';
 const ENTNAHME_MODUS = new URLSearchParams(window.location.search).get('entnahme') === '1';
@@ -1321,11 +1323,28 @@ async function entnahmeProtokollSpeichern() {
         sammelvorlage_id: sammelvorlageId
     };
 
-    const { error } = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).insert([payload]);
+    const { data: insertData, error } = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).insert([payload]).select();
     if (error) {
         showToast('Entnahme konnte nicht gespeichert werden.', 'error');
         console.error(error);
         return;
+    }
+
+    // write an append-only audit record for immutable tracking
+    try {
+        const insertedId = insertData && insertData[0] ? insertData[0].id : null;
+        const auditPayload = {
+            entnahme_id: insertedId,
+            name,
+            kontakt,
+            materialien: payload.materialien,
+            benutzer_vorlage_id: benutzerVorlageId,
+            sammelvorlage_id: sammelvorlageId
+        };
+        const { error: auditError } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
+        if (auditError) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', auditError);
+    } catch (e) {
+        console.error('Fehler beim Schreiben des Audit-Eintrags:', e);
     }
 
     showToast('Entnahmeprotokoll gespeichert.');
