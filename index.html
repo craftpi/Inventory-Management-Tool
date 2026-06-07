@@ -290,6 +290,54 @@
             margin: 6px 0;
             font-weight: normal;
         }
+        .entnahme-return-row {
+            display: grid;
+            grid-template-columns: 26px 1fr auto;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .entnahme-return-stepper {
+            display: inline-flex;
+            align-items: stretch;
+            border: 1px solid #cfd9e3;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+            min-width: 120px;
+        }
+        .entnahme-return-stepper button {
+            width: 34px;
+            min-width: 34px;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: #f1f5f9;
+            color: #2c3e50;
+            cursor: pointer;
+            font-size: 1.05em;
+            font-weight: bold;
+        }
+        .entnahme-return-stepper button:hover {
+            background: #e2e8f0;
+        }
+        .entnahme-return-stepper input {
+            width: 48px;
+            border: 0;
+            border-left: 1px solid #cfd9e3;
+            border-right: 1px solid #cfd9e3;
+            text-align: center;
+            font-size: 0.98em;
+            padding: 8px 4px;
+            outline: none;
+            appearance: textfield;
+            -moz-appearance: textfield;
+        }
+        .entnahme-return-stepper input::-webkit-outer-spin-button,
+        .entnahme-return-stepper input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
         .entnahme-lock {
             border: 1px solid #f1c7c7;
             background: #fff3f3;

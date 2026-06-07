@@ -644,6 +644,47 @@ function entnahmeHistorieMaterialLabel(material) {
     return `${menge} ${einheit} ${material?.label || material?.name || 'Material'}`;
 }
 
+function entnahmeRueckgabeMengeAuslesen(row) {
+    if (!row) return 1;
+    const maxMenge = Math.max(1, werteMengeAus(row.getAttribute('data-max-qty')) || 1);
+    const input = row.querySelector('[data-role="return-qty"]');
+    const menge = werteMengeAus(input?.value);
+    return Math.min(Math.max(menge, 1), maxMenge);
+}
+
+function entnahmeRueckgabeMengeSetzen(entnahmeId, index, neueMenge) {
+    const safeId = String(entnahmeId).replace(/"/g, '');
+    const row = document.querySelector(`[data-entnahme-id="${safeId}"] .entnahme-return-row[data-index="${index}"]`);
+    if (!row) return;
+
+    const input = row.querySelector('[data-role="return-qty"]');
+    if (!input) return;
+
+    const maxMenge = Math.max(1, werteMengeAus(row.getAttribute('data-max-qty')) || 1);
+    const clamped = Math.min(Math.max(werteMengeAus(neueMenge) || 1, 1), maxMenge);
+    input.value = String(clamped);
+}
+
+function entnahmeRueckgabeMengeAendern(entnahmeId, index, delta) {
+    const safeId = String(entnahmeId).replace(/"/g, '');
+    const row = document.querySelector(`[data-entnahme-id="${safeId}"] .entnahme-return-row[data-index="${index}"]`);
+    if (!row) return;
+
+    const input = row.querySelector('[data-role="return-qty"]');
+    if (!input) return;
+
+    const aktuelleMenge = entnahmeRueckgabeMengeAuslesen(row);
+    entnahmeRueckgabeMengeSetzen(entnahmeId, index, aktuelleMenge + delta);
+}
+
+function entnahmeRueckgabeMengeDirektAendern(entnahmeId, index) {
+    const safeId = String(entnahmeId).replace(/"/g, '');
+    const row = document.querySelector(`[data-entnahme-id="${safeId}"] .entnahme-return-row[data-index="${index}"]`);
+    if (!row) return;
+
+    entnahmeRueckgabeMengeSetzen(entnahmeId, index, entnahmeRueckgabeMengeAuslesen(row));
+}
+
 function renderEntnahmeHistorie() {
     const container = document.getElementById('entnahme-historie-liste');
     if (!container) return;
@@ -676,14 +717,18 @@ function renderEntnahmeHistorie() {
             <div style="color:#5f6b77; line-height:1.45; margin-bottom:10px;">${escapeHtml(entnahme.kontakt || 'Kein Kontakt angegeben')}</div>
             <div>
                 ${materialien.map((material, materialIndex) => {
-                    const menge = Number(material.menge) || 0;
                     const label = escapeHtml(entnahmeHistorieMaterialLabel(material));
                     const rowId = `entnahme-history-${String(entnahme.id).replace(/"/g, '')}-${materialIndex}`;
+                    const menge = Math.max(1, Number(material.menge) || 1);
                     return `
-                        <div class="entnahme-return-row" data-index="${materialIndex}" style="display:grid; grid-template-columns: 26px 1fr 110px; gap:10px; align-items:center; margin-bottom:8px;">
+                        <div class="entnahme-return-row" data-index="${materialIndex}" data-max-qty="${menge}">
                             <input type="checkbox" id="${rowId}-check" data-role="return-check" aria-label="${label}">
                             <label for="${rowId}-check" style="margin:0; font-weight:normal; cursor:pointer;">${label}</label>
-                            <input type="text" data-role="return-qty" value="${menge}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; text-align:center;" inputmode="numeric">
+                            <div class="entnahme-return-stepper" title="Teilrückgabe-Menge">
+                                <button type="button" aria-label="Eine Menge weniger zurückgeben" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, -1)">−</button>
+                                <input type="text" data-role="return-qty" value="1" inputmode="numeric" aria-label="Rückgabemenge" onchange="entnahmeRueckgabeMengeDirektAendern('${String(entnahme.id)}', ${materialIndex})">
+                                <button type="button" aria-label="Eine Menge mehr zurückgeben" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, 1)">+</button>
+                            </div>
                         </div>
                     `;
                 }).join('')}
@@ -1212,8 +1257,7 @@ function entnahmeRueckgabeMaterialienAuslesen(entnahmeId) {
         if (!checked) return;
 
         const index = Number(row.dataset.index);
-        const qtyInput = row.querySelector('[data-role="return-qty"]');
-        const menge = werteMengeAus(qtyInput?.value);
+        const menge = entnahmeRueckgabeMengeAuslesen(row);
         if (index >= 0 && menge > 0) {
             rueckgaenge.push({ index, menge });
         }
