@@ -645,11 +645,11 @@ function entnahmeHistorieMaterialLabel(material) {
 }
 
 function entnahmeRueckgabeMengeAuslesen(row) {
-    if (!row) return 1;
-    const maxMenge = Math.max(1, werteMengeAus(row.getAttribute('data-max-qty')) || 1);
+    if (!row) return 0;
+    const maxMenge = Math.max(0, werteMengeAus(row.getAttribute('data-max-qty')) || 0);
     const input = row.querySelector('[data-role="return-qty"]');
     const menge = werteMengeAus(input?.value);
-    return Math.min(Math.max(menge, 1), maxMenge);
+    return Math.min(Math.max(menge, 0), maxMenge);
 }
 
 function entnahmeRueckgabeMengeSetzen(entnahmeId, index, neueMenge) {
@@ -660,9 +660,14 @@ function entnahmeRueckgabeMengeSetzen(entnahmeId, index, neueMenge) {
     const input = row.querySelector('[data-role="return-qty"]');
     if (!input) return;
 
-    const maxMenge = Math.max(1, werteMengeAus(row.getAttribute('data-max-qty')) || 1);
-    const clamped = Math.min(Math.max(werteMengeAus(neueMenge) || 1, 1), maxMenge);
+    const maxMenge = Math.max(0, werteMengeAus(row.getAttribute('data-max-qty')) || 0);
+    const clamped = Math.min(Math.max(werteMengeAus(neueMenge) || 0, 0), maxMenge);
     input.value = String(clamped);
+
+    const minusBtn = row.querySelector('.entnahme-return-stepper button[aria-label="Restmenge verringern"]');
+    const plusBtn = row.querySelector('.entnahme-return-stepper button[aria-label="Restmenge erhöhen"]');
+    if (minusBtn) minusBtn.disabled = clamped <= 0;
+    if (plusBtn) plusBtn.disabled = clamped >= maxMenge;
 }
 
 function entnahmeRueckgabeMengeAendern(entnahmeId, index, delta) {
@@ -719,15 +724,15 @@ function renderEntnahmeHistorie() {
                 ${materialien.map((material, materialIndex) => {
                     const label = escapeHtml(entnahmeHistorieMaterialLabel(material));
                     const rowId = `entnahme-history-${String(entnahme.id).replace(/"/g, '')}-${materialIndex}`;
-                    const menge = Math.max(1, Number(material.menge) || 1);
+                    const menge = Math.max(0, Number(material.menge) || 0);
                     return `
                         <div class="entnahme-return-row" data-index="${materialIndex}" data-max-qty="${menge}">
                             <input type="checkbox" id="${rowId}-check" data-role="return-check" aria-label="${label}">
                             <label for="${rowId}-check" style="margin:0; font-weight:normal; cursor:pointer;">${label}</label>
-                            <div class="entnahme-return-stepper" title="Teilrückgabe-Menge">
-                                <button type="button" aria-label="Eine Menge weniger zurückgeben" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, -1)">−</button>
-                                <input type="text" data-role="return-qty" value="1" inputmode="numeric" aria-label="Rückgabemenge" onchange="entnahmeRueckgabeMengeDirektAendern('${String(entnahme.id)}', ${materialIndex})">
-                                <button type="button" aria-label="Eine Menge mehr zurückgeben" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, 1)">+</button>
+                            <div class="entnahme-return-stepper" title="Aktuelle Restmenge">
+                                <button type="button" aria-label="Restmenge verringern" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, -1)">−</button>
+                                <input type="text" data-role="return-qty" value="${menge}" inputmode="numeric" aria-label="Restmenge" onchange="entnahmeRueckgabeMengeDirektAendern('${String(entnahme.id)}', ${materialIndex})">
+                                <button type="button" aria-label="Restmenge erhöhen" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, 1)">+</button>
                             </div>
                         </div>
                     `;
@@ -1258,7 +1263,7 @@ function entnahmeRueckgabeMaterialienAuslesen(entnahmeId) {
 
         const index = Number(row.dataset.index);
         const menge = entnahmeRueckgabeMengeAuslesen(row);
-        if (index >= 0 && menge > 0) {
+        if (index >= 0 && menge >= 0) {
             rueckgaenge.push({ index, menge });
         }
     });
@@ -1284,9 +1289,7 @@ async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
         const material = neueMaterialien[index];
         if (!material) return;
 
-        const aktuelleMenge = Number(material.menge) || 0;
-        const rest = aktuelleMenge - menge;
-        material.menge = rest > 0 ? rest : 0;
+        material.menge = Math.max(0, Number(menge) || 0);
 
         if (material.menge <= 0) {
             neueMaterialien.splice(index, 1);
