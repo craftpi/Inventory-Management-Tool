@@ -59,6 +59,267 @@ let entnahmeAuswahlSammelId = '';
 let entnahmeBenutzerNeuAktiv = false;
 let entnahmeSammelNeuAktiv = false;
 let entnahmeVerbrauchProArtikel = {};
+const ENTNAHME_DRAFT_STORAGE_KEY = 'inventory-management-tool.entnahmeDraft.v2';
+let entnahmeWizardStep = 1;
+let entnahmeActiveDraftId = '';
+let entnahmeAutoSaveTimer = null;
+let entnahmeAutoSaveInFlight = false;
+let entnahmeAutoSaveQueued = false;
+let entnahmeWizardAutoAdvanceAktiv = true;
+let entnahmeSammelAutoSaveTimer = null;
+let entnahmeSammelVorlageBestaetigtFuerId = '';
+
+function entnahmeGetFormState() {
+    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
+    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
+    const nameFeld = document.getElementById('entnahme-name');
+    const kontaktFeld = document.getElementById('entnahme-kontakt');
+
+    return {
+        step: entnahmeWizardStep,
+        activeDraftId: entnahmeActiveDraftId,
+        benutzerVorlageId: entnahmeAuswahlBenutzerId || benutzerSelect?.value || '',
+        sammelVorlageId: entnahmeAuswahlSammelId || sammelSelect?.value || '',
+        benutzerNeuAktiv: entnahmeBenutzerNeuAktiv,
+        sammelNeuAktiv: entnahmeSammelNeuAktiv,
+        name: nameFeld?.value.trim() || '',
+        kontakt: kontaktFeld?.value.trim() || '',
+        materialien: entnahmeMaterialien.map(item => ({ ...item }))
+    };
+}
+
+function entnahmeSetzeFormState(state = {}) {
+    entnahmeWizardStep = Math.min(3, Math.max(1, Number(state.step) || 1));
+    entnahmeActiveDraftId = state.activeDraftId || '';
+    entnahmeAuswahlBenutzerId = state.benutzerVorlageId || '';
+    entnahmeAuswahlSammelId = state.sammelVorlageId || '';
+    entnahmeBenutzerNeuAktiv = Boolean(state.benutzerNeuAktiv);
+    entnahmeSammelNeuAktiv = Boolean(state.sammelNeuAktiv);
+
+    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
+    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
+    const nameFeld = document.getElementById('entnahme-name');
+    const kontaktFeld = document.getElementById('entnahme-kontakt');
+
+    if (benutzerSelect) benutzerSelect.value = entnahmeAuswahlBenutzerId || '';
+    if (sammelSelect) sammelSelect.value = entnahmeAuswahlSammelId || '';
+    if (nameFeld) nameFeld.value = typeof state.name === 'string' ? state.name : '';
+    if (kontaktFeld) kontaktFeld.value = typeof state.kontakt === 'string' ? state.kontakt : '';
+
+    entnahmeMaterialien = Array.isArray(state.materialien)
+        ? state.materialien.map(item => ({
+            artikel_id: item.artikel_id || null,
+            label: item.label || item.name || '',
+            kategorie: item.kategorie || '',
+            einheit: item.einheit || 'Stück',
+            menge: Number(item.menge) || 0
+        }))
+        : [];
+
+    setzeEntnahmeVorlagenFormSichtbarkeit();
+    entnahmeWizardAktualisieren();
+    renderEntnahmeMaterialien();
+}
+
+function entnahmeLadeDraftLokal() {
+    try {
+        const raw = window.localStorage.getItem(ENTNAHME_DRAFT_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        console.warn('Lokaler Entnahme-Entwurf konnte nicht geladen werden.', e);
+        return null;
+    }
+}
+
+function entnahmeSpeichereDraftLokal() {
+    try {
+        const state = entnahmeGetFormState();
+        window.localStorage.setItem(ENTNAHME_DRAFT_STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+        console.warn('Lokaler Entnahme-Entwurf konnte nicht gespeichert werden.', e);
+    }
+}
+
+function entnahmeLoescheDraftLokal() {
+    try {
+        window.localStorage.removeItem(ENTNAHME_DRAFT_STORAGE_KEY);
+    } catch (e) {
+        console.warn('Lokaler Entnahme-Entwurf konnte nicht gelöscht werden.', e);
+    }
+}
+
+function entnahmeHatSpeicherbarenInhalt() {
+    const state = entnahmeGetFormState();
+    return Boolean(state.name) && Array.isArray(state.materialien) && state.materialien.length > 0;
+}
+
+function entnahmeAktualisiereStepIndicators() {
+    const stepButtons = document.querySelectorAll('[data-entnahme-step-indicator]');
+    stepButtons.forEach(button => {
+        const step = Number(button.getAttribute('data-entnahme-step-indicator'));
+        button.classList.toggle('active', step === entnahmeWizardStep);
+        button.classList.toggle('complete', step < entnahmeWizardStep);
+    });
+}
+
+function entnahmeWizardAktualisieren() {
+    const stepPanels = document.querySelectorAll('[data-entnahme-step-panel]');
+    stepPanels.forEach(panel => {
+        const step = Number(panel.getAttribute('data-entnahme-step-panel'));
+        panel.style.display = step === entnahmeWizardStep ? 'block' : 'none';
+    });
+
+    const navPrev = document.getElementById('entnahme-wizard-prev');
+    const navNext = document.getElementById('entnahme-wizard-next');
+    const navStatus = document.getElementById('entnahme-wizard-status');
+
+    if (navPrev) navPrev.disabled = entnahmeWizardStep <= 1;
+    if (navNext) {
+        navNext.style.display = entnahmeWizardStep < 3 ? 'inline-flex' : 'none';
+        navNext.textContent = entnahmeWizardStep === 1 ? 'Weiter zu Vorlage' : 'Weiter zu Materialien';
+    }
+
+    if (navStatus) {
+        navStatus.textContent = entnahmeAutoSaveInFlight
+            ? 'Speichert...'
+            : entnahmeHatSpeicherbarenInhalt()
+                ? 'Automatisch gespeichert'
+                : 'Entwurf wird lokal zwischengespeichert';
+    }
+
+    const currentStepLabel = document.getElementById('entnahme-current-step-label');
+    if (currentStepLabel) {
+        currentStepLabel.textContent = entnahmeWizardStep === 1
+            ? 'Schritt 1 von 3'
+            : entnahmeWizardStep === 2
+                ? 'Schritt 2 von 3'
+                : 'Schritt 3 von 3';
+    }
+
+    entnahmeAktualisiereStepIndicators();
+    entnahmeAktualisiereZusammenfassung();
+}
+
+function entnahmeAktualisiereZusammenfassung() {
+    const benutzerInfo = document.getElementById('entnahme-summary-benutzer');
+    const sammelInfo = document.getElementById('entnahme-summary-sammel');
+    const materialInfo = document.getElementById('entnahme-summary-materialien');
+    const stateInfo = document.getElementById('entnahme-summary-status');
+
+    const benutzer = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(entnahmeAuswahlBenutzerId));
+    const sammel = entnahmeSammelvorlagen.find(item => String(item.id) === String(entnahmeAuswahlSammelId));
+    const materialCount = entnahmeMaterialien.reduce((sum, item) => sum + (Number(item.menge) || 0), 0);
+
+    if (benutzerInfo) benutzerInfo.textContent = benutzer?.name || document.getElementById('entnahme-name')?.value.trim() || 'Noch kein Benutzer';
+    if (sammelInfo) sammelInfo.textContent = sammel?.name || document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || 'Noch keine Sammel-Vorlage';
+    if (materialInfo) materialInfo.textContent = entnahmeMaterialien.length > 0 ? `${entnahmeMaterialien.length} Position${entnahmeMaterialien.length === 1 ? '' : 'en'}, ${materialCount} Gesamtmenge` : 'Noch keine Materialien';
+    if (stateInfo) stateInfo.textContent = entnahmeAutoSaveInFlight ? 'Speichert...' : 'Automatische Sicherung aktiv';
+}
+
+function entnahmeWizardZuSchritt(step) {
+    entnahmeWizardStep = Math.min(3, Math.max(1, Number(step) || 1));
+    entnahmeSpeichereDraftLokal();
+    entnahmeWizardAktualisieren();
+}
+
+function entnahmeWizardZurueck() {
+    entnahmeWizardZuSchritt(entnahmeWizardStep - 1);
+}
+
+function entnahmeWizardWeiter() {
+    if (entnahmeWizardStep === 1) {
+        const hatVorlageOderName = Boolean(
+            document.getElementById('entnahme-benutzer-vorlage')?.value ||
+            document.getElementById('entnahme-name')?.value.trim()
+        );
+
+        if (!hatVorlageOderName) {
+            entnahmeAuswahlBenutzerId = '';
+            entnahmeBenutzerNeuAktiv = true;
+            const nameFeld = document.getElementById('entnahme-name');
+            const kontaktFeld = document.getElementById('entnahme-kontakt');
+            if (nameFeld) nameFeld.placeholder = 'Vor- und Nachname';
+            if (kontaktFeld) kontaktFeld.placeholder = 'Telefon, E-Mail oder Hinweis';
+        }
+    }
+
+    if (entnahmeWizardStep === 2) {
+        const hatVorlageOderName = Boolean(
+            document.getElementById('entnahme-sammelvorlage')?.value ||
+            document.getElementById('entnahme-sammelvorlagenname')?.value.trim() ||
+            entnahmeMaterialien.length > 0
+        );
+
+        if (!hatVorlageOderName) {
+            entnahmeAuswahlSammelId = '';
+            entnahmeSammelNeuAktiv = true;
+        }
+    }
+
+    entnahmeWizardZuSchritt(Math.min(3, entnahmeWizardStep + 1));
+}
+
+function entnahmeWizardAutoAdvanceSetzen(aktiv) {
+    entnahmeWizardAutoAdvanceAktiv = Boolean(aktiv);
+}
+
+function entnahmeWizardAutoAdvanceErlaubt() {
+    return entnahmeWizardAutoAdvanceAktiv && !entnahmeVorlagenBearbeiten;
+}
+
+function entnahmeMarkiereAutoSaveAlsErforderlich() {
+    entnahmeSpeichereDraftLokal();
+    entnahmeWizardAktualisieren();
+    entnahmeSammelvorlageAutoSpeichernAnstossen();
+}
+
+function entnahmeSammelvorlageAutoSpeichernAnstossen() {
+    if (entnahmeSammelAutoSaveTimer) clearTimeout(entnahmeSammelAutoSaveTimer);
+    entnahmeSammelAutoSaveTimer = setTimeout(() => {
+        entnahmeSammelAutoSaveTimer = null;
+        entnahmeSammelvorlageAutoSpeichern();
+    }, 550);
+}
+
+async function entnahmeSammelvorlageAutoSpeichern() {
+    const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
+    const selectValue = document.getElementById('entnahme-sammelvorlage')?.value || '';
+    const bestehendeId = entnahmeAuswahlSammelId || (selectValue && selectValue !== '__new__' ? selectValue : '');
+
+    if (!name || entnahmeMaterialien.length === 0) {
+        return null;
+    }
+
+    if (String(bestehendeId).startsWith('pack:')) {
+        return null;
+    }
+
+    if (bestehendeId && entnahmeVorlagenBearbeiten && entnahmeSammelVorlageBestaetigtFuerId !== String(bestehendeId)) {
+        const ok = confirm('Soll die ausgewählte Sammel-Vorlage mit den aktuellen Materialien überschrieben werden?');
+        if (!ok) return null;
+        entnahmeSammelVorlageBestaetigtFuerId = String(bestehendeId);
+    }
+
+    const payload = { name, materialien: entnahmeMaterialien.map(item => ({ ...item })) };
+    const result = bestehendeId
+        ? await dbClient.from(ENTNAHME_SAMMEL_TABLE).update(payload).eq('id', bestehendeId).select()
+        : await dbClient.from(ENTNAHME_SAMMEL_TABLE).insert([payload]).select();
+
+    if (result.error) {
+        console.error('Sammelforlage konnte nicht automatisch gespeichert werden.', result.error);
+        return null;
+    }
+
+    if (result.data && result.data[0]?.id) {
+        entnahmeAuswahlSammelId = String(result.data[0].id);
+        const selectElement = document.getElementById('entnahme-sammelvorlage');
+        if (selectElement) selectElement.value = entnahmeAuswahlSammelId;
+        entnahmeSammelVorlageBestaetigtFuerId = entnahmeAuswahlSammelId;
+    }
+
+    await ladeEntnahmeVorlagen();
+    return entnahmeAuswahlSammelId || bestehendeId || null;
+}
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -625,6 +886,11 @@ function aktualisiereEntnahmeVorlagenInfo() {
 
 function entnahmeVorlagenBearbeitenUmschalten() {
     entnahmeVorlagenBearbeiten = !entnahmeVorlagenBearbeiten;
+    if (entnahmeVorlagenBearbeiten) {
+        entnahmeWizardAutoAdvanceSetzen(false);
+    } else {
+        entnahmeWizardAutoAdvanceSetzen(true);
+    }
     showToast(entnahmeVorlagenBearbeiten ? 'Vorlagen-Bearbeitungsmodus aktiviert.' : 'Vorlagen-Bearbeitungsmodus deaktiviert.');
     setzeEntnahmeVorlagenFormSichtbarkeit();
 }
@@ -877,6 +1143,7 @@ async function initEntnahmeModus() {
     renderEntnahmeMaterialien();
     await ladeEntnahmeVorlagen();
     await ladeEntnahmeHistorie();
+    entnahmeSetzeFormState(entnahmeLadeDraftLokal() || {});
     setzeEntnahmeVorlagenFormSichtbarkeit();
 }
 
@@ -906,11 +1173,18 @@ function entnahmeBenutzerVorlageAuswaehlen() {
     if (kontaktFeld) kontaktFeld.value = vorlage?.kontakt || '';
 
     setzeEntnahmeVorlagenFormSichtbarkeit();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
+
+    if (entnahmeWizardAutoAdvanceErlaubt() && (vorlagenId || nameFeld?.value.trim())) {
+        setTimeout(() => entnahmeWizardZuSchritt(2), 180);
+    }
 }
 
 function entnahmeSammelvorlageAuswaehlen() {
     const selectElement = document.getElementById('entnahme-sammelvorlage');
     const vorlagenId = selectElement?.value || '';
+    entnahmeSammelVorlageBestaetigtFuerId = '';
     if (vorlagenId === '__new__') {
         entnahmeSammelNeuAktiv = true;
         entnahmeAuswahlSammelId = '';
@@ -921,6 +1195,9 @@ function entnahmeSammelvorlageAuswaehlen() {
         entnahmeMaterialien = [];
         renderEntnahmeMaterialien();
         setzeEntnahmeVorlagenFormSichtbarkeit();
+        entnahmeMarkiereAutoSaveAlsErforderlich();
+        entnahmeWizardAktualisieren();
+        entnahmeSammelvorlageAutoSpeichernAnstossen();
         return;
     }
 
@@ -948,6 +1225,9 @@ function entnahmeSammelvorlageAuswaehlen() {
         });
         renderEntnahmeMaterialien();
         setzeEntnahmeVorlagenFormSichtbarkeit();
+        entnahmeMarkiereAutoSaveAlsErforderlich();
+        entnahmeWizardAktualisieren();
+        entnahmeSammelvorlageAutoSpeichernAnstossen();
         return;
     }
 
@@ -955,8 +1235,11 @@ function entnahmeSammelvorlageAuswaehlen() {
     if (!vorlage) {
         if (nameFeld) nameFeld.value = '';
         entnahmeMaterialien = [];
+    entnahmeSammelvorlageAutoSpeichernAnstossen();
         renderEntnahmeMaterialien();
         setzeEntnahmeVorlagenFormSichtbarkeit();
+        entnahmeMarkiereAutoSaveAlsErforderlich();
+        entnahmeWizardAktualisieren();
         return;
     }
 
@@ -974,6 +1257,12 @@ function entnahmeSammelvorlageAuswaehlen() {
     }));
     renderEntnahmeMaterialien();
     setzeEntnahmeVorlagenFormSichtbarkeit();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
+
+    if (entnahmeWizardAutoAdvanceErlaubt() && (vorlagenId || nameFeld?.value.trim())) {
+        setTimeout(() => entnahmeWizardZuSchritt(3), 180);
+    }
 }
 
 function entnahmeBenutzerVorlageNeu() {
@@ -989,6 +1278,8 @@ function entnahmeBenutzerVorlageNeu() {
     if (kontaktFeld) kontaktFeld.value = '';
     setzeEntnahmeVorlagenFormSichtbarkeit();
     aktualisiereEntnahmeVorlagenInfo();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
 }
 
 function entnahmeSammelvorlageNeu() {
@@ -996,6 +1287,7 @@ function entnahmeSammelvorlageNeu() {
     entnahmeSammelNeuAktiv = true;
     entnahmeBenutzerNeuAktiv = false;
     entnahmeAuswahlSammelId = '';
+    entnahmeSammelVorlageBestaetigtFuerId = '';
     const selectElement = document.getElementById('entnahme-sammelvorlage');
     if (selectElement) selectElement.value = '';
     const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
@@ -1004,6 +1296,9 @@ function entnahmeSammelvorlageNeu() {
     renderEntnahmeMaterialien();
     setzeEntnahmeVorlagenFormSichtbarkeit();
     aktualisiereEntnahmeVorlagenInfo();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
+    entnahmeSammelvorlageAutoSpeichernAnstossen();
 }
 
 function entnahmeMaterialHinzufuegen() {
@@ -1045,6 +1340,8 @@ function entnahmeMaterialHinzufuegen() {
     input.value = '';
     mengeInput.value = '1';
     renderEntnahmeMaterialien();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
 }
 
 function entnahmeMaterialMengeAendern(index, neueMenge) {
@@ -1058,12 +1355,16 @@ function entnahmeMaterialMengeAendern(index, neueMenge) {
     }
 
     renderEntnahmeMaterialien();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
 }
 
 function entnahmeMaterialLoeschen(index) {
     if (!entnahmeMaterialien[index]) return;
     entnahmeMaterialien.splice(index, 1);
     renderEntnahmeMaterialien();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeWizardAktualisieren();
 }
 
 function entnahmeFormularZuruecksetzen() {
@@ -1075,6 +1376,11 @@ function entnahmeFormularZuruecksetzen() {
     const artikelInput = document.getElementById('entnahme-artikel-input');
     const mengeInput = document.getElementById('entnahme-artikel-menge');
 
+    if (entnahmeAutoSaveTimer) {
+        clearTimeout(entnahmeAutoSaveTimer);
+        entnahmeAutoSaveTimer = null;
+    }
+
     if (nameFeld) nameFeld.value = '';
     if (kontaktFeld) kontaktFeld.value = '';
     if (benutzerVorlage) benutzerVorlage.value = '';
@@ -1084,6 +1390,13 @@ function entnahmeFormularZuruecksetzen() {
     if (mengeInput) mengeInput.value = '1';
 
     entnahmeMaterialien = [];
+    entnahmeActiveDraftId = '';
+    entnahmeAuswahlBenutzerId = '';
+    entnahmeAuswahlSammelId = '';
+    entnahmeBenutzerNeuAktiv = false;
+    entnahmeSammelNeuAktiv = false;
+    entnahmeWizardZuSchritt(1);
+    entnahmeLoescheDraftLokal();
     renderEntnahmeMaterialien();
 }
 
@@ -1158,6 +1471,7 @@ async function entnahmeBenutzerVorlageSpeichern() {
 
         showToast('Benutzer-Vorlage gespeichert.');
         await ladeEntnahmeVorlagen();
+        entnahmeWizardZuSchritt(2);
     } catch (e) {
         showToast('Fehler beim Speichern der Vorlage.', 'error');
         console.error('Exception in entnahmeBenutzerVorlageSpeichern:', e);
@@ -1165,66 +1479,7 @@ async function entnahmeBenutzerVorlageSpeichern() {
 }
 
 async function entnahmeSammelvorlageSpeichern() {
-    const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
-    const selectValue = document.getElementById('entnahme-sammelvorlage')?.value || '';
-    const bestehendeId = entnahmeAuswahlSammelId || (selectValue && selectValue !== '__new__' ? selectValue : '');
-
-    if (entnahmeMaterialien.length === 0) {
-        if (!bestehendeId) {
-            showToast('Die Sammel-Vorlage braucht mindestens ein Material.', 'warning');
-            return;
-        }
-
-        if (!confirm('Diese Sammel-Vorlage enthält keine Materialien mehr. Soll sie gelöscht werden?')) {
-            return;
-        }
-
-        const loeschRes = await dbClient.from(ENTNAHME_SAMMEL_TABLE).delete().eq('id', bestehendeId);
-        if (loeschRes.error) {
-            showToast('Sammelforlage konnte nicht gelöscht werden.', 'error');
-            console.error('Supabase error deleting sammel vorlage:', loeschRes.error);
-            return;
-        }
-
-        entnahmeAuswahlSammelId = '';
-        entnahmeSammelNeuAktiv = false;
-        entnahmeMaterialien = [];
-        const selectElement = document.getElementById('entnahme-sammelvorlage');
-        if (selectElement) selectElement.value = '';
-        const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
-        if (nameFeld) nameFeld.value = '';
-
-        renderEntnahmeMaterialien();
-        showToast('Sammelforlage gelöscht.');
-        await ladeEntnahmeVorlagen();
-        setzeEntnahmeVorlagenFormSichtbarkeit();
-        return;
-    }
-
-    if (!name) {
-        showToast('Bitte einen Namen für die Sammelforlage eingeben.', 'warning');
-        return;
-    }
-
-    const payload = { name, materialien: entnahmeMaterialien.map(item => ({ ...item })) };
-    const result = bestehendeId
-        ? await dbClient.from(ENTNAHME_SAMMEL_TABLE).update(payload).eq('id', bestehendeId)
-        : await dbClient.from(ENTNAHME_SAMMEL_TABLE).insert([payload]);
-
-    if (result.error) {
-        showToast('Sammelforlage konnte nicht gespeichert werden.', 'error');
-        console.error(result.error);
-        return;
-    }
-
-    if (result.data && result.data[0]?.id) {
-        entnahmeAuswahlSammelId = String(result.data[0].id);
-        const selectElement = document.getElementById('entnahme-sammelvorlage');
-        if (selectElement) selectElement.value = entnahmeAuswahlSammelId;
-    }
-
-    showToast('Sammelforlage gespeichert.');
-    await ladeEntnahmeVorlagen();
+    return entnahmeSammelvorlageAutoSpeichern();
 }
 
 async function entnahmeHistorieLaden(entnahmeId) {
@@ -1240,11 +1495,15 @@ async function entnahmeHistorieLaden(entnahmeId) {
     if (kontaktFeld) kontaktFeld.value = entnahme.kontakt || '';
     if (benutzerSelect) benutzerSelect.value = entnahme.benutzer_vorlage_id || '';
     if (sammelSelect) sammelSelect.value = entnahme.sammelvorlage_id || '';
+    entnahmeActiveDraftId = String(entnahme.id);
 
     entnahmeMaterialien = Array.isArray(entnahme.materialien)
         ? entnahme.materialien.map(item => ({ ...item }))
         : [];
     renderEntnahmeMaterialien();
+    setzeEntnahmeVorlagenFormSichtbarkeit();
+    entnahmeWizardZuSchritt(3);
+    entnahmeMarkiereAutoSaveAlsErforderlich();
     showToast('Entnahme in Formular geladen.');
 }
 
@@ -1336,26 +1595,29 @@ async function entnahmeKomplettZurueckgeben(entnahmeId) {
     await ladeEntnahmeHistorie();
 }
 
-async function entnahmeProtokollSpeichern() {
+async function entnahmeProtokollSpeichern(options = {}) {
+    const { silent = false, finalize = true } = options;
+
+    if (!finalize) {
+        entnahmeSpeichereDraftLokal();
+        return null;
+    }
+
     const name = document.getElementById('entnahme-name')?.value.trim() || '';
     const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
     const benutzerVorlageId = document.getElementById('entnahme-benutzer-vorlage')?.value || null;
     let sammelvorlageId = document.getElementById('entnahme-sammelvorlage')?.value || null;
 
-    // If a packlist was chosen, its value is prefixed with 'pack:<id>'.
-    // The database expects a UUID for sammelvorlage_id — don't send the 'pack:' token.
     if (sammelvorlageId && String(sammelvorlageId).startsWith('pack:')) {
         sammelvorlageId = null;
     }
 
-    if (!name) {
-        showToast('Bitte einen Namen eingeben.', 'warning');
-        return;
-    }
-
-    if (entnahmeMaterialien.length === 0) {
-        showToast('Bitte mindestens ein Material auswählen.', 'warning');
-        return;
+    if (!name || entnahmeMaterialien.length === 0) {
+        if (!silent) {
+            if (!name) showToast('Bitte einen Namen eingeben.', 'warning');
+            else showToast('Bitte mindestens ein Material auswählen.', 'warning');
+        }
+        return null;
     }
 
     const payload = {
@@ -1366,39 +1628,66 @@ async function entnahmeProtokollSpeichern() {
         sammelvorlage_id: sammelvorlageId
     };
 
-    const { data: insertData, error } = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).insert([payload]).select();
-    if (error) {
-        showToast('Entnahme konnte nicht gespeichert werden.', 'error');
-        console.error(error);
-        return;
-    }
+    let savedId = entnahmeActiveDraftId ? String(entnahmeActiveDraftId) : '';
 
-    // write an append-only audit record for immutable tracking
     try {
-        const insertedId = insertData && insertData[0] ? insertData[0].id : null;
-        const auditPayload = {
-            entnahme_id: insertedId,
-            name,
-            kontakt,
-            materialien: payload.materialien,
-            benutzer_vorlage_id: benutzerVorlageId,
-            sammelvorlage_id: sammelvorlageId
-        };
-        const { error: auditError } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
-        if (auditError) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', auditError);
-    } catch (e) {
-        console.error('Fehler beim Schreiben des Audit-Eintrags:', e);
-    }
+        let result;
+        if (savedId) {
+            result = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).update(payload).eq('id', savedId).select();
+            if (result.error) {
+                console.warn('Bestehender Entnahme-Entwurf konnte nicht aktualisiert werden, versuche Neu-Anlage.', result.error);
+                savedId = '';
+            }
+        }
 
-    showToast('Entnahmeprotokoll gespeichert.');
-    entnahmeFormularZuruecksetzen();
-    setTimeout(async () => {
-        await ladeAlles();
-        await ladeEntnahmeVorlagen();
-        await ladeEntnahmeHistorie();
-        setzeEntnahmeVorlagenFormSichtbarkeit();
-    }, 500);
-    await zurHauptseiteZurueck(true);
+        if (!savedId) {
+            result = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).insert([payload]).select();
+            if (result.error) {
+                throw result.error;
+            }
+            savedId = result.data && result.data[0] ? String(result.data[0].id) : '';
+        }
+
+        entnahmeActiveDraftId = savedId;
+
+        try {
+            const auditPayload = {
+                entnahme_id: savedId || null,
+                name,
+                kontakt,
+                materialien: payload.materialien,
+                benutzer_vorlage_id: benutzerVorlageId,
+                sammelvorlage_id: sammelvorlageId
+            };
+            const { error: auditError } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
+            if (auditError) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', auditError);
+        } catch (e) {
+            console.error('Fehler beim Schreiben des Audit-Eintrags:', e);
+        }
+
+        if (!silent) {
+            showToast('Entnahme abgeschlossen.');
+        }
+
+        entnahmeLoescheDraftLokal();
+        if (entnahmeAutoSaveTimer) {
+            clearTimeout(entnahmeAutoSaveTimer);
+            entnahmeAutoSaveTimer = null;
+        }
+
+        entnahmeFormularZuruecksetzen();
+        return savedId;
+    } catch (error) {
+        if (!silent) {
+            showToast('Entnahme konnte nicht gespeichert werden.', 'error');
+        }
+        console.error(error);
+        return null;
+    }
+}
+
+async function entnahmeAbschliessen() {
+    return entnahmeProtokollSpeichern({ finalize: true });
 }
 
 async function zurHauptseiteZurueck(nachSpeichern = false) {
