@@ -727,8 +727,7 @@ function renderEntnahmeHistorie() {
                     const menge = Math.max(0, Number(material.menge) || 0);
                     return `
                         <div class="entnahme-return-row" data-index="${materialIndex}" data-max-qty="${menge}">
-                            <input type="checkbox" id="${rowId}-check" data-role="return-check" aria-label="${label}">
-                            <label for="${rowId}-check" style="margin:0; font-weight:normal; cursor:pointer;">${label}</label>
+                            <label style="margin:0; font-weight:normal; cursor:pointer; display:flex; align-items:center; gap:8px;"><span aria-hidden="true" style="color:#7f8c8d; font-size:1.2em; line-height:1;">•</span><span>${label}</span></label>
                             <div class="entnahme-return-stepper" title="Aktuelle Restmenge">
                                 <button type="button" aria-label="Restmenge verringern" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, -1)">−</button>
                                 <input type="text" data-role="return-qty" value="${menge}" inputmode="numeric" aria-label="Restmenge" onchange="entnahmeRueckgabeMengeDirektAendern('${String(entnahme.id)}', ${materialIndex})">
@@ -1258,9 +1257,6 @@ function entnahmeRueckgabeMaterialienAuslesen(entnahmeId) {
     const rueckgaenge = [];
 
     rows.forEach(row => {
-        const checked = row.querySelector('[data-role="return-check"]')?.checked;
-        if (!checked) return;
-
         const index = Number(row.dataset.index);
         const menge = entnahmeRueckgabeMengeAuslesen(row);
         if (index >= 0 && menge >= 0) {
