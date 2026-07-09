@@ -369,6 +369,11 @@
             background: #f9fbfd;
             overflow: hidden;
         }
+        #entnahme-historie-panel {
+            border: 2px solid #9fb8cd;
+            background: linear-gradient(180deg, #ffffff 0%, #eef5fa 100%);
+            box-shadow: 0 10px 22px rgba(36, 65, 90, 0.10);
+        }
         .entnahme-accordion summary {
             list-style: none;
             cursor: pointer;
@@ -632,9 +637,17 @@
 
             <div id="entnahme-content">
                 <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:14px;">
-                    <button class="btn" id="entnahme-vorlagen-bearbeiten-toggle" style="background:#f39c12; width:auto;" onclick="entnahmeVorlagenBearbeitenUmschalten()">✏️ Vorlagen-Bearbeiten: AUS</button>
+                    <button class="btn" style="background:#f39c12; width:auto;" onclick="oeffneVorlagenOverlay()">✏️ Vorlagen verwalten</button>
                     <button class="btn" style="background:#34495e; width:auto;" onclick="zurHauptseiteZurueck()">Zur Hauptseite</button>
                 </div>
+
+                <details class="entnahme-accordion" style="margin-bottom: 14px;" id="entnahme-historie-panel">
+                    <summary>Aktuelle Entnahmen</summary>
+                    <div class="entnahme-accordion-body">
+                        <p style="margin-top: 0; color:#5f6b77;">Hier kannst du frühere Entnahmen laden, einzelne Positionen zurückgeben oder einen Vorgang ganz entfernen.</p>
+                        <div id="entnahme-historie-liste"></div>
+                    </div>
+                </details>
 
                 <div class="entnahme-summary-card" style="margin-bottom:14px;">
                     <div class="entnahme-summary-grid">
@@ -662,25 +675,13 @@
                 <div class="entnahme-wizard-shell">
                     <section class="entnahme-card entnahme-step-panel active" data-entnahme-step-panel="1">
                         <h3 style="margin-top: 0;">Schritt 1 von 3: Wer war da?</h3>
-                        <p style="margin-top:0; color:#5f6b77;">Einfach Namen wählen oder eintippen, dann weiter.</p>
+                        <p style="margin-top:0; color:#5f6b77;">Nur eine Benutzer-Vorlage auswählen, dann weiter.</p>
                         <div class="form-group">
                             <label for="entnahme-benutzer-vorlage">Benutzer-Vorlage auswählen</label>
                             <select id="entnahme-benutzer-vorlage" onchange="entnahmeBenutzerVorlageAuswaehlen()"></select>
                         </div>
                         <div id="entnahme-benutzer-info" style="margin: 0 0 10px 0; padding: 10px 12px; background:#eef7ff; border:1px solid #d6eaf8; border-radius:8px; color:#24415a; line-height:1.4; font-size:0.92em;">Keine Benutzer-Vorlage ausgewählt.</div>
-                        <div class="entnahme-vorlagen-form">
-                            <div class="form-group">
-                                <label for="entnahme-name">Name</label>
-                                <input type="text" id="entnahme-name" placeholder="Vor- und Nachname" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
-                            </div>
-                            <div class="form-group">
-                                <label for="entnahme-kontakt">Kontakt optional</label>
-                                <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
-                            </div>
-                            <div style="display:flex; gap:10px; flex-wrap: wrap;">
-                                <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Benutzer-Vorlage speichern</button>
-                            </div>
-                        </div>
+                        <p style="margin:0; color:#5f6b77; font-size:0.92em;">Neue Personen legst du über <strong>Vorlagen verwalten</strong> an.</p>
                         <div class="entnahme-step-nav">
                             <button class="btn" style="background:#cfd9e3; color:#2c3e50; width:auto;" onclick="entnahmeWizardZurueck()" disabled>Zurück</button>
                             <button class="btn" style="background:#1f5f8b; width:auto;" onclick="entnahmeWizardWeiter()">Weiter</button>
@@ -689,18 +690,12 @@
 
                     <section class="entnahme-card entnahme-step-panel" data-entnahme-step-panel="2">
                         <h3 style="margin-top: 0;">Schritt 2 von 3: Welche Vorlage?</h3>
-                        <p style="margin-top:0; color:#5f6b77;">Vorlage auswählen, optional kurz benennen, dann weiter.</p>
+                        <p style="margin-top:0; color:#5f6b77;">Vorlage auswählen, dann weiter. Neue und bestehende Vorlagen bearbeitest du im Overlay.</p>
                         <div class="form-group">
                             <label for="entnahme-sammelvorlage">Sammel-Vorlage auswählen</label>
                             <select id="entnahme-sammelvorlage" onchange="entnahmeSammelvorlageAuswaehlen()"></select>
                         </div>
                         <div id="entnahme-sammel-info" style="margin: 0 0 10px 0; padding: 10px 12px; background:#f4ecff; border:1px solid #e6d9fb; border-radius:8px; color:#4a2c73; line-height:1.4; font-size:0.92em;">Keine Sammel-Vorlage ausgewählt.</div>
-                        <div class="entnahme-vorlagen-form" id="entnahme-sammel-panel" style="display:none; margin-top: 12px;">
-                            <div class="form-group">
-                                <label for="entnahme-sammelvorlagenname">Sammel-Vorlage benennen</label>
-                                <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
-                            </div>
-                        </div>
                         <div class="entnahme-step-nav">
                             <button class="btn" style="background:#cfd9e3; color:#2c3e50; width:auto;" onclick="entnahmeWizardZurueck()">Zurück</button>
                             <button class="btn" style="background:#1f5f8b; width:auto;" onclick="entnahmeWizardWeiter()">Weiter</button>
@@ -740,14 +735,59 @@
                         </div>
                     </section>
                 </div>
+            </div>
+        </div>
+    </div>
 
-                <details class="entnahme-accordion" style="margin-top: 14px;" id="entnahme-historie-panel">
-                    <summary>Aktuelle Entnahmen</summary>
-                    <div class="entnahme-accordion-body">
-                        <p style="margin-top: 0; color:#5f6b77;">Hier kannst du frühere Entnahmen laden, einzelne Positionen zurückgeben oder einen Vorgang ganz entfernen.</p>
-                        <div id="entnahme-historie-liste"></div>
+    <div id="vorlagenModal" class="modal" onclick="if (event.target === this) schliesseVorlagenOverlay()">
+        <div class="modal-content" style="max-width: 780px;">
+            <h2 style="margin-top:0; color:#2c3e50;">Vorlagen verwalten</h2>
+            <p style="margin-top:0; color:#5f6b77;">Die Auswahl erfolgt im Entnahme-Wizard. Hier erstellst oder bearbeitest du die gespeicherten Vorlagen.</p>
+
+            <div class="entnahme-grid" style="grid-template-columns: 1fr; gap: 16px;">
+                <section class="entnahme-card entnahme-vorlagen-form">
+                    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 12px;">
+                        <h3 style="margin:0; color:#2c3e50;">Benutzer-Vorlage</h3>
+                        <button class="btn" style="width:auto; background:#1f5f8b;" onclick="entnahmeBenutzerVorlageNeu()">Neue Benutzer-Vorlage</button>
                     </div>
-                </details>
+                    <div class="form-group">
+                        <label for="entnahme-benutzer-vorlage-bearbeiten">Bestehende Vorlage bearbeiten</label>
+                        <select id="entnahme-benutzer-vorlage-bearbeiten" onchange="entnahmeBenutzerVorlageZumBearbeitenAuswaehlen()"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entnahme-name">Name</label>
+                        <input type="text" id="entnahme-name" placeholder="Vor- und Nachname" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
+                    </div>
+                    <div class="form-group">
+                        <label for="entnahme-kontakt">Kontakt optional</label>
+                        <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
+                    </div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+                        <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Speichern</button>
+                    </div>
+                </section>
+
+                <section class="entnahme-card entnahme-vorlagen-form" id="entnahme-sammel-panel" style="display:none;">
+                    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 12px;">
+                        <h3 style="margin:0; color:#2c3e50;">Sammel-Vorlage</h3>
+                        <button class="btn" style="width:auto; background:#1f5f8b;" onclick="entnahmeSammelvorlageNeu()">Neue Sammel-Vorlage</button>
+                    </div>
+                    <div class="form-group">
+                        <label for="entnahme-sammelvorlage-bearbeiten">Bestehende Vorlage bearbeiten</label>
+                        <select id="entnahme-sammelvorlage-bearbeiten" onchange="entnahmeSammelvorlageZumBearbeitenAuswaehlen()"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entnahme-sammelvorlagenname">Sammel-Vorlage benennen</label>
+                        <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
+                    </div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+                        <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Speichern</button>
+                    </div>
+                </section>
+            </div>
+
+            <div class="flex-buttons" style="justify-content:flex-end; margin-top: 18px;">
+                <button class="btn btn-cancel" type="button" style="width:auto;" onclick="schliesseVorlagenOverlay()">Schließen</button>
             </div>
         </div>
     </div>
