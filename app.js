@@ -424,6 +424,153 @@ function werteMengeAus(eingabe) {
     } catch (e) { return 0; }
 }
 
+const BESTAND_STRICH_AUSREICHEND = -2;
+const BESTAND_STRICH_NACHKAUF = -3;
+
+function aktualisiereMengeEingabeFarbe(feld) {
+    if (!feld) return;
+
+    const wert = String(feld.value ?? '').trim();
+    feld.classList.remove('bestand-menge-ok', 'bestand-menge-low');
+
+    if (!wert || wert === '-' || wert === '∞') {
+        return;
+    }
+
+    const menge = werteMengeAus(wert);
+    if (!Number.isFinite(menge)) return;
+
+    feld.classList.add(menge > 0 ? 'bestand-menge-ok' : 'bestand-menge-low');
+}
+
+function bestandEingabeGeaendert(feld) {
+    const row = feld?.closest('.lagerort-row, .edit-ort-row');
+    if (!row || !feld) return;
+
+    const wert = String(feld.value ?? '').trim();
+    const infBtn = row.querySelector('.bestand-btn-inf');
+    const minusBtn = row.querySelector('.bestand-btn-minus');
+    const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
+    const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
+
+    if (wert === '∞') {
+        row.dataset.stockMode = 'inf';
+        row.dataset.nachkauf = 'false';
+        if (nachkaufCheckbox) nachkaufCheckbox.checked = false;
+        if (nachkaufWrap) nachkaufWrap.style.display = 'none';
+    } else if (wert === '-') {
+        row.dataset.stockMode = nachkaufCheckbox?.checked ? 'strich-warn' : 'strich-ok';
+        if (nachkaufWrap) nachkaufWrap.style.display = 'flex';
+    } else {
+        row.dataset.stockMode = 'zahl';
+        row.dataset.nachkauf = 'false';
+        if (nachkaufCheckbox) nachkaufCheckbox.checked = false;
+        if (nachkaufWrap) nachkaufWrap.style.display = 'none';
+    }
+
+    if (infBtn) {
+        infBtn.classList.toggle('active-inf', row.dataset.stockMode === 'inf');
+        infBtn.style.background = row.dataset.stockMode === 'inf' ? '#27ae60' : '#95a5a6';
+    }
+
+    if (minusBtn) {
+        const minusAktiv = row.dataset.stockMode === 'strich-ok';
+        const minusWarn = row.dataset.stockMode === 'strich-warn';
+        minusBtn.classList.toggle('active-minus-ok', minusAktiv);
+        minusBtn.classList.toggle('active-minus-warn', minusWarn);
+        minusBtn.style.background = minusWarn ? '#c0392b' : (minusAktiv ? '#27ae60' : '#95a5a6');
+    }
+
+    aktualisiereMengeEingabeFarbe(feld);
+}
+
+function leseBestandswertAusZeile(row) {
+    const input = row?.querySelector('input');
+    const status = row?.dataset?.stockMode || 'zahl';
+    const rawValue = String(input?.value ?? '').trim();
+
+    if (status === 'inf' || rawValue === '∞') return -1;
+    if (status === 'strich-warn') return BESTAND_STRICH_NACHKAUF;
+    if (status === 'strich-ok' || rawValue === '-') {
+        return BESTAND_STRICH_AUSREICHEND;
+    }
+
+    return werteMengeAus(rawValue);
+}
+
+function setzeBestandStatus(row, status = 'zahl', nachkauf = false) {
+    if (!row) return;
+
+    const input = row.querySelector('.new-menge, .edit-menge-input');
+    const infBtn = row.querySelector('.bestand-btn-inf');
+    const minusBtn = row.querySelector('.bestand-btn-minus');
+    const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
+    const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
+    const normStatus = ['zahl', 'inf', 'strich-ok', 'strich-warn'].includes(status) ? status : 'zahl';
+    const isStrich = normStatus === 'strich-ok' || normStatus === 'strich-warn';
+
+    row.dataset.stockMode = isStrich ? (normStatus === 'strich-warn' ? 'strich-warn' : 'strich-ok') : normStatus;
+    row.dataset.nachkauf = isStrich && nachkauf ? 'true' : 'false';
+
+    if (nachkaufCheckbox) nachkaufCheckbox.checked = Boolean(isStrich && nachkauf);
+    if (nachkaufWrap) nachkaufWrap.style.display = isStrich ? 'flex' : 'none';
+
+    if (input) {
+        if (normStatus === 'zahl') {
+            input.value = input.getAttribute('data-old-value') || (input.value === '∞' || input.value === '-' ? '0' : input.value || '0');
+        } else if (normStatus === 'inf') {
+            if (input.value !== '∞') input.setAttribute('data-old-value', input.value || '0');
+            input.value = '∞';
+        } else {
+            if (input.value !== '-') input.setAttribute('data-old-value', input.value || '0');
+            input.value = '-';
+        }
+        input.disabled = false;
+        aktualisiereMengeEingabeFarbe(input);
+    }
+
+    if (infBtn) {
+        infBtn.classList.toggle('active-inf', normStatus === 'inf');
+        infBtn.style.background = normStatus === 'inf' ? '#27ae60' : '#95a5a6';
+    }
+
+    if (minusBtn) {
+        minusBtn.classList.toggle('active-minus-ok', normStatus === 'strich-ok' && !nachkauf);
+        minusBtn.classList.toggle('active-minus-warn', normStatus === 'strich-warn' || (normStatus === 'strich-ok' && nachkauf));
+        minusBtn.style.background = (normStatus === 'strich-warn' || (normStatus === 'strich-ok' && nachkauf)) ? '#c0392b' : (normStatus === 'strich-ok' ? '#27ae60' : '#95a5a6');
+    }
+}
+
+function toggleBestandInf(btn) {
+    const row = btn?.closest('.lagerort-row, .edit-ort-row');
+    if (!row) return;
+
+    const current = row.dataset.stockMode || 'zahl';
+    setzeBestandStatus(row, current === 'inf' ? 'zahl' : 'inf', false);
+}
+
+function toggleBestandMinus(btn) {
+    const row = btn?.closest('.lagerort-row, .edit-ort-row');
+    if (!row) return;
+
+    const current = row.dataset.stockMode || 'zahl';
+    const nextStatus = current.startsWith('strich') ? 'zahl' : 'strich-ok';
+    setzeBestandStatus(row, nextStatus, row.dataset.nachkauf === 'true');
+}
+
+function toggleNachkaufCheckbox(checkbox) {
+    const row = checkbox?.closest('.lagerort-row, .edit-ort-row');
+    if (!row) return;
+
+    const current = row.dataset.stockMode || 'zahl';
+    if (!current.startsWith('strich')) {
+        checkbox.checked = false;
+        return;
+    }
+
+    setzeBestandStatus(row, checkbox.checked ? 'strich-warn' : 'strich-ok', checkbox.checked);
+}
+
 function gibFormularLink() {
     const url = new URL(window.location.href);
     url.search = '';
@@ -1795,16 +1942,8 @@ function openModal() {
     firstInput.value = '0';
     firstInput.disabled = false;
     firstInput.removeAttribute('data-old-value'); 
-    
-    const firstBtnInf = firstRow.querySelector('.btn-inf');
-    firstBtnInf.style.background = '#95a5a6';
-    firstBtnInf.setAttribute('data-active', 'false'); 
-
-    const firstBtnStrich = firstRow.querySelector('.btn-strich');
-    if(firstBtnStrich) {
-        firstBtnStrich.style.background = '#95a5a6';
-        firstBtnStrich.setAttribute('data-active', 'false');
-    }
+    aktualisiereMengeEingabeFarbe(firstInput);
+    setzeBestandStatus(firstRow, 'zahl');
 
     const firstSelect = firstRow.querySelector('.new-ort');
     const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
@@ -1824,16 +1963,8 @@ function addOrtRow() {
     input.value = '0';
     input.disabled = false;
     input.removeAttribute('data-old-value'); 
-    
-    const btnInf = newRow.querySelector('.btn-inf');
-    btnInf.style.background = '#95a5a6';
-    btnInf.setAttribute('data-active', 'false'); 
-
-    const btnStrich = newRow.querySelector('.btn-strich');
-    if(btnStrich) {
-        btnStrich.style.background = '#95a5a6';
-        btnStrich.setAttribute('data-active', 'false');
-    }
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(newRow, 'zahl');
 
     const newSelect = newRow.querySelector('.new-ort');
     const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
@@ -2252,6 +2383,8 @@ function tabelleAktualisieren(daten) {
                 dateStr = latestDate.toLocaleDateString('de-DE') + " " + latestDate.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + " Uhr";
             }
             let isInfinite = gruppe.bestaende.some(b => Number(b.menge) === -1);
+            let hatNachkaufMarkierung = gruppe.bestaende.some(b => Number(b.menge) === -3);
+            let hatMinusBestand = gruppe.bestaende.some(b => Number(b.menge) === -2 || Number(b.menge) === -3);
             let resHtml = '';
             const resInfo = reservierungenDetails[artId];
             if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
@@ -2271,26 +2404,33 @@ function tabelleAktualisieren(daten) {
             let bestandInfoHtml = "";
             const einheit = gruppe.artikel.einheit || 'Stück';
             const verfuegbarkeit = berechneArtikelVerfuegbarkeit(artId, gruppe.bestaende);
-            const verfuegbarkeitLabel = verfuegbarkeit === '∞' || verfuegbarkeit === '-'
-                ? verfuegbarkeit
-                : `${verfuegbarkeit}`;
-            const verfuegbarkeitFarbe = verfuegbarkeit === '∞'
-                ? '#7f8c8d'
-                : (Number(verfuegbarkeit) > 0 ? '#27ae60' : '#c0392b');
+            const verfuegbarkeitFarbe = hatNachkaufMarkierung
+                ? '#c0392b'
+                : (hatMinusBestand ? '#27ae60' : (verfuegbarkeit === '∞' ? '#7f8c8d' : (Number(verfuegbarkeit) > 0 ? '#27ae60' : '#c0392b')));
+            const verfuegbarkeitWert = hatNachkaufMarkierung
+                ? 'Nachkaufen'
+                : (hatMinusBestand ? 'Verfügbar' : (verfuegbarkeit === '∞' ? '∞' : `${verfuegbarkeit}`));
+            const nachkaufHinweis = hatNachkaufMarkierung
+                ? '<div style="margin-top: 4px; color: #c0392b; font-size: 0.8em; font-weight: bold;">Nachkaufen</div>'
+                : (hatMinusBestand ? '<div style="margin-top: 4px; color: #27ae60; font-size: 0.8em; font-weight: bold;">Verfügbar</div>' : '');
 
             gruppe.bestaende.forEach(b => {
                 const isInfLocal = (Number(b.menge) === -1);
                 const isStrichLocal = (Number(b.menge) === -2);
+                const isStrichNachkaufLocal = (Number(b.menge) === -3);
                 let mengeZelle = "";
                 
                 if (isInfLocal) {
                     mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small style="color: #888; font-size: 0.8em; margin-left: 3px;">${einheit}</small>`;
-                } else if (isStrichLocal) {
-                    mengeZelle = `<span style="font-size: 1.4em; color: #7f8c8d; font-weight: bold;" title="Ohne Wert / Nicht zutreffend">-</span>`;
+                } else if (isStrichLocal || isStrichNachkaufLocal) {
+                    const strichStatus = isStrichNachkaufLocal ? 'warn' : 'ok';
+                    const strichTitle = isStrichNachkaufLocal ? 'Nachkauf erforderlich' : 'Ausreichend vorhanden';
+                    mengeZelle = `<span class="bestand-status-pill ${strichStatus}" title="${strichTitle}">-</span>`;
                 } else {
+                    const wertKlasse = Number(b.menge) > 0 ? 'bestand-menge-ok' : 'bestand-menge-low';
                     mengeZelle = `
                         <div style="display: flex; align-items: center; gap: 5px; justify-content: flex-end;">
-                            <input type="text" id="menge-${b.id}" class="menge-input" value="${b.menge}" onchange="speichereMenge(${b.id})" style="width: 60px;">
+                            <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${wertKlasse}" value="${b.menge}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width: 60px;">
                             <small style="color: #888; font-size: 0.8em; width: 45px; text-align: left;">${einheit}</small>
                         </div>`;
                 }
@@ -2312,10 +2452,11 @@ function tabelleAktualisieren(daten) {
                 <td colspan="2" style="vertical-align: top;">
                     <div style="display: flex; flex-direction: column; gap: 6px;">
                         ${bestandInfoHtml}
-                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 2px; font-size: 0.82em; line-height: 1.2; font-family: inherit;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-top: 2px; font-size: 0.82em; line-height: 1.2; font-family: inherit;">
                             ${resHtml ? '<div>' + resHtml + '</div>' : ''}
-                            <div style="min-width: 120px; display: flex; justify-content: flex-start; color: ${verfuegbarkeitFarbe}; white-space: nowrap; font-size: inherit; font-family: inherit; font-weight: normal;">
-                                Verfügbar: <strong>${verfuegbarkeitLabel}</strong>
+                            <div style="min-width: 120px; display: flex; flex-direction: column; justify-content: flex-start; color: ${verfuegbarkeitFarbe}; white-space: nowrap; font-size: inherit; font-family: inherit; font-weight: normal; text-align: left;">
+                                ${hatNachkaufMarkierung ? '' : (hatMinusBestand ? '' : `Verfügbar: <strong>${verfuegbarkeitWert}</strong>`)}
+                                ${nachkaufHinweis}
                             </div>
                         </div>
                     </div>
@@ -2357,6 +2498,7 @@ function toggleEditMode() {
 }
 
 function toggleRowInfinite(btn) {
+    const row = btn.closest('.lagerort-row, .edit-ort-row');
     const input = btn.parentElement.querySelector('input');
     const strichBtn = btn.parentElement.querySelector('.btn-strich');
     const isInfinite = btn.getAttribute('data-active') === 'true';
@@ -2372,30 +2514,47 @@ function toggleRowInfinite(btn) {
         input.disabled = true;
         btn.style.background = '#27ae60';
         btn.setAttribute('data-active', 'true');
+
+        if (row) setzeStrichStatusDarstellung(row, row.dataset.strichStatus || 'ok', false);
         
         if(strichBtn && strichBtn.getAttribute('data-active') === 'true') toggleRowStrich(strichBtn);
     }
 }
 
 function toggleRowStrich(btn) {
+    const row = btn.closest('.lagerort-row, .edit-ort-row');
     const input = btn.parentElement.querySelector('input');
     const infBtn = btn.parentElement.querySelector('.btn-inf');
     const isStrich = btn.getAttribute('data-active') === 'true';
+    const currentStatus = row?.dataset?.strichStatus || 'ok';
 
     if (isStrich) {
         input.disabled = false;
         input.value = input.getAttribute('data-old-value') || '0';
         btn.style.background = '#95a5a6';
         btn.setAttribute('data-active', 'false');
+        if (row) setzeStrichStatusDarstellung(row, currentStatus, false);
+        aktualisiereMengeEingabeFarbe(input);
     } else {
         if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
         input.value = '-';
         input.disabled = true;
-        btn.style.background = '#7f8c8d' ;
         btn.setAttribute('data-active', 'true');
+        if (row) setzeStrichStatusDarstellung(row, currentStatus, true);
         
         if(infBtn && infBtn.getAttribute('data-active') === 'true') toggleRowInfinite(infBtn);
     }
+}
+
+function toggleRowStrichStatus(btn) {
+    const row = btn.closest('.lagerort-row, .edit-ort-row');
+    if (!row) return;
+
+    const strichBtn = row.querySelector('.btn-strich');
+    if (!strichBtn || strichBtn.getAttribute('data-active') !== 'true') return;
+
+    const nextStatus = (row.dataset.strichStatus || 'ok') === 'warn' ? 'ok' : 'warn';
+    setzeStrichStatusDarstellung(row, nextStatus, true);
 }
 
 function addEditOrtRow(data = null) {
@@ -2419,31 +2578,42 @@ function addEditOrtRow(data = null) {
     
     let displayVal = '0';
     let hiddenOldVal = '0'; 
+    let statusValue = 'zahl';
     
     if (data) {
         if (data.menge == -1) displayVal = '∞';
-        else if (data.menge == -2) displayVal = '-';
+        else if (data.menge == -2) {
+            displayVal = '-';
+            statusValue = 'strich-ok';
+        }
+        else if (data.menge == -3) {
+            displayVal = '-';
+            statusValue = 'strich-warn';
+        }
         else displayVal = data.menge;
         
         hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge < 0 ? '0' : data.menge);
     }
 
-    const isInf = (displayVal === '∞');
-    const isStrich = (displayVal === '-');
-    const btnColorInf = isInf ? '#27ae60' : '#95a5a6'; 
-    const btnColorStrich = isStrich ? '#7f8c8d' : '#95a5a6'; 
-
     div.innerHTML = `
-        <select class="edit-ort-select" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
-        
-        <div style="flex: 1; display: flex; gap: 4px;">
-            <input type="text" class="edit-menge-input" value="${displayVal}" data-old-value="${hiddenOldVal}" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;" ${(isInf || isStrich) ? 'disabled' : ''}>
-            <button type="button" class="btn btn-inf" style="background: ${btnColorInf}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" data-active="${isInf}" onclick="toggleRowInfinite(this)">∞</button>
-            <button type="button" class="btn btn-strich" style="background: ${btnColorStrich}; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Ohne Bestand umschalten" data-active="${isStrich}" onclick="toggleRowStrich(this)">-</button>
+        <div class="bestand-row-stack" style="width: 100%;">
+            <select class="edit-ort-select" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
+            
+            <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${hiddenOldVal}" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
+                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
+                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleBestandMinus(this)">-</button>
+            </div>
+
+            <label class="bestand-nachkauf-wrap">
+                <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
+                <span>Auf Nachkaufen setzen</span>
+            </label>
         </div>
 
         <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeEditRow(this)">🗑️</button>
     `;
+    setzeBestandStatus(div, statusValue, statusValue === 'strich-warn');
     wrapper.appendChild(div);
 }
 
@@ -2498,10 +2668,9 @@ async function speichereBearbeitung() {
         document.querySelectorAll('.edit-ort-row').forEach(row => {
             const oid = row.querySelector('.edit-ort-select').value;
             const input = row.querySelector('.edit-menge-input');
-            const mRaw = input.value;
             
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
-            const menge = (mRaw === '∞') ? -1 : (mRaw === '-') ? -2 : werteMengeAus(mRaw);
+            const menge = leseBestandswertAusZeile(row);
             
             const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
             
@@ -2541,6 +2710,7 @@ async function speichereMenge(bId) {
     }
     
     f.value = neueMenge === -2 ? '-' : neueMenge; 
+    aktualisiereMengeEingabeFarbe(f);
     f.style.backgroundColor = '#fff3cd'; 
 
     const aktuellesDatum = new Date().toISOString();
@@ -2582,10 +2752,9 @@ async function artikelAnlegen() {
         rows.forEach(row => {
             const ortSelect = row.querySelector('.new-ort').value;
             const input = row.querySelector('.new-menge');
-            const mRaw = input.value;
             
             const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
-            const menge = (mRaw === '∞') ? -1 : (mRaw === '-') ? -2 : werteMengeAus(mRaw);
+            const menge = leseBestandswertAusZeile(row);
             const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
             
             bestandInserts.push({ 
@@ -2773,7 +2942,7 @@ function zeigePackliste() {
                 }
             }
         } else {
-            anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigener)</small>";
+            anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigener Posten)</small>";
             statusHtml = `<span style="color:#7f8c8d;">- Manuell prüfen -</span>`;
         }
 
@@ -2961,11 +3130,14 @@ function startEinkaufsliste() {
     manuelleEintraegeListe = [];
 
     let artikelBestand = {};
-    let artikelIgnorieren = new Set();
+    let nachkaufMarkierteArtikel = new Set();
     
     aktuelleDaten.forEach(b => {
-        if (Number(b.menge) === -1 || Number(b.menge) === -2) {
-            artikelIgnorieren.add(b.artikel_id);
+        const menge = Number(b.menge);
+        if (menge === -3) {
+            nachkaufMarkierteArtikel.add(String(b.artikel_id));
+        } else if (menge === -1 || menge === -2) {
+            // unbelegte Werte tauchen nicht im verfügbaren Lagerbestand auf
         } else if (Number(b.menge) >= 0) {
             artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
         }
@@ -2989,16 +3161,38 @@ function startEinkaufsliste() {
     ulAuto.innerHTML = '';
     if (ulEigene) ulEigene.innerHTML = '';
 
+    function fuegeAutoFehlbestandHinzu(artikel, menge, grund) {
+        const bestehenderEintrag = autoFehlbestandListe.find(item => item.artikel === artikel);
+        if (bestehenderEintrag) {
+            bestehenderEintrag.menge += menge;
+            if (grund && !String(bestehenderEintrag.grund || '').includes(grund)) {
+                bestehenderEintrag.grund = `${bestehenderEintrag.grund} / ${grund}`;
+            }
+        } else {
+            autoFehlbestandListe.push({ artikel: artikel, menge: menge, grund: grund });
+        }
+    }
+
     alleArtikelInfos.forEach(art => {
-        let bestand = artikelBestand[art.id] || 0;
+        let bestand = nachkaufMarkierteArtikel.has(String(art.id)) ? 0 : (artikelBestand[art.id] || 0);
         let bedarf = artikelBedarf[art.id] || 0;
-        
-        if (bedarf > bestand && !artikelIgnorieren.has(art.id)) {
+
+        if (nachkaufMarkierteArtikel.has(String(art.id))) {
+            const fehlMenge = Math.max(1, bedarf);
+            fuegeAutoFehlbestandHinzu(art.name, fehlMenge, bedarf > 0 ? 'Nachkauf markiert' : 'Nachkauf markiert');
+        } else if (bedarf > bestand) {
             let fehlMenge = bedarf - bestand;
-            autoFehlbestandListe.push({ artikel: art.name, menge: fehlMenge, grund: 'Fehlt im Lager' });
-            ulAuto.innerHTML += `<li>${fehlMenge}x ${art.name}</li>`;
+            fuegeAutoFehlbestandHinzu(art.name, fehlMenge, 'Fehlt im Lager');
         }
     });
+
+    if (ulAuto) {
+        if (autoFehlbestandListe.length === 0) {
+            ulAuto.innerHTML = '<li style="color:#27ae60;">Alles grün! Das Lager deckt alle Listen ab.</li>';
+        } else {
+            ulAuto.innerHTML = autoFehlbestandListe.map(item => `<li>${item.menge}x ${item.artikel}</li>`).join('');
+        }
+    }
 
     for (let name in eigeneGegenstaende) {
         eigeneVorschlaegeListe.push({ artikel: name, menge: eigeneGegenstaende[name], grund: 'Sonderposten Packliste' });
@@ -3021,10 +3215,6 @@ function startEinkaufsliste() {
     }
 
     aktualisiereEinkaufslisteAuswahl();
-
-    if (autoFehlbestandListe.length === 0 && eigeneVorschlaegeListe.length === 0) {
-        ulAuto.innerHTML = '<li style="color:#27ae60;">Alles grün! Das Lager deckt alle Listen ab.</li>';
-    }
 
     document.getElementById('manuell-kauf-liste').innerHTML = '';
     document.getElementById('kauflisteModal').style.display = 'block';

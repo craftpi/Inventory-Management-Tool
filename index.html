@@ -28,7 +28,23 @@
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
         th { background-color: #3498db; color: white; }
         
-        .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+        .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; transition: color 0.2s, background-color 0.2s, border-color 0.2s; }
+        .bestand-menge-input.bestand-menge-ok { color: #1f7a37; background: #edf8f0; border-color: #8fd0a3; }
+        .bestand-menge-input.bestand-menge-low { color: #b42318; background: #fff1f0; border-color: #f2b4ae; }
+        .bestand-status-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 58px; padding: 6px 12px; border-radius: 999px; font-weight: bold; font-size: 0.92em; line-height: 1; }
+        .bestand-status-pill.ok { background: #27ae60; color: #fff; }
+        .bestand-status-pill.warn { background: #c0392b; color: #fff; }
+        .bestand-row-stack { display: grid; gap: 8px; }
+        .bestand-action-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .bestand-mode-btn { min-width: 130px; }
+        .bestand-mode-btn.active-inf { background: #27ae60 !important; color: #fff; }
+        .bestand-mode-btn.active-minus-ok { background: #27ae60 !important; color: #fff; }
+        .bestand-mode-btn.active-minus-warn { background: #c0392b !important; color: #fff; }
+        .bestand-nachkauf-wrap { display: none; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: #fff1f0; border: 1px solid #f2b4ae; }
+        .bestand-nachkauf-wrap input { width: 18px; height: 18px; accent-color: #c0392b; }
+        .bestand-form-quantity { min-width: 150px; max-width: 200px; height: 46px; }
+        .bestand-action-row { align-items: stretch; }
+        .bestand-action-row > * { height: 46px; box-sizing: border-box; }
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
         .sub-sum-badge { font-size: 0.75em; background: #7f8c8d; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; font-weight: normal; }
         
@@ -551,7 +567,7 @@
     <span style="vertical-align: middle;">Letzte Änderung: <strong id="hover-date-text"></strong></span>
 </div>
 
-<div id="hover-res-info" style="display: none; position: fixed; bottom: 20px; right: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3); line-height: 1.5;">
+<div id="hover-res-info" style="display: none; position: fixed; bottom: 20px; right: 20px; background-color: rgb(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgb(0,0,0,0.3); line-height: 1.5;">
     <span style="font-size: 1.2em; vertical-align: top; margin-right: 5px;">📦</span> 
     <span style="vertical-align: top; display: inline-block;" id="hover-res-text"></span>
 </div>
@@ -598,8 +614,8 @@
     <div id="entnahme-ansicht" style="display:none; padding: 30px 0;">
         <div class="entnahme-page">
             <div class="entnahme-hero">
-                <h1>📋 Entnahme schnell anlegen</h1>
-                <p class="survey-note">In drei kurzen Schritten durchklicken, Material wählen und fertig.</p>
+                <h1>📋 Entnahme anlegen</h1>
+                <p class="survey-note">Diese drei Schritte legen ein Entnahme-Protokoll an.</p>
                 <div class="entnahme-hero-line">
                     <span class="entnahme-hero-pill">1. Person wählen</span>
                     <span class="entnahme-hero-pill">2. Vorlage wählen</span>
@@ -906,15 +922,21 @@
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
         <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Start-Mengen:</p>
         <div id="new-orte-wrapper">
-            <div class="form-group lagerort-row" style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
-                <select class="new-ort" style="flex: 2; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
-                
-                <div style="flex: 1; display: flex; gap: 4px;">
-                    <input type="text" class="new-menge" value="0" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; text-align: center;">
-                    <button type="button" class="btn btn-inf" style="background: #95a5a6; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleRowInfinite(this)">∞</button>
-                    <button type="button" class="btn btn-strich" style="background: #95a5a6; padding: 8px 12px; width: auto; min-width: 40px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleRowStrich(this)">-</button>
+                <div class="form-group lagerort-row" style="display: grid; gap: 8px; margin-bottom: 8px;">
+                    <select class="new-ort" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
+                    
+                    <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
+                        <input type="text" class="new-menge bestand-menge-input bestand-form-quantity" value="0" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
+                        <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
+                        <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleBestandMinus(this)">-</button>
+                    </div>
+
+                    <label class="bestand-nachkauf-wrap">
+                        <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
+                        <span>Auf Nachkaufen setzen</span>
+                    </label>
                 </div>
-                <button type="button" class="btn" style="background-color: #3498db; padding: 8px 12px; width: auto; min-width: 40px;" onclick="addOrtRow()" title="Weiteren Ort hinzufügen">➕</button>
+                <button type="button" class="btn" style="background-color: #3498db; padding: 8px 12px; width: auto; min-width: 40px; margin-top: 2px;" onclick="addOrtRow()" title="Weiteren Ort hinzufügen">➕</button>
             </div>
         </div>
         
@@ -1016,7 +1038,7 @@
             <div id="pack-artikel-info" style="margin-top: 5px; font-size: 0.9em; font-weight: bold;"></div>
         </div>
         <div class="form-group" id="div-pack-custom" style="display:none;">
-            <label>Bezeichnung (Eigener)</label>
+            <label>Bezeichnung (Eigener Posten)</label>
             <input type="text" id="pack-eigener-name" placeholder="z.B. Miet-Transporter">
         </div>
         <div class="form-group">
