@@ -1291,7 +1291,7 @@ function fillEntnahmeVorlagenDropdowns() {
 
     if (benutzerEditSelect) {
         const current = benutzerEditSelect.value;
-        benutzerEditSelect.innerHTML = '<option value="">-- Vorlage bearbeiten --</option>';
+        benutzerEditSelect.innerHTML = '<option value="">-- Neuer Benutzer --</option>';
         entnahmeBenutzerVorlagen
             .slice()
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
