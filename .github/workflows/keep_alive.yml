@@ -6,8 +6,13 @@ on:
   workflow_dispatch: # Erlaubt manuelles Starten
 
 jobs:
-  ping:
+  keep-alive:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase URL
-        run: curl -I https://frrfjpnrewwlgfqtgjqg.supabase.co
+      - name: Führe einen Ping auf der Supabase-Datenbank aus
+        env:
+          # Wir laden die Datenbank-URL aus den sicheren GitHub Secrets
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        # psql ist auf 'ubuntu-latest' standardmäßig installiert
+        # Wir verbinden uns und führen "SELECT 1;" aus, um Aktivität zu erzeugen
+        run: psql "$SUPABASE_DB_URL" -c "SELECT 1;"
