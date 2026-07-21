@@ -414,13 +414,77 @@ function hideResHover() {
     if (box) box.style.display = 'none';
 }
 
+// Sicherer Mini-Parser für einfache Mengen-Rechnungen wie "3+2" oder "(4-1)*2".
+// Bewertet NUR Zahlen und + - * / ( ), ohne new Function()/eval() – es kann also
+// niemals beliebiger JavaScript-Code ausgeführt werden, egal was eingegeben wird.
+function berechneMengenAusdruck(ausdruck) {
+    let pos = 0;
+
+    function fehler() { throw new Error('Ungültiger Ausdruck'); }
+
+    function parseZahl() {
+        let start = pos;
+        while (pos < ausdruck.length && /[0-9.]/.test(ausdruck[pos])) pos++;
+        if (pos === start) fehler();
+        const wert = parseFloat(ausdruck.slice(start, pos));
+        if (Number.isNaN(wert)) fehler();
+        return wert;
+    }
+
+    function parseKlammerOderZahl() {
+        if (ausdruck[pos] === '(') {
+            pos++;
+            const wert = parseAusdruck();
+            if (ausdruck[pos] !== ')') fehler();
+            pos++;
+            return wert;
+        }
+        if (ausdruck[pos] === '-') {
+            pos++;
+            return -parseKlammerOderZahl();
+        }
+        if (ausdruck[pos] === '+') {
+            pos++;
+            return parseKlammerOderZahl();
+        }
+        return parseZahl();
+    }
+
+    function parseTerm() {
+        let wert = parseKlammerOderZahl();
+        while (ausdruck[pos] === '*' || ausdruck[pos] === '/') {
+            const op = ausdruck[pos];
+            pos++;
+            const rechts = parseKlammerOderZahl();
+            wert = op === '*' ? wert * rechts : wert / rechts;
+        }
+        return wert;
+    }
+
+    function parseAusdruck() {
+        let wert = parseTerm();
+        while (ausdruck[pos] === '+' || ausdruck[pos] === '-') {
+            const op = ausdruck[pos];
+            pos++;
+            const rechts = parseTerm();
+            wert = op === '+' ? wert + rechts : wert - rechts;
+        }
+        return wert;
+    }
+
+    const ergebnis = parseAusdruck();
+    if (pos !== ausdruck.length) fehler();
+    return ergebnis;
+}
+
 function werteMengeAus(eingabe) {
     if (eingabe === undefined || eingabe === null) return 0;
     const saubererString = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
     if (saubererString === '') return 0;
     try {
-        const ergebnis = new Function('return ' + saubererString)();
-        return Math.round(ergebnis); 
+        const ergebnis = berechneMengenAusdruck(saubererString);
+        if (!Number.isFinite(ergebnis)) return 0;
+        return Math.round(ergebnis);
     } catch (e) { return 0; }
 }
 
@@ -1922,7 +1986,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const { data: { session } } = await dbClient.auth.getSession();
-    if (session) { document.getElementById('login-overlay').style.display = 'none'; ladeAlles(); } 
+    if (session) { document.getElementById('login-overlay').style.display = 'none'; ladeAlles(); pruefeUndZeigeOnboarding(); } 
     else { document.getElementById('login-overlay').style.display = 'flex'; }
 });
 
@@ -1933,12 +1997,32 @@ dbClient.auth.onAuthStateChange(async (event, session) => {
         await initEntnahmeModus();
         return;
     }
-    if (event === 'SIGNED_IN') { overlay.style.display = 'none'; showToast('Erfolgreich angemeldet!'); ladeAlles(); } 
+    if (event === 'SIGNED_IN') { overlay.style.display = 'none'; showToast('Erfolgreich angemeldet!'); ladeAlles(); pruefeUndZeigeOnboarding(); } 
     else if (event === 'SIGNED_OUT') {
         overlay.style.display = 'flex';
         document.getElementById('lager-tabelle').innerHTML = ''; 
     }
 });
+
+const ONBOARDING_STORAGE_KEY = 'lager_onboarding_v1_gesehen';
+
+function pruefeUndZeigeOnboarding() {
+    try {
+        if (window.localStorage.getItem(ONBOARDING_STORAGE_KEY)) return;
+    } catch (e) { /* localStorage evtl. nicht verfügbar, dann einfach anzeigen */ }
+    oeffneOnboarding();
+}
+
+function oeffneOnboarding() {
+    const modal = document.getElementById('onboardingModal');
+    if (modal) modal.style.display = 'block';
+}
+
+function schliesseOnboarding() {
+    const modal = document.getElementById('onboardingModal');
+    if (modal) modal.style.display = 'none';
+    try { window.localStorage.setItem(ONBOARDING_STORAGE_KEY, '1'); } catch (e) { /* ignorieren */ }
+}
 
 async function handleLogin() {
     const p = document.getElementById('login-password').value;
@@ -2286,7 +2370,7 @@ function tabelleAktualisieren(daten) {
         headerTr.innerHTML = `
             <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px; user-select: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>${icon} ${katName}</span>
+                    <span>${icon} ${escapeHtml(katName)}</span>
                     <span class="summen-badge">Gesamt: ${summenAnzeige}</span>
                 </div>
             </td>
@@ -2373,7 +2457,7 @@ function tabelleAktualisieren(daten) {
                 subGroupTr.innerHTML = `
                     <td colspan="3" style="padding-left: 25px; background: #fafafa; color: #7f8c8d; font-size: 0.85em; font-weight: bold; border-bottom: 1px dashed #ddd; user-select: none;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>🏷️ ${prefix}</span>
+                            <span>🏷️ ${escapeHtml(prefix)}</span>
                             <span class="sub-sum-badge">Gesamt: ${pSumAnzeige}</span>
                         </div>
                     </td>`;
@@ -2432,8 +2516,8 @@ function tabelleAktualisieren(daten) {
             if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
                 let hoverText = "<strong>Reserviert für:</strong><br>";
                 for (const [lName, lMenge] of Object.entries(resInfo.listen)) {
-                    const safeLName = lName.replace(/'/g, "´").replace(/"/g, "´´");
-                    hoverText += `• ${lMenge}x in <i>${safeLName}</i><br>`;
+                    const safeLName = escapeHtml(lName);
+                    hoverText += `• ${Number(lMenge) || 0}x in <i>${safeLName}</i><br>`;
                 }
                 resHtml = `<div class="no-select" style="font-size: 0.82em; color: #d35400; font-weight: normal; cursor: help; display: inline-flex; align-items: center; white-space: nowrap;"
                     data-hover-type="res" data-hover-content="${hoverText}"
@@ -2479,7 +2563,7 @@ function tabelleAktualisieren(daten) {
 
                 bestandInfoHtml += `
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;">
-                        <span style="font-size: 0.9em; color: #666;">📍 ${b.lagerorte.name}</span>
+                        <span style="font-size: 0.9em; color: #666;">📍 ${escapeHtml(b.lagerorte.name)}</span>
                         ${mengeZelle}
                     </div>`;
             });
@@ -2489,7 +2573,7 @@ function tabelleAktualisieren(daten) {
                     data-hover-type="date" data-hover-content="${dateStr}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
-                    ${iconLabel} <strong>${displayName}</strong>${wichtigBadge}${kommentarIcon}
+                    ${iconLabel} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}
                 </td>
                 <td colspan="2" style="vertical-align: top;">
                     <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -2615,7 +2699,7 @@ function addEditOrtRow(data = null) {
         else if (!data && defaultOrt && o.id == defaultOrt.id) {
             isSelected = true;
         }
-        return `<option value="${o.id}" ${isSelected ? 'selected' : ''}>${o.name}</option>`;
+        return `<option value="${o.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(o.name)}</option>`;
     }).join('');
     
     let displayVal = '0';
@@ -2984,7 +3068,7 @@ function zeigePackliste() {
                 }
             }
         } else {
-            anzeigeName = pos.eigener_name + " <small style='color:#999;'>(Eigener Posten)</small>";
+            anzeigeName = escapeHtml(pos.eigener_name) + " <small style='color:#999;'>(Eigener Posten)</small>";
             statusHtml = `<span style="color:#7f8c8d;">- Manuell prüfen -</span>`;
         }
 
@@ -3232,7 +3316,7 @@ function startEinkaufsliste() {
         if (autoFehlbestandListe.length === 0) {
             ulAuto.innerHTML = '<li style="color:#27ae60;">Alles grün! Das Lager deckt alle Listen ab.</li>';
         } else {
-            ulAuto.innerHTML = autoFehlbestandListe.map(item => `<li>${item.menge}x ${item.artikel}</li>`).join('');
+            ulAuto.innerHTML = autoFehlbestandListe.map(item => `<li>${item.menge}x ${escapeHtml(item.artikel)}</li>`).join('');
         }
     }
 
@@ -3249,7 +3333,7 @@ function startEinkaufsliste() {
                     <li style="margin-bottom: 6px;">
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;">
                             <input type="checkbox" class="eigene-kauf-check" data-index="${index}" checked onchange="aktualisiereEinkaufslisteAuswahl()">
-                            <span>${item.menge}x ${item.artikel}</span>
+                            <span>${item.menge}x ${escapeHtml(item.artikel)}</span>
                         </label>
                     </li>`;
             });
@@ -3288,7 +3372,7 @@ function manuellAufZettel() {
     aktualisiereEinkaufslisteAuswahl();
     
     const ulManuell = document.getElementById('manuell-kauf-liste');
-    ulManuell.innerHTML += `<li>${menge}x ${name}</li>`;
+    ulManuell.innerHTML += `<li>${menge}x ${escapeHtml(name)}</li>`;
 
     nameFeld.value = '';
     mengeFeld.value = '1';
