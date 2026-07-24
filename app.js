@@ -46,6 +46,7 @@ let sortAscending = true;
 let autoFehlbestandListe = [];
 let eigeneVorschlaegeListe = [];
 let manuelleEintraegeListe = [];
+let artikelIgnorieren = new Set();
 let zeigeAlleArtikel = false;
 let aktiverRegalFilter = extrahiereRegalName(INITIAL_REGAL_FILTER);
 let entnahmeBenutzerVorlagen = [];
@@ -1503,7 +1504,7 @@ function entnahmeSammelvorlageAuswaehlen() {
     entnahmeSammelVorlageBestaetigtFuerId = '';
 
     if (!vorlagenId) {
-        entnahmeSammelVorlageInFormenLaden('');
+        entnahmeSammelvorlageInFormenLaden('');
         return;
     }
 
@@ -1547,7 +1548,7 @@ function entnahmeBenutzerVorlageNeu() {
 
 function entnahmeSammelvorlageNeu() {
     oeffneVorlagenOverlay();
-    entnahmeSammelVorlageInFormenLaden('');
+    entnahmeSammelvorlageInFormenLaden('');
 }
 
 function entnahmeMaterialHinzufuegen() {
@@ -2621,66 +2622,6 @@ function toggleEditMode() {
     const b = document.getElementById('btn-edit-mode');
     if(b) { b.innerText = isEditMode ? "✏️ Bearbeiten: AN" : "✏️ Bearbeiten: AUS"; b.style.backgroundColor = isEditMode ? "#e67e22" : "#f39c12"; }
     wendeFilterAn();
-}
-
-function toggleRowInfinite(btn) {
-    const row = btn.closest('.lagerort-row, .edit-ort-row');
-    const input = btn.parentElement.querySelector('input');
-    const strichBtn = btn.parentElement.querySelector('.btn-strich');
-    const isInfinite = btn.getAttribute('data-active') === 'true';
-
-    if (isInfinite) {
-        input.disabled = false;
-        input.value = input.getAttribute('data-old-value') || '0';
-        btn.style.background = '#95a5a6';
-        btn.setAttribute('data-active', 'false');
-    } else {
-        if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
-        input.value = '∞';
-        input.disabled = true;
-        btn.style.background = '#27ae60';
-        btn.setAttribute('data-active', 'true');
-
-        if (row) setzeStrichStatusDarstellung(row, row.dataset.strichStatus || 'ok', false);
-        
-        if(strichBtn && strichBtn.getAttribute('data-active') === 'true') toggleRowStrich(strichBtn);
-    }
-}
-
-function toggleRowStrich(btn) {
-    const row = btn.closest('.lagerort-row, .edit-ort-row');
-    const input = btn.parentElement.querySelector('input');
-    const infBtn = btn.parentElement.querySelector('.btn-inf');
-    const isStrich = btn.getAttribute('data-active') === 'true';
-    const currentStatus = row?.dataset?.strichStatus || 'ok';
-
-    if (isStrich) {
-        input.disabled = false;
-        input.value = input.getAttribute('data-old-value') || '0';
-        btn.style.background = '#95a5a6';
-        btn.setAttribute('data-active', 'false');
-        if (row) setzeStrichStatusDarstellung(row, currentStatus, false);
-        aktualisiereMengeEingabeFarbe(input);
-    } else {
-        if (input.value !== '∞' && input.value !== '-') input.setAttribute('data-old-value', input.value);
-        input.value = '-';
-        input.disabled = true;
-        btn.setAttribute('data-active', 'true');
-        if (row) setzeStrichStatusDarstellung(row, currentStatus, true);
-        
-        if(infBtn && infBtn.getAttribute('data-active') === 'true') toggleRowInfinite(infBtn);
-    }
-}
-
-function toggleRowStrichStatus(btn) {
-    const row = btn.closest('.lagerort-row, .edit-ort-row');
-    if (!row) return;
-
-    const strichBtn = row.querySelector('.btn-strich');
-    if (!strichBtn || strichBtn.getAttribute('data-active') !== 'true') return;
-
-    const nextStatus = (row.dataset.strichStatus || 'ok') === 'warn' ? 'ok' : 'warn';
-    setzeStrichStatusDarstellung(row, nextStatus, true);
 }
 
 function addEditOrtRow(data = null) {
