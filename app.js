@@ -2007,6 +2007,25 @@ dbClient.auth.onAuthStateChange(async (event, session) => {
 
 const ONBOARDING_STORAGE_KEY = 'lager_onboarding_v1_gesehen';
 
+// Beobachtet automatisch alle Modal-Fenster und ergänzt/entfernt die Klasse
+// 'modal-visible', sobald sie ein-/ausgeblendet werden. Dadurch bekommen ALLE
+// Modals im Projekt eine sanfte Fade-/Scale-Animation, ohne dass jede einzelne
+// öffnende/schließende Funktion im Code angepasst werden muss.
+function initModalUebergaenge() {
+    document.querySelectorAll('.modal').forEach(modal => {
+        const beobachter = new MutationObserver(() => {
+            const sichtbar = getComputedStyle(modal).display !== 'none';
+            if (sichtbar) {
+                requestAnimationFrame(() => requestAnimationFrame(() => modal.classList.add('modal-visible')));
+            } else {
+                modal.classList.remove('modal-visible');
+            }
+        });
+        beobachter.observe(modal, { attributes: true, attributeFilter: ['style'] });
+    });
+}
+document.addEventListener('DOMContentLoaded', initModalUebergaenge);
+
 function pruefeUndZeigeOnboarding() {
     try {
         if (window.localStorage.getItem(ONBOARDING_STORAGE_KEY)) return;
@@ -2040,9 +2059,17 @@ function openRechtliches(event, modalId) {
 
 function wechsleModus(modus) {
     aktuellerModus = modus;
-    document.getElementById('ansicht-lager').style.display = modus === 'lager' ? 'block' : 'none';
-    document.getElementById('ansicht-event').style.display = modus === 'event' ? 'block' : 'none';
-    
+    const lagerAnsicht = document.getElementById('ansicht-lager');
+    const eventAnsicht = document.getElementById('ansicht-event');
+
+    lagerAnsicht.style.display = modus === 'lager' ? 'block' : 'none';
+    eventAnsicht.style.display = modus === 'event' ? 'block' : 'none';
+
+    const sichtbareAnsicht = modus === 'lager' ? lagerAnsicht : eventAnsicht;
+    sichtbareAnsicht.classList.remove('view-fade-in');
+    void sichtbareAnsicht.offsetWidth; // Reflow erzwingen, damit die Animation bei jedem Wechsel neu startet
+    sichtbareAnsicht.classList.add('view-fade-in');
+
     document.getElementById('tab-lager').className = modus === 'lager' ? 'btn btn-modus active' : 'btn btn-modus';
     document.getElementById('tab-event').className = modus === 'event' ? 'btn btn-modus active' : 'btn btn-modus';
     

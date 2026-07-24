@@ -8,13 +8,18 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background-color: #e3000f; color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); }
+        html { scroll-behavior: smooth; }
+        body { font-family: Arial, sans-serif; background: linear-gradient(160deg, #e3000f 0%, #b8000c 100%); color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); animation: containerEnter 0.35s cubic-bezier(0.16,1,0.3,1); }
+        @keyframes containerEnter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         p.subtitle { color: #666; margin-bottom: 25px; line-height: 1.4; text-align: center; }
         
-        .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 0.95em; font-weight: bold; }
-        .btn:hover { background-color: #2980b9; }
+        .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease; font-size: 0.95em; font-weight: bold; }
+        .btn:hover { background-color: #2980b9; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+        .btn:active { transform: translateY(0); box-shadow: none; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #3498db; outline-offset: 2px; }
         
         .modus-switch { display: flex; gap: 10px; margin-bottom: 20px; background: #f4f4f9; padding: 5px; border-radius: 8px; }
         .btn-modus { flex: 1; background: transparent; color: #666; }
@@ -27,6 +32,8 @@
         table { width: 100%; border-collapse: collapse; min-width: 500px; }
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
         th { background-color: #3498db; color: white; }
+        tbody tr { transition: background-color 0.15s ease; }
+        tbody tr:hover { background-color: #f4f8fb; }
         
         .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; transition: color 0.2s, background-color 0.2s, border-color 0.2s; }
         .bestand-menge-input.bestand-menge-ok { color: #1f7a37; background: #edf8f0; border-color: #8fd0a3; }
@@ -61,7 +68,10 @@
             height: 100%; 
             background-color: rgba(0,0,0,0.6); 
             backdrop-filter: blur(3px); 
+            opacity: 0;
+            transition: opacity 0.2s ease;
         }
+        .modal.modal-visible { opacity: 1; }
         .modal-content {
             background-color: white;
             margin: 5vh auto;
@@ -74,7 +84,11 @@
             overflow-y: auto;
             box-sizing: border-box;
             position: relative;
+            opacity: 0;
+            transform: translateY(-16px) scale(0.97);
+            transition: opacity 0.25s cubic-bezier(0.16,1,0.3,1), transform 0.25s cubic-bezier(0.16,1,0.3,1);
         }
+        .modal.modal-visible .modal-content { opacity: 1; transform: translateY(0) scale(1); }
         .modal-content::-webkit-scrollbar {
             width: 10px;
         }
@@ -108,6 +122,13 @@
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; }
         .toast { background: #333; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transform: translateY(20px); transition: opacity 0.3s, transform 0.3s; font-weight: bold; }
         .toast.show { opacity: 1; transform: translateY(0); }
+
+        .view-fade-in { animation: viewFadeIn 0.3s ease both; }
+        @keyframes viewFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+        .ladespinner-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; color: #7f8c8d; }
+        .ladespinner { width: 18px; height: 18px; border: 3px solid #dfe6e9; border-top-color: #3498db; border-radius: 50%; animation: ladespinnerDrehen 0.7s linear infinite; }
+        @keyframes ladespinnerDrehen { to { transform: rotate(360deg); } }
         .toast.success { background: #27ae60; }
         .toast.error { background: #e74c3c; }
         .toast.warning { background: #f39c12; }
@@ -935,7 +956,7 @@
                         <th style="vertical-align: middle; width: 100px;">Menge</th>
                     </tr>
                 </thead>
-                <tbody id="lager-tabelle"><tr><td colspan="3" style="text-align:center; padding:30px;">Lade Daten...</td></tr></tbody>
+                <tbody id="lager-tabelle"><tr><td colspan="3" style="padding:30px;"><div class="ladespinner-wrap"><span class="ladespinner"></span> Lade Daten...</div></td></tr></tbody>
             </table>
         </div>
     </div>
