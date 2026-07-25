@@ -21,9 +21,11 @@
         .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
         .btn:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #3498db; outline-offset: 2px; }
         
-        .modus-switch { display: flex; gap: 10px; margin-bottom: 20px; background: #f4f4f9; padding: 5px; border-radius: 8px; }
-        .btn-modus { flex: 1; background: transparent; color: #666; }
-        .btn-modus.active { background: #e3000f; color: white; }
+        .modus-switch { display: flex; gap: 10px; margin-bottom: 20px; background: #dde1e7; padding: 5px; border-radius: 8px; }
+        .btn-modus { flex: 1; background: transparent; color: #4a4a4a; box-shadow: none; }
+        .btn-modus:hover { background: #cfd4dc; color: #2c3e50; transform: none; box-shadow: none; }
+        .btn-modus.active { background: #e3000f; color: white; box-shadow: 0 2px 8px rgba(227,0,15,0.4); }
+        .btn-modus.active:hover { background: #c40010; }
 
         .action-bar { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
         .action-group { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
@@ -89,6 +91,8 @@
             transition: opacity 0.25s cubic-bezier(0.16,1,0.3,1), transform 0.25s cubic-bezier(0.16,1,0.3,1);
         }
         .modal.modal-visible .modal-content { opacity: 1; transform: translateY(0) scale(1); }
+        .modal-close-x { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border: none; border-radius: 50%; background: #f1f2f6; color: #555; font-size: 1.1em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background-color 0.15s ease, color 0.15s ease; }
+        .modal-close-x:hover { background: #e74c3c; color: white; }
         .modal-content::-webkit-scrollbar {
             width: 10px;
         }
@@ -1020,8 +1024,9 @@
 
 <datalist id="kategorie-liste"></datalist>
 
-<div id="artikelModal" class="modal">
+<div id="artikelModal" class="modal" onclick="if (event.target === this) closeModal('artikelModal')">
     <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('artikelModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2>Neuer Artikel</h2>
         <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
         <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" list="kategorie-liste" placeholder="z.B. Verbrauchsmaterial"></div>
@@ -1048,24 +1053,27 @@
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
         <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Start-Mengen:</p>
         <div id="new-orte-wrapper">
-                <div class="form-group lagerort-row" style="display: grid; gap: 8px; margin-bottom: 8px;">
-                    <select class="new-ort" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
-                    
-                    <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
-                        <input type="text" class="new-menge bestand-menge-input bestand-form-quantity" value="0" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
-                        <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
-                        <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleBestandMinus(this)">-</button>
+                <div class="lagerort-row" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+                    <div class="bestand-row-stack" style="width: 100%;">
+                        <select class="new-ort" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
+
+                        <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
+                            <input type="text" class="new-menge bestand-menge-input bestand-form-quantity" value="0" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
+                            <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
+                            <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleBestandMinus(this)">-</button>
+                        </div>
+
+                        <label class="bestand-nachkauf-wrap">
+                            <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
+                            <span>Auf Nachkaufen setzen</span>
+                        </label>
                     </div>
 
-                    <label class="bestand-nachkauf-wrap">
-                        <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
-                        <span>Auf Nachkaufen setzen</span>
-                    </label>
+                    <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeNewOrtRow(this)" title="Ort entfernen">🗑️</button>
                 </div>
-                <button type="button" class="btn" style="background-color: #3498db; padding: 8px 12px; width: auto; min-width: 40px; margin-top: 2px;" onclick="addOrtRow()" title="Weiteren Ort hinzufügen">➕</button>
-            </div>
         </div>
-        
+        <button type="button" class="btn" style="background-color: #3498db; width: 100%; margin-top: 5px;" onclick="addOrtRow()" title="Weiteren Ort hinzufügen">➕ Weiteren Ort hinzufügen</button>
+
         <div class="flex-buttons" style="margin-top: 20px;">
             <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('artikelModal')">Abbrechen</button>
@@ -1073,8 +1081,9 @@
     </div>
 </div>
 
-<div id="editModal" class="modal">
+<div id="editModal" class="modal" onclick="if (event.target === this) closeModal('editModal')">
     <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('editModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2>Artikel bearbeiten</h2>
         <input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
@@ -1113,8 +1122,9 @@
     </div>
 </div>
 
-<div id="neuOrtModal" class="modal">
+<div id="neuOrtModal" class="modal" onclick="if (event.target === this) closeModal('neuOrtModal')">
     <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('neuOrtModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2>Neuer Lagerort</h2>
         <div class="form-group">
             <label>Name des neuen Lagerorts</label>
@@ -1127,8 +1137,9 @@
     </div>
 </div>
 
-<div id="orteModal" class="modal">
+<div id="orteModal" class="modal" onclick="if (event.target === this) closeModal('orteModal')">
     <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('orteModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2>⚙️ Lagerorte verwalten</h2>
         <p style="font-size: 0.85em; color: #666;">Ein Ort kann nur gelöscht werden, wenn ihm keine Artikel mehr zugeordnet sind.</p>
         <div class="form-group">
@@ -1147,8 +1158,9 @@
     </div>
 </div>
 
-<div id="packItemModal" class="modal">
+<div id="packItemModal" class="modal" onclick="if (event.target === this) closeModal('packItemModal')">
     <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('packItemModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2>Packliste ergänzen</h2>
         <div class="form-group">
             <label>Art des Gegenstands</label>
@@ -1178,8 +1190,9 @@
     </div>
 </div>
 
-<div id="kauflisteModal" class="modal">
+<div id="kauflisteModal" class="modal" onclick="if (event.target === this) closeModal('kauflisteModal')">
     <div class="modal-content" style="max-width: 500px;">
+        <button type="button" class="modal-close-x" onclick="closeModal('kauflisteModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2 style="margin-top: 0; color: #8e44ad;">🛒 Einkaufsliste</h2>
         <p style="margin-bottom: 5px; font-weight: bold;">Automatisch erkannter Fehlbestand:</p>
         <div style="max-height: 150px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border: 1px solid #fadbd8;">
@@ -1205,8 +1218,9 @@
         </div>
     </div>
 </div>
-<div id="kommentarModal" class="modal">
+<div id="kommentarModal" class="modal" onclick="if (event.target === this) closeModal('kommentarModal')">
     <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('kommentarModal')" title="Schließen" aria-label="Schließen">✕</button>
         <h2 style="color: #3498db; margin-top: 0;">💬 Kommentar zu: <br><small id="kommentar-artikel-name" style="color: #333;"></small></h2>
         <input type="hidden" id="kommentar-artikel-id">
         <div class="form-group">

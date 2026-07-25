@@ -2126,13 +2126,16 @@ function addOrtRow() {
         newSelect.value = defaultOrt.id;
     }
 
-    const btnAddDelete = newRow.lastElementChild;
-    btnAddDelete.innerHTML = '🗑️';
-    btnAddDelete.style.backgroundColor = '#e74c3c';
-    btnAddDelete.title = "Ort entfernen";
-    btnAddDelete.onclick = function() { newRow.remove(); };
-
     container.appendChild(newRow);
+}
+
+function removeNewOrtRow(btn) {
+    const wrapper = document.getElementById('new-orte-wrapper');
+    if (wrapper.querySelectorAll('.lagerort-row').length > 1) {
+        btn.closest('.lagerort-row').remove();
+    } else {
+        showToast("Ein Artikel muss mindestens einen Lagerort haben!", "warning");
+    }
 }
 
 async function ladeAlles() {
