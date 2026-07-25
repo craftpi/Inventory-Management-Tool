@@ -2515,12 +2515,12 @@ function tabelleAktualisieren(daten) {
             const bubbleFill = hatKommentar ? '#3498db' : 'none'; 
             const bubbleOpacity = hatKommentar ? '1' : '0.5'; 
             
-            const kommentarIcon = `
+            const kommentarIcon = isEditMode ? `
                 <span onclick="openKommentarModal('${artId}', event)" style="cursor: pointer; margin-left: 8px; vertical-align: middle; opacity: ${bubbleOpacity}; display: inline-block; padding-top: 2px;" title="${hatKommentar ? 'Kommentar ansehen/bearbeiten' : 'Kommentar hinzufügen'}">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="${bubbleFill}" stroke="${bubbleColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
                     </svg>
-                </span>`;
+                </span>` : '';
             if (isGroup) {
                 indent = 45;
                 iconLabel = '◦';
@@ -2651,6 +2651,7 @@ function toggleEditMode() {
     isEditMode = !isEditMode;
     const b = document.getElementById('btn-edit-mode');
     if(b) { b.innerText = isEditMode ? "✏️ Bearbeiten: AN" : "✏️ Bearbeiten: AUS"; b.style.backgroundColor = isEditMode ? "#e67e22" : "#f39c12"; }
+    document.querySelectorAll('.lager-edit-only').forEach(el => el.style.display = isEditMode ? '' : 'none');
     wendeFilterAn();
 }
 
@@ -3058,6 +3059,7 @@ function toggleEventEditMode() {
     isEventEditMode = !isEventEditMode;
     const b = document.getElementById('btn-event-edit');
     if(b) { b.innerText = isEventEditMode ? "✏️ Bearbeiten: AN" : "✏️ Bearbeiten: AUS"; b.style.backgroundColor = isEventEditMode ? "#e67e22" : "#f39c12"; }
+    document.querySelectorAll('.event-edit-only').forEach(el => el.style.display = isEventEditMode ? '' : 'none');
     zeigePackliste();
 }
 
@@ -3545,6 +3547,7 @@ function openKommentarModal(artikelId, event) {
     // Verhindert, dass der Klick auf die Sprechblase versehentlich 
     // den Artikel-Bearbeiten-Modus öffnet
     if (event) event.stopPropagation(); 
+    if (!isEditMode) return;
     
     // Artikel suchen
     const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
