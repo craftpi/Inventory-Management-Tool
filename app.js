@@ -1,5 +1,8 @@
-const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
+//const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
+
+const SUPABASE_URL = 'https://trilager-api.pius-s.de';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZycmZqcG5yZXd3bGdmcXRnanFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNTIyMDEsImV4cCI6MjA5MTgyODIwMX0.kfAyIBbO314WDzQHXzTlPFXpPQ92Ez_mgYbTY2TqxU4';
+
 function storageAvailable(type) {
     try {
         var storage = window[type];
@@ -14,11 +17,13 @@ function storageAvailable(type) {
 
 const _persistSession = storageAvailable('localStorage');
 console.log('localStorage available for session persistence:', _persistSession);
+
 const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
         persistSession: _persistSession
     }
 });
+
 const FORMULAR_TABLE = 'formular_antworten';
 const ENTNAHME_PROTOKOLL_TABLE = 'lager_entnahmen';
 const ENTNAHME_BENUTZER_TABLE = 'lager_entnahme_benutzer_vorlagen';
@@ -1456,8 +1461,9 @@ async function initEntnahmeModus() {
 
     document.title = 'Lager-Entnahmeprotokoll';
 
-    const { data: { session } } = await dbClient.auth.getSession();
-    if (!session) {
+    // NEU: Prüfung über lokalen Browser-Speicher statt Supabase GoTrue Auth
+    const localSession = window.localStorage.getItem('trilager_local_session');
+    if (!localSession) {
         const loginOverlay = document.getElementById('login-overlay');
         if (loginOverlay) loginOverlay.style.display = 'flex';
         setzeEntnahmeSicht(true);
@@ -1986,11 +1992,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    const { data: { session } } = await dbClient.auth.getSession();
-    if (session) { document.getElementById('login-overlay').style.display = 'none'; ladeAlles(); pruefeUndZeigeOnboarding(); } 
-    else { document.getElementById('login-overlay').style.display = 'flex'; }
+    // Prüft die lokale Session im Browser
+    const localSession = window.localStorage.getItem('trilager_local_session');
+    if (localSession) { 
+        document.getElementById('login-overlay').style.display = 'none'; 
+        ladeAlles(); 
+        pruefeUndZeigeOnboarding(); 
+    } else { 
+        document.getElementById('login-overlay').style.display = 'flex'; 
+    }
 });
-
+/*
 dbClient.auth.onAuthStateChange(async (event, session) => {
     if (FORMULAR_MODUS || QRGEN_MODUS) return;
     const overlay = document.getElementById('login-overlay');
@@ -2004,6 +2016,7 @@ dbClient.auth.onAuthStateChange(async (event, session) => {
         document.getElementById('lager-tabelle').innerHTML = ''; 
     }
 });
+*/
 
 const ONBOARDING_STORAGE_KEY = 'lager_onboarding_v1_gesehen';
 
@@ -2046,11 +2059,35 @@ function schliesseOnboarding() {
 
 async function handleLogin() {
     const p = document.getElementById('login-password').value;
-    const { error } = await dbClient.auth.signInWithPassword({ email: 'lager@trisported.de', password: p });
-    if (error) document.getElementById('login-error').style.display = 'block';
-    else { document.getElementById('login-error').style.display = 'none'; document.getElementById('login-password').value = ''; }
+    
+    // Prüft das Passwort direkt in der übertragenen "users"-Tabelle auf dem Pi:
+    const { data, error } = await dbClient
+        .from('users')
+        .select('*')
+        .eq('password', p);
+
+    if (error || !data || data.length === 0) {
+        document.getElementById('login-error').style.display = 'block';
+    } else {
+        document.getElementById('login-error').style.display = 'none';
+        document.getElementById('login-password').value = '';
+        document.getElementById('login-overlay').style.display = 'none';
+        
+        // Speichert die erfolgreiche Session lokal im Browser
+        window.localStorage.setItem('trilager_local_session', JSON.stringify(data[0]));
+        
+        showToast('Erfolgreich angemeldet!');
+        ladeAlles();
+        pruefeUndZeigeOnboarding();
+    }
 }
-async function handleLogout() { await dbClient.auth.signOut(); }
+
+async function handleLogout() {
+    window.localStorage.removeItem('trilager_local_session');
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('lager-tabelle').innerHTML = '';
+    showToast('Abgemeldet.');
+}
 
 function openRechtliches(event, modalId) {
     event.preventDefault();
