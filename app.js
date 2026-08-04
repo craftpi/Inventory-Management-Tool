@@ -20,13 +20,19 @@ console.log('localStorage available for session persistence:', _persistSession);
 
 let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
-        persistSession: _persistSession
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
     }
 });
 
 function setzeAuthToken(token) {
     dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: { persistSession: _persistSession },
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false
+        },
         global: token ? { headers: { Authorization: `Bearer ${token}` } } : {}
     });
 }
