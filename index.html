@@ -816,7 +816,7 @@
                                 <thead>
                                     <tr><th>Artikel</th><th>Menge</th><th></th></tr>
                                 </thead>
-                                <tbody id="entnahme-material-liste">
+                                <tbody id="entnahme-material-liste" class="entnahme-material-liste-target">
                                     <tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>
                                 </tbody>
                             </table>
@@ -856,6 +856,7 @@
                         <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
                     </div>
                     <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+                        <button class="btn" style="background:#e74c3c; width:auto;" onclick="entnahmeBenutzerVorlageLoeschen()">🗑️ Löschen</button>
                         <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Speichern</button>
                     </div>
                 </section>
@@ -873,7 +874,32 @@
                         <label for="entnahme-sammelvorlagenname">Sammel-Vorlage benennen</label>
                         <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
                     </div>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+
+                    <div class="entnahme-grid" style="grid-template-columns: 1.5fr 0.45fr auto; align-items: end; margin-top:14px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="entnahme-modal-artikel-input">Material</label>
+                            <input type="text" id="entnahme-modal-artikel-input" list="entnahme-artikel-datalist" placeholder="Artikel suchen..." autocomplete="off">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="entnahme-modal-artikel-menge">Menge</label>
+                            <input type="text" id="entnahme-modal-artikel-menge" value="1">
+                        </div>
+                        <button class="btn" style="background:#27ae60; width:auto; height: 42px;" onclick="entnahmeModalMaterialHinzufuegen()">+ Hinzufügen</button>
+                    </div>
+
+                    <div style="margin-top: 14px; overflow-x:auto;">
+                        <table class="entnahme-material-table">
+                            <thead>
+                                <tr><th>Artikel</th><th>Menge</th><th></th></tr>
+                            </thead>
+                            <tbody id="entnahme-modal-material-liste" class="entnahme-material-liste-target">
+                                <tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; margin-top:14px;">
+                        <button class="btn" style="background:#e74c3c; width:auto;" onclick="entnahmeSammelvorlageLoeschen()">🗑️ Löschen</button>
                         <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Speichern</button>
                     </div>
                 </section>

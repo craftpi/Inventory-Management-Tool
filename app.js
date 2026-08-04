@@ -1078,24 +1078,28 @@ function aktualisiereEntnahmeMaterialDatalist() {
 }
 
 function renderEntnahmeMaterialien() {
-    const tbody = document.getElementById('entnahme-material-liste');
-    if (!tbody) return;
+    // Es gibt mehrere Materiallisten in der UI (Entnahme-Wizard Schritt 3 und
+    // das "Vorlagen verwalten"-Overlay für Sammel-Vorlagen). Beide zeigen
+    // denselben globalen Zustand (entnahmeMaterialien) und müssen daher
+    // synchron aktualisiert werden.
+    const tbodies = document.querySelectorAll('.entnahme-material-liste-target');
+    if (!tbodies.length) return;
 
     if (entnahmeMaterialien.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>';
+        const leerHtml = '<tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>';
+        tbodies.forEach(tbody => { tbody.innerHTML = leerHtml; });
         return;
     }
 
-    tbody.innerHTML = '';
-    entnahmeMaterialien.forEach((item, index) => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
+    const rowsHtml = entnahmeMaterialien.map((item, index) => `
+        <tr>
             <td><strong>${escapeHtml(item.label)}</strong><br><small style="color:#666;">${escapeHtml(item.einheit || 'Stück')}</small></td>
             <td style="width:120px;"><input type="text" value="${escapeHtml(item.menge)}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; text-align:center;" onchange="entnahmeMaterialMengeAendern(${index}, this.value)"></td>
             <td style="width:70px; text-align:right;"><button class="btn" style="background:#e74c3c; width:auto; padding:8px 10px;" onclick="entnahmeMaterialLoeschen(${index})">🗑️</button></td>
-        `;
-        tbody.appendChild(tr);
-    });
+        </tr>
+    `).join('');
+
+    tbodies.forEach(tbody => { tbody.innerHTML = rowsHtml; });
 }
 
 async function ladeAktuelleEntnahmeVerbraeuche() {
@@ -1649,9 +1653,9 @@ function entnahmeSammelvorlageNeu() {
     entnahmeSammelvorlageInFormenLaden('');
 }
 
-function entnahmeMaterialHinzufuegen() {
-    const input = document.getElementById('entnahme-artikel-input');
-    const mengeInput = document.getElementById('entnahme-artikel-menge');
+function entnahmeMaterialHinzufuegen(inputId = 'entnahme-artikel-input', mengeId = 'entnahme-artikel-menge') {
+    const input = document.getElementById(inputId);
+    const mengeInput = document.getElementById(mengeId);
     if (!input || !mengeInput) return;
 
     const label = input.value.trim();
@@ -1690,6 +1694,11 @@ function entnahmeMaterialHinzufuegen() {
     renderEntnahmeMaterialien();
     entnahmeMarkiereAutoSaveAlsErforderlich();
     entnahmeWizardAktualisieren();
+}
+
+// Wrapper für die Materialauswahl im "Vorlagen verwalten"-Overlay (Sammel-Vorlage).
+function entnahmeModalMaterialHinzufuegen() {
+    entnahmeMaterialHinzufuegen('entnahme-modal-artikel-input', 'entnahme-modal-artikel-menge');
 }
 
 function entnahmeMaterialMengeAendern(index, neueMenge) {
@@ -1832,6 +1841,65 @@ async function entnahmeBenutzerVorlageSpeichern() {
 
 async function entnahmeSammelvorlageSpeichern() {
     return entnahmeSammelvorlageAutoSpeichern();
+}
+
+async function entnahmeBenutzerVorlageLoeschen() {
+    const id = entnahmeAuswahlBenutzerId || document.getElementById('entnahme-benutzer-vorlage-bearbeiten')?.value || '';
+    if (!id) {
+        showToast('Bitte zuerst eine Benutzer-Vorlage auswählen.', 'warning');
+        return;
+    }
+
+    const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(id));
+    const name = vorlage?.name || 'diese Vorlage';
+
+    if (!confirm(`Soll die Benutzer-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`)) {
+        return;
+    }
+
+    const { error } = await dbClient.from(ENTNAHME_BENUTZER_TABLE).delete().eq('id', id);
+    if (error) {
+        showToast('Benutzer-Vorlage konnte nicht gelöscht werden.', 'error');
+        console.error('Supabase error deleting benutzer vorlage:', error);
+        return;
+    }
+
+    entnahmeAuswahlBenutzerId = '';
+    entnahmeBenutzerNeuAktiv = true;
+
+    showToast('Benutzer-Vorlage gelöscht.');
+    await ladeEntnahmeVorlagen();
+    entnahmeBenutzerVorlageInFormenLaden('');
+}
+
+async function entnahmeSammelvorlageLoeschen() {
+    const id = entnahmeAuswahlSammelId || document.getElementById('entnahme-sammelvorlage-bearbeiten')?.value || '';
+    if (!id) {
+        showToast('Bitte zuerst eine Sammel-Vorlage auswählen.', 'warning');
+        return;
+    }
+
+    const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(id));
+    const name = vorlage?.name || 'diese Vorlage';
+
+    if (!confirm(`Soll die Sammel-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`)) {
+        return;
+    }
+
+    const { error } = await dbClient.from(ENTNAHME_SAMMEL_TABLE).delete().eq('id', id);
+    if (error) {
+        showToast('Sammel-Vorlage konnte nicht gelöscht werden.', 'error');
+        console.error('Supabase error deleting sammelvorlage:', error);
+        return;
+    }
+
+    entnahmeAuswahlSammelId = '';
+    entnahmeSammelNeuAktiv = true;
+    entnahmeSammelVorlageBestaetigtFuerId = '';
+
+    showToast('Sammel-Vorlage gelöscht.');
+    await ladeEntnahmeVorlagen();
+    entnahmeSammelvorlageInFormenLaden('');
 }
 
 async function entnahmeHistorieLaden(entnahmeId) {
