@@ -2189,6 +2189,12 @@ async function handleLogin() {
         speichereLokaleSession({ username: data.username, token: data.token });
         
         showToast('Erfolgreich angemeldet!');
+
+        if (ENTNAHME_MODUS) {
+            await initEntnahmeModus();
+            return;
+        }
+
         ladeAlles();
         pruefeUndZeigeOnboarding();
     }
