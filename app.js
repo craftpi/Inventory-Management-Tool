@@ -364,10 +364,64 @@ function entnahmeWizardAutoAdvanceErlaubt() {
     return entnahmeWizardAutoAdvanceAktiv && !entnahmeVorlagenBearbeiten;
 }
 
+let entnahmeMarkiereTimer = null;
+
 function entnahmeMarkiereAutoSaveAlsErforderlich() {
-    entnahmeSpeichereDraftLokal();
-    entnahmeWizardAktualisieren();
+    // entnahmeSpeichereDraftLokal() (localStorage-Schreibvorgang) und
+    // entnahmeWizardAktualisieren() (mehrere DOM-Abfragen/-Updates) sind bei
+    // jedem einzelnen Tastenanschlag spürbar träge. Deshalb werden sie kurz
+    // entprellt, statt bei jeder Eingabe sofort synchron zu laufen.
+    if (entnahmeMarkiereTimer) clearTimeout(entnahmeMarkiereTimer);
+    entnahmeMarkiereTimer = setTimeout(() => {
+        entnahmeMarkiereTimer = null;
+        entnahmeSpeichereDraftLokal();
+        entnahmeWizardAktualisieren();
+    }, 200);
+
     entnahmeSammelvorlageAutoSpeichernAnstossen();
+}
+
+// Zeigt einen im Website-Stil gestalteten Bestätigungsdialog (ersetzt das
+// native, browserabhängige confirm()) und gibt ein Promise<boolean> zurück.
+let _bestaetigungResolve = null;
+
+function zeigeBestaetigungsDialog({ titel = 'Bist du sicher?', text = '', okText = 'OK', okFarbe = '#e74c3c', icon = '⚠️' } = {}) {
+    return new Promise(resolve => {
+        const modal = document.getElementById('bestaetigungModal');
+        if (!modal) {
+            // Fallback, falls das Modal aus irgendeinem Grund fehlt.
+            resolve(window.confirm(text || titel));
+            return;
+        }
+
+        document.getElementById('bestaetigung-titel').textContent = titel;
+        document.getElementById('bestaetigung-text').textContent = text;
+        document.getElementById('bestaetigung-icon').textContent = icon;
+        const okBtn = document.getElementById('bestaetigung-ok-btn');
+        okBtn.textContent = okText;
+        okBtn.style.background = okFarbe;
+
+        _bestaetigungResolve = resolve;
+        modal.style.display = 'block';
+    });
+}
+
+function bestaetigungBestaetigen() {
+    const modal = document.getElementById('bestaetigungModal');
+    if (modal) modal.style.display = 'none';
+    if (_bestaetigungResolve) {
+        _bestaetigungResolve(true);
+        _bestaetigungResolve = null;
+    }
+}
+
+function bestaetigungAbbrechen() {
+    const modal = document.getElementById('bestaetigungModal');
+    if (modal) modal.style.display = 'none';
+    if (_bestaetigungResolve) {
+        _bestaetigungResolve(false);
+        _bestaetigungResolve = null;
+    }
 }
 
 function entnahmeSammelvorlageAutoSpeichernAnstossen() {
@@ -378,12 +432,22 @@ function entnahmeSammelvorlageAutoSpeichernAnstossen() {
     }, 550);
 }
 
-async function entnahmeSammelvorlageAutoSpeichern() {
+// manuell=true: wird über den "Speichern"-Button ausgelöst. Dann werden auch
+// Warnungen/Bestätigungs-Toasts angezeigt, auch wenn sich nichts geändert hat.
+// manuell=false: stiller Hintergrund-Autospeicher, der beim Bearbeiten von
+// Name/Materialien ausgelöst wird (kein Toast bei jedem Tastendruck).
+async function entnahmeSammelvorlageAutoSpeichern({ manuell = false } = {}) {
     const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
     const selectValue = document.getElementById('entnahme-sammelvorlage')?.value || document.getElementById('entnahme-sammelvorlage-bearbeiten')?.value || '';
     const bestehendeId = entnahmeAuswahlSammelId || (selectValue && selectValue !== '__new__' ? selectValue : '');
 
-    if (!name || entnahmeMaterialien.length === 0) {
+    if (!name) {
+        if (manuell) showToast('Bitte zuerst einen Namen für die Sammel-Vorlage eingeben.', 'warning');
+        return null;
+    }
+
+    if (entnahmeMaterialien.length === 0) {
+        if (manuell) showToast('Bitte mindestens ein Material hinzufügen.', 'warning');
         return null;
     }
 
@@ -392,7 +456,13 @@ async function entnahmeSammelvorlageAutoSpeichern() {
     }
 
     if (bestehendeId && entnahmeVorlagenBearbeiten && entnahmeSammelVorlageBestaetigtFuerId !== String(bestehendeId)) {
-        const ok = confirm('Soll die ausgewählte Sammel-Vorlage mit den aktuellen Materialien überschrieben werden?');
+        const ok = await zeigeBestaetigungsDialog({
+            titel: 'Sammel-Vorlage überschreiben?',
+            text: `Soll die ausgewählte Sammel-Vorlage "${name}" mit den aktuellen Materialien überschrieben werden?`,
+            okText: 'Überschreiben',
+            okFarbe: '#e3000f',
+            icon: '✏️'
+        });
         if (!ok) return null;
         entnahmeSammelVorlageBestaetigtFuerId = String(bestehendeId);
     }
@@ -404,6 +474,7 @@ async function entnahmeSammelvorlageAutoSpeichern() {
 
     if (result.error) {
         console.error('Sammelforlage konnte nicht automatisch gespeichert werden.', result.error);
+        if (manuell) showToast('Sammel-Vorlage konnte nicht gespeichert werden.', 'error');
         return null;
     }
 
@@ -414,9 +485,12 @@ async function entnahmeSammelvorlageAutoSpeichern() {
         entnahmeSammelVorlageBestaetigtFuerId = entnahmeAuswahlSammelId;
     }
 
+    if (manuell) showToast('Sammel-Vorlage gespeichert.');
+
     await ladeEntnahmeVorlagen();
     return entnahmeAuswahlSammelId || bestehendeId || null;
 }
+
 
 function showToast(message, type = 'success') {
     const container = document.getElementById('toast-container');
@@ -1219,7 +1293,11 @@ function entnahmeSammelvorlageInFormenLaden(vorlagenId = '') {
     setzeEntnahmeVorlagenFormSichtbarkeit();
     aktualisiereEntnahmeVorlagenInfo();
     renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich();
+    // Wichtig: Hier NICHT entnahmeMarkiereAutoSaveAlsErforderlich() aufrufen.
+    // Das reine Laden/Auswählen einer bestehenden Vorlage ist keine Änderung
+    // und darf keinen Autospeicher-/Überschreiben-Dialog auslösen. Nur der
+    // lokale Entwurf und die Wizard-Ansicht werden aktualisiert.
+    entnahmeSpeichereDraftLokal();
     entnahmeWizardAktualisieren();
 }
 
@@ -1772,7 +1850,13 @@ async function entnahmeBenutzerVorlageSpeichern() {
             return;
         }
 
-        if (!confirm('Der Name der Benutzer-Vorlage ist leer. Soll diese Vorlage gelöscht werden?')) {
+        if (!(await zeigeBestaetigungsDialog({
+            titel: 'Vorlage löschen?',
+            text: 'Der Name der Benutzer-Vorlage ist leer. Soll diese Vorlage gelöscht werden?',
+            okText: 'Löschen',
+            okFarbe: '#e74c3c',
+            icon: '🗑️'
+        }))) {
             return;
         }
 
@@ -1840,7 +1924,11 @@ async function entnahmeBenutzerVorlageSpeichern() {
 }
 
 async function entnahmeSammelvorlageSpeichern() {
-    return entnahmeSammelvorlageAutoSpeichern();
+    if (entnahmeSammelAutoSaveTimer) {
+        clearTimeout(entnahmeSammelAutoSaveTimer);
+        entnahmeSammelAutoSaveTimer = null;
+    }
+    return entnahmeSammelvorlageAutoSpeichern({ manuell: true });
 }
 
 async function entnahmeBenutzerVorlageLoeschen() {
@@ -1853,7 +1941,13 @@ async function entnahmeBenutzerVorlageLoeschen() {
     const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(id));
     const name = vorlage?.name || 'diese Vorlage';
 
-    if (!confirm(`Soll die Benutzer-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`)) {
+    if (!(await zeigeBestaetigungsDialog({
+        titel: 'Benutzer-Vorlage löschen?',
+        text: `Soll die Benutzer-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`,
+        okText: 'Löschen',
+        okFarbe: '#e74c3c',
+        icon: '🗑️'
+    }))) {
         return;
     }
 
@@ -1882,7 +1976,13 @@ async function entnahmeSammelvorlageLoeschen() {
     const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(id));
     const name = vorlage?.name || 'diese Vorlage';
 
-    if (!confirm(`Soll die Sammel-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`)) {
+    if (!(await zeigeBestaetigungsDialog({
+        titel: 'Sammel-Vorlage löschen?',
+        text: `Soll die Sammel-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`,
+        okText: 'Löschen',
+        okFarbe: '#e74c3c',
+        icon: '🗑️'
+    }))) {
         return;
     }
 
