@@ -2674,8 +2674,12 @@ function tabelleAktualisieren(daten) {
                     </svg>
                 </span>` : '';
             const kommentarAnzeige = !isEditMode && hatKommentar ? `
-                <div style="margin-top: 4px; color: #7f8c8d; font-size: 0.78em; font-weight: normal; line-height: 1.35; display: flex; align-items: flex-start; gap: 5px; padding-left: 18px;">
-                    <span style="flex: 0 0 auto; opacity: 0.85;">💬</span>
+                <div style="margin-top: 4px; color: #6b7280; font-size: 0.8em; font-weight: normal; line-height: 1.35; display: flex; align-items: flex-start; gap: 6px; padding-left: 18px;">
+                    <span style="flex: 0 0 auto; color: #3498db; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-top: 1px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                        </svg>
+                    </span>
                     <span style="min-width: 0; white-space: pre-wrap; word-break: break-word;">${escapeHtml(kommentarText)}</span>
                 </div>` : '';
             if (isGroup) {
