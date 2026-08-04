@@ -27,14 +27,11 @@ let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 
 function setzeAuthToken(token) {
-    dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-            detectSessionInUrl: false
-        },
-        global: token ? { headers: { Authorization: `Bearer ${token}` } } : {}
-    });
+    if (token) {
+        dbClient.rest.headers.set('Authorization', `Bearer ${token}`);
+    } else {
+        dbClient.rest.headers.delete('Authorization');
+    }
 }
 
 const FORMULAR_TABLE = 'formular_antworten';
