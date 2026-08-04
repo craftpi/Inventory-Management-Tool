@@ -34,6 +34,12 @@ const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular
 const QRGEN_MODUS = new URLSearchParams(window.location.search).get('qrgen') === '1';
 const ENTNAHME_MODUS = new URLSearchParams(window.location.search).get('entnahme') === '1';
 const INITIAL_REGAL_FILTER = new URLSearchParams(window.location.search).get('regal') || '';
+const LOCAL_SESSION_STORAGE_KEY = 'trilager_local_session_v2';
+const LOGIN_ATTEMPTS_STORAGE_KEY = 'trilager_login_attempts_v1';
+const LOGIN_LOCK_STORAGE_KEY = 'trilager_login_lock_until_v1';
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_DURATION_MS = 5 * 60 * 1000;
+const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 let aktuelleDaten = [];
 let packlisten = [];
@@ -74,6 +80,80 @@ let entnahmeAutoSaveQueued = false;
 let entnahmeWizardAutoAdvanceAktiv = true;
 let entnahmeSammelAutoSaveTimer = null;
 let entnahmeSammelVorlageBestaetigtFuerId = '';
+
+function holeLokaleSession() {
+    try {
+        const raw = window.localStorage.getItem(LOCAL_SESSION_STORAGE_KEY);
+        if (!raw) return null;
+
+        const session = JSON.parse(raw);
+        if (!session || typeof session !== 'object') return null;
+
+        const expiresAt = Number(session.expiresAt) || 0;
+        if (!expiresAt || expiresAt <= Date.now()) {
+            window.localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
+            return null;
+        }
+
+        return session;
+    } catch (e) {
+        return null;
+    }
+}
+
+function speichereLokaleSession(user) {
+    const session = {
+        userId: String(user?.id || ''),
+        userName: String(user?.username || user?.name || ''),
+        role: String(user?.role || ''),
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + LOCAL_SESSION_TTL_MS
+    };
+
+    window.localStorage.setItem(LOCAL_SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+function loescheLokaleSession() {
+    window.localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
+}
+
+function holeLoginSperreBis() {
+    try {
+        return Number(window.localStorage.getItem(LOGIN_LOCK_STORAGE_KEY) || '0') || 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function fuegeLoginFehlversuchHinzu() {
+    const now = Date.now();
+    const lockUntil = holeLoginSperreBis();
+    if (lockUntil > now) return lockUntil;
+
+    let attempts = 0;
+    try {
+        attempts = Number(window.localStorage.getItem(LOGIN_ATTEMPTS_STORAGE_KEY) || '0') || 0;
+    } catch (e) {
+        attempts = 0;
+    }
+
+    attempts += 1;
+    window.localStorage.setItem(LOGIN_ATTEMPTS_STORAGE_KEY, String(attempts));
+
+    if (attempts >= LOGIN_MAX_ATTEMPTS) {
+        const gesperrtBis = now + LOGIN_LOCK_DURATION_MS;
+        window.localStorage.setItem(LOGIN_LOCK_STORAGE_KEY, String(gesperrtBis));
+        window.localStorage.removeItem(LOGIN_ATTEMPTS_STORAGE_KEY);
+        return gesperrtBis;
+    }
+
+    return 0;
+}
+
+function setzeLoginFehlversucheZurueck() {
+    window.localStorage.removeItem(LOGIN_ATTEMPTS_STORAGE_KEY);
+    window.localStorage.removeItem(LOGIN_LOCK_STORAGE_KEY);
+}
 
 function entnahmeGetFormState() {
     const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
@@ -1461,8 +1541,7 @@ async function initEntnahmeModus() {
 
     document.title = 'Lager-Entnahmeprotokoll';
 
-    // NEU: Prüfung über lokalen Browser-Speicher statt Supabase GoTrue Auth
-    const localSession = window.localStorage.getItem('trilager_local_session');
+    const localSession = holeLokaleSession();
     if (!localSession) {
         const loginOverlay = document.getElementById('login-overlay');
         if (loginOverlay) loginOverlay.style.display = 'flex';
@@ -1992,8 +2071,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    // Prüft die lokale Session im Browser
-    const localSession = window.localStorage.getItem('trilager_local_session');
+    const localSession = holeLokaleSession();
     if (localSession) { 
         document.getElementById('login-overlay').style.display = 'none'; 
         ladeAlles(); 
@@ -2059,22 +2137,41 @@ function schliesseOnboarding() {
 
 async function handleLogin() {
     const p = document.getElementById('login-password').value;
-    
-    // Prüft das Passwort direkt in der übertragenen "users"-Tabelle auf dem Pi:
-    const { data, error } = await dbClient
-        .from('users')
-        .select('*')
-        .eq('password', p);
+    const now = Date.now();
+    const lockUntil = holeLoginSperreBis();
+
+    if (lockUntil > now) {
+        const remainingSeconds = Math.ceil((lockUntil - now) / 1000);
+        const loginError = document.getElementById('login-error');
+        if (loginError) {
+            loginError.innerText = `Zu viele Fehlversuche. Bitte in ${remainingSeconds} Sekunden erneut versuchen.`;
+            loginError.style.display = 'block';
+        }
+        return;
+    }
+
+    const { data, error } = await dbClient.rpc('login_user', { p_password: p });
 
     if (error || !data || data.length === 0) {
-        document.getElementById('login-error').style.display = 'block';
+        const gesperrtBis = fuegeLoginFehlversuchHinzu();
+        const loginError = document.getElementById('login-error');
+        if (loginError) {
+            loginError.style.display = 'block';
+            if (gesperrtBis > Date.now()) {
+                const remainingSeconds = Math.ceil((gesperrtBis - Date.now()) / 1000);
+                loginError.innerText = `Zu viele Fehlversuche. Bitte in ${remainingSeconds} Sekunden erneut versuchen.`;
+            } else {
+                loginError.innerText = 'Falsches Passwort!';
+            }
+        }
     } else {
-        document.getElementById('login-error').style.display = 'none';
+        const loginError = document.getElementById('login-error');
+        if (loginError) loginError.style.display = 'none';
         document.getElementById('login-password').value = '';
         document.getElementById('login-overlay').style.display = 'none';
         
-        // Speichert die erfolgreiche Session lokal im Browser
-        window.localStorage.setItem('trilager_local_session', JSON.stringify(data[0]));
+        setzeLoginFehlversucheZurueck();
+        speichereLokaleSession(data[0]);
         
         showToast('Erfolgreich angemeldet!');
         ladeAlles();
@@ -2083,7 +2180,8 @@ async function handleLogin() {
 }
 
 async function handleLogout() {
-    window.localStorage.removeItem('trilager_local_session');
+    loescheLokaleSession();
+    setzeLoginFehlversucheZurueck();
     document.getElementById('login-overlay').style.display = 'flex';
     document.getElementById('lager-tabelle').innerHTML = '';
     showToast('Abgemeldet.');

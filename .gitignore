@@ -26,4 +26,4 @@ supabase_entnahme_schema.sql
 
 
 *.env
-*.docker-compose.yaml
+docker-compose.yml
