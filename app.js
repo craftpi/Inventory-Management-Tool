@@ -1557,6 +1557,8 @@ async function initEntnahmeModus() {
         return;
     }
 
+    setzeAuthToken(localSession.token);
+
     const loginOverlay = document.getElementById('login-overlay');
     if (loginOverlay) loginOverlay.style.display = 'none';
 
@@ -2080,17 +2082,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const localSession = holeLokaleSession();
-    if (!localSession) {
-        const loginOverlay = document.getElementById('login-overlay');
-        if (loginOverlay) loginOverlay.style.display = 'flex';
-        setzeEntnahmeSicht(true);
-        return;
+    if (localSession) { 
+        setzeAuthToken(localSession.token);
+        document.getElementById('login-overlay').style.display = 'none'; 
+        ladeAlles(); 
+        pruefeUndZeigeOnboarding(); 
+    } else { 
+        document.getElementById('login-overlay').style.display = 'flex'; 
     }
-
-    setzeAuthToken(localSession.token);   // <-- NEU
-
-    const loginOverlay = document.getElementById('login-overlay');
-    if (loginOverlay) loginOverlay.style.display = 'none';
 });
 
 /*
