@@ -90,6 +90,8 @@ let entnahmeAutoSaveQueued = false;
 let entnahmeWizardAutoAdvanceAktiv = true;
 let entnahmeSammelAutoSaveTimer = null;
 let entnahmeSammelVorlageBestaetigtFuerId = '';
+let entnahmeSammelAutoSaveInFlight = false;
+let entnahmeSammelAutoSaveNachholen = false;
 
 function holeLokaleSession() {
     try {
@@ -366,7 +368,7 @@ function entnahmeWizardAutoAdvanceErlaubt() {
 
 let entnahmeMarkiereTimer = null;
 
-function entnahmeMarkiereAutoSaveAlsErforderlich() {
+function entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave = false } = {}) {
     // entnahmeSpeichereDraftLokal() (localStorage-Schreibvorgang) und
     // entnahmeWizardAktualisieren() (mehrere DOM-Abfragen/-Updates) sind bei
     // jedem einzelnen Tastenanschlag spürbar träge. Deshalb werden sie kurz
@@ -378,7 +380,9 @@ function entnahmeMarkiereAutoSaveAlsErforderlich() {
         entnahmeWizardAktualisieren();
     }, 200);
 
-    entnahmeSammelvorlageAutoSpeichernAnstossen();
+    if (sammelAutoSave) {
+        entnahmeSammelvorlageAutoSpeichernAnstossen();
+    }
 }
 
 // Zeigt einen im Website-Stil gestalteten Bestätigungsdialog (ersetzt das
@@ -425,6 +429,10 @@ function bestaetigungAbbrechen() {
 }
 
 function entnahmeSammelvorlageAutoSpeichernAnstossen() {
+    if (!entnahmeVorlagenBearbeiten) {
+        return;
+    }
+
     if (entnahmeSammelAutoSaveTimer) clearTimeout(entnahmeSammelAutoSaveTimer);
     entnahmeSammelAutoSaveTimer = setTimeout(() => {
         entnahmeSammelAutoSaveTimer = null;
@@ -437,6 +445,14 @@ function entnahmeSammelvorlageAutoSpeichernAnstossen() {
 // manuell=false: stiller Hintergrund-Autospeicher, der beim Bearbeiten von
 // Name/Materialien ausgelöst wird (kein Toast bei jedem Tastendruck).
 async function entnahmeSammelvorlageAutoSpeichern({ manuell = false } = {}) {
+    if (entnahmeSammelAutoSaveInFlight && !manuell) {
+        entnahmeSammelAutoSaveNachholen = true;
+        return null;
+    }
+
+    entnahmeSammelAutoSaveInFlight = true;
+
+    try {
     const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
     const selectValue = document.getElementById('entnahme-sammelvorlage')?.value || document.getElementById('entnahme-sammelvorlage-bearbeiten')?.value || '';
     const bestehendeId = entnahmeAuswahlSammelId || (selectValue && selectValue !== '__new__' ? selectValue : '');
@@ -456,6 +472,12 @@ async function entnahmeSammelvorlageAutoSpeichern({ manuell = false } = {}) {
     }
 
     if (bestehendeId && entnahmeVorlagenBearbeiten && entnahmeSammelVorlageBestaetigtFuerId !== String(bestehendeId)) {
+        // Stilles Autosave darf ohne explizite Bestätigung keine bestehende
+        // Vorlage überschreiben. Die Rückfrage kommt nur bei manuellem Speichern.
+        if (!manuell) {
+            return null;
+        }
+
         const ok = await zeigeBestaetigungsDialog({
             titel: 'Sammel-Vorlage überschreiben?',
             text: `Soll die ausgewählte Sammel-Vorlage "${name}" mit den aktuellen Materialien überschrieben werden?`,
@@ -489,6 +511,13 @@ async function entnahmeSammelvorlageAutoSpeichern({ manuell = false } = {}) {
 
     await ladeEntnahmeVorlagen();
     return entnahmeAuswahlSammelId || bestehendeId || null;
+    } finally {
+        entnahmeSammelAutoSaveInFlight = false;
+        if (entnahmeSammelAutoSaveNachholen) {
+            entnahmeSammelAutoSaveNachholen = false;
+            entnahmeSammelvorlageAutoSpeichernAnstossen();
+        }
+    }
 }
 
 
@@ -1257,17 +1286,21 @@ function entnahmeBenutzerVorlageInFormenLaden(vorlagenId = '') {
 
     setzeEntnahmeVorlagenFormSichtbarkeit();
     aktualisiereEntnahmeVorlagenInfo();
-    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeSpeichereDraftLokal();
     entnahmeWizardAktualisieren();
 }
 
 function entnahmeSammelvorlageInFormenLaden(vorlagenId = '') {
+    const vorherigeSammelId = String(entnahmeAuswahlSammelId || '');
     const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
     const mainSelect = document.getElementById('entnahme-sammelvorlage');
     const editSelect = document.getElementById('entnahme-sammelvorlage-bearbeiten');
     const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
 
     entnahmeAuswahlSammelId = vorlage ? String(vorlage.id) : '';
+    if (vorherigeSammelId !== String(entnahmeAuswahlSammelId || '')) {
+        entnahmeSammelVorlageBestaetigtFuerId = '';
+    }
     entnahmeSammelNeuAktiv = !vorlage;
 
     if (mainSelect && mainSelect.value !== entnahmeAuswahlSammelId) mainSelect.value = entnahmeAuswahlSammelId;
@@ -1708,9 +1741,8 @@ function entnahmeSammelvorlageAuswaehlen() {
         });
         renderEntnahmeMaterialien();
         setzeEntnahmeVorlagenFormSichtbarkeit();
-        entnahmeMarkiereAutoSaveAlsErforderlich();
+        entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
         entnahmeWizardAktualisieren();
-        entnahmeSammelvorlageAutoSpeichernAnstossen();
         return;
     }
 
@@ -1770,7 +1802,7 @@ function entnahmeMaterialHinzufuegen(inputId = 'entnahme-artikel-input', mengeId
     input.value = '';
     mengeInput.value = '1';
     renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
     entnahmeWizardAktualisieren();
 }
 
@@ -1790,7 +1822,7 @@ function entnahmeMaterialMengeAendern(index, neueMenge) {
     }
 
     renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
     entnahmeWizardAktualisieren();
 }
 
@@ -1798,7 +1830,7 @@ function entnahmeMaterialLoeschen(index) {
     if (!entnahmeMaterialien[index]) return;
     entnahmeMaterialien.splice(index, 1);
     renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich();
+    entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
     entnahmeWizardAktualisieren();
 }
 

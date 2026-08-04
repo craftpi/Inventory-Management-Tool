@@ -95,6 +95,25 @@
             transition: opacity 0.25s cubic-bezier(0.16,1,0.3,1), transform 0.25s cubic-bezier(0.16,1,0.3,1);
         }
         .modal.modal-visible .modal-content { opacity: 1; transform: translateY(0) scale(1); }
+        #vorlagenModal .modal-content {
+            overflow: visible;
+        }
+        #vorlagenModal.modal-visible .modal-content {
+            transform: none;
+        }
+        #vorlagenModal .vorlagen-modal-scroll {
+            max-height: calc(90vh - 190px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            overscroll-behavior: contain;
+            padding-right: 4px;
+        }
+        #vorlagenModal .vorlagen-modal-scroll > * {
+            min-width: 0;
+        }
+        #vorlagenModal select {
+            max-width: 100%;
+        }
         .modal-close-x { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border: none; border-radius: 50%; background: #f1f2f6; color: #555; font-size: 1.1em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background-color 0.15s ease, color 0.15s ease; }
         .modal-close-x:hover { background: #e74c3c; color: white; }
         .modal-content::-webkit-scrollbar {
@@ -855,6 +874,7 @@
             <h2 style="margin-top:0; color:#2c3e50;">Vorlagen verwalten</h2>
             <p style="margin-top:0; color:#5f6b77;">Die Auswahl erfolgt im Entnahme-Wizard. Hier erstellst oder bearbeitest du die gespeicherten Vorlagen.</p>
 
+            <div class="vorlagen-modal-scroll">
             <div class="entnahme-grid" style="grid-template-columns: 1fr; gap: 16px;">
                 <section class="entnahme-card entnahme-vorlagen-form">
                     <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 12px;">
@@ -890,7 +910,7 @@
                     </div>
                     <div class="form-group">
                         <label for="entnahme-sammelvorlagenname">Sammel-Vorlage benennen</label>
-                        <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
+                        <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst" oninput="entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true })">
                     </div>
 
                     <div class="entnahme-grid" style="grid-template-columns: 1.5fr 0.45fr auto; align-items: end; margin-top:14px;">
@@ -921,6 +941,7 @@
                         <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Speichern</button>
                     </div>
                 </section>
+            </div>
             </div>
 
             <div class="flex-buttons" style="justify-content:flex-end; margin-top: 18px;">
