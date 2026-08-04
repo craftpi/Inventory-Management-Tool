@@ -18,11 +18,18 @@ function storageAvailable(type) {
 const _persistSession = storageAvailable('localStorage');
 console.log('localStorage available for session persistence:', _persistSession);
 
-const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
         persistSession: _persistSession
     }
 });
+
+function setzeAuthToken(token) {
+    dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: _persistSession },
+        global: token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+    });
+}
 
 const FORMULAR_TABLE = 'formular_antworten';
 const ENTNAHME_PROTOKOLL_TABLE = 'lager_entnahmen';
@@ -105,12 +112,13 @@ function speichereLokaleSession(user) {
     const session = {
         userId: String(user?.id || ''),
         userName: String(user?.username || user?.name || ''),
-        role: String(user?.role || ''),
+        token: String(user?.token || ''),
         issuedAt: Date.now(),
         expiresAt: Date.now() + LOCAL_SESSION_TTL_MS
     };
 
     window.localStorage.setItem(LOCAL_SESSION_STORAGE_KEY, JSON.stringify(session));
+    setzeAuthToken(session.token);
 }
 
 function loescheLokaleSession() {
@@ -2072,14 +2080,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const localSession = holeLokaleSession();
-    if (localSession) { 
-        document.getElementById('login-overlay').style.display = 'none'; 
-        ladeAlles(); 
-        pruefeUndZeigeOnboarding(); 
-    } else { 
-        document.getElementById('login-overlay').style.display = 'flex'; 
+    if (!localSession) {
+        const loginOverlay = document.getElementById('login-overlay');
+        if (loginOverlay) loginOverlay.style.display = 'flex';
+        setzeEntnahmeSicht(true);
+        return;
     }
+
+    setzeAuthToken(localSession.token);   // <-- NEU
+
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) loginOverlay.style.display = 'none';
 });
+
 /*
 dbClient.auth.onAuthStateChange(async (event, session) => {
     if (FORMULAR_MODUS || QRGEN_MODUS) return;
@@ -2171,7 +2184,7 @@ async function handleLogin() {
         document.getElementById('login-overlay').style.display = 'none';
         
         setzeLoginFehlversucheZurueck();
-        speichereLokaleSession(data[0]);
+        speichereLokaleSession({ username: data.username, token: data.token });
         
         showToast('Erfolgreich angemeldet!');
         ladeAlles();
@@ -2181,6 +2194,7 @@ async function handleLogin() {
 
 async function handleLogout() {
     loescheLokaleSession();
+    setzeAuthToken(null);
     setzeLoginFehlversucheZurueck();
     document.getElementById('login-overlay').style.display = 'flex';
     document.getElementById('lager-tabelle').innerHTML = '';
