@@ -1252,13 +1252,19 @@ function berechneArtikelVerfuegbarkeit(artId, bestaende = []) {
 function setzeEntnahmeVorlagenFormSichtbarkeit() {
     const bodies = document.querySelectorAll('.entnahme-vorlagen-form');
     const sammelAuswahl = document.getElementById('entnahme-sammelvorlage')?.value || '';
+    // Packlisten werden ausschließlich im Event-Modus verwaltet (angelegt,
+    // umbenannt, gelöscht, mit Positionen befüllt). Im Entnahme-Protokoll
+    // dürfen sie nur als Grundlage für eine Entnahme ausgewählt werden,
+    // nicht wie eine normale Sammel-Vorlage bearbeitet werden.
+    const istPacklisteAktiv = String(sammelAuswahl).startsWith('pack:');
+
     bodies.forEach(body => {
         const istBenutzerForm = Boolean(body.querySelector('#entnahme-name'));
         const istSammelForm = Boolean(body.querySelector('#entnahme-sammelvorlagenname'));
         const show = istBenutzerForm
             ? (entnahmeVorlagenBearbeiten || entnahmeBenutzerNeuAktiv || !entnahmeAuswahlBenutzerId)
             : istSammelForm
-                ? (entnahmeVorlagenBearbeiten || entnahmeSammelNeuAktiv)
+                ? (!istPacklisteAktiv && (entnahmeVorlagenBearbeiten || entnahmeSammelNeuAktiv))
                 : Boolean(entnahmeVorlagenBearbeiten);
 
         body.style.display = show ? 'block' : 'none';
@@ -1267,6 +1273,12 @@ function setzeEntnahmeVorlagenFormSichtbarkeit() {
         if (panel) panel.open = show;
     });
 
+    // Hinweis-Kachel anzeigen, solange eine Packliste als Entnahme aktiv ist
+    // und das "Vorlagen verwalten"-Overlay geöffnet ist.
+    const packlisteHinweis = document.getElementById('entnahme-sammel-packliste-hinweis');
+    if (packlisteHinweis) {
+        packlisteHinweis.style.display = (istPacklisteAktiv && entnahmeVorlagenBearbeiten) ? 'block' : 'none';
+    }
 }
 
 function entnahmeBenutzerVorlageInFormenLaden(vorlagenId = '') {
