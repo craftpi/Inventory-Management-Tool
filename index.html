@@ -7,6 +7,7 @@
     <link rel="icon" type="image/png" href="tri.ico">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         html { scroll-behavior: smooth; }
         body { font-family: Arial, sans-serif; background: linear-gradient(160deg, #e3000f 0%, #b8000c 100%); color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
@@ -1012,6 +1013,8 @@
                 <button class="btn lager-edit-only" style="display:none;" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
+                <button class="btn" style="background-color: #16a085;" onclick="oeffneRueckgabeKameraModal()">📷 Rückgabe (Kamera)</button>
+                <button class="btn" style="background-color: #2980b9;" onclick="starteRueckgabeNfc()">📶 Rückgabe (NFC)</button>
             </div>
         </div>
         <div class="table-responsive">
@@ -1312,6 +1315,19 @@
         <a href="#" onclick="openRechtliches(event, 'technikModal')" style="text-decoration: none;">Technik-Info</a>
     </p>
     <p>&copy; 2026 Trisport Erding. Alle Rechte vorbehalten.</p>
+</div>
+
+<div id="rueckgabeKameraModal" class="modal" onclick="if (event.target === this) schliesseRueckgabeKameraModal()">
+    <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="schliesseRueckgabeKameraModal()" title="Schließen" aria-label="Schließen">✕</button>
+        <h2>📷 Schnell-Rückgabe – Kamera</h2>
+        <p style="font-size: 0.85em; color: #666;">Etikett des Artikels vor die Kamera halten. Der Lagerbestand wird automatisch um +1 erhöht.</p>
+        <div id="rueckgabe-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
+        <p id="rueckgabe-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
+        <div class="flex-buttons">
+            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseRueckgabeKameraModal()">Schließen</button>
+        </div>
+    </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

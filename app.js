@@ -93,6 +93,11 @@ let entnahmeSammelVorlageBestaetigtFuerId = '';
 let entnahmeSammelAutoSaveInFlight = false;
 let entnahmeSammelAutoSaveNachholen = false;
 
+// --- Schnell-Rückgabe (Pool-Ausgleich) ---
+let rueckgabeQrScanner = null;      // aktive html5-qrcode Instanz
+let rueckgabeScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
+let rueckgabeNfcReader = null;      // aktiver NDEFReader
+
 function holeLokaleSession() {
     try {
         const raw = window.localStorage.getItem(LOCAL_SESSION_STORAGE_KEY);
@@ -4027,4 +4032,159 @@ async function formularAntwortenLaden() {
 
     ziel.style.display = 'block';
     ziel.innerHTML = html;
+}
+
+// =========================================================================
+// SCHNELL-RÜCKGABE (POOL-AUSGLEICH) für Helfer beim Abbau
+// Scan-Format (QR-Code UND NFC-Tag identisch): "artikel:<artikel_id>"
+// Bucht +1 auf den ERSTEN gefundenen bestand-Eintrag dieses Artikels.
+// =========================================================================
+
+/**
+ * Zentrale Verarbeitung eines gescannten Codes, egal ob er von der Kamera
+ * (QR/Barcode) oder von einem NFC-Tag kommt.
+ */
+async function verarbeiteRueckgabeScan(rawCode) {
+    if (rueckgabeScanSperre) return; // kurz nach einem Treffer: weitere Scans ignorieren
+
+    const code = String(rawCode || '').trim();
+    const match = /^artikel:(.+)$/i.exec(code);
+
+    if (!match) {
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        showToast('Unbekannter Code: "' + code + '" (erwartet: artikel:ID)', 'error');
+        return;
+    }
+
+    const artikelId = match[1].trim();
+    rueckgabeScanSperre = true; // sofort sperren, noch bevor die DB-Antwort da ist
+
+    const statusEl = document.getElementById('rueckgabe-scanner-status');
+    if (statusEl) statusEl.innerText = 'Buche zurück…';
+
+    try {
+        // 1. Ersten Bestandseintrag (= Lagerort) für diesen Artikel suchen
+        const { data: bestandEintraege, error: fehlerSuche } = await dbClient
+            .from('bestand')
+            .select('id, menge, artikel_id, artikel(id, name)')
+            .eq('artikel_id', artikelId)
+            .limit(1);
+
+        if (fehlerSuche) throw fehlerSuche;
+
+        if (!bestandEintraege || bestandEintraege.length === 0) {
+            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+            showToast('Kein Lagerplatz für Artikel-ID ' + artikelId + ' gefunden.', 'error');
+            return;
+        }
+
+        const eintrag = bestandEintraege[0];
+        const neueMenge = (Number(eintrag.menge) || 0) + 1;
+        const artikelName = eintrag.artikel?.name || ('Artikel ' + artikelId);
+
+        // 2. Menge um +1 erhöhen
+        const { error: fehlerUpdate } = await dbClient
+            .from('bestand')
+            .update({ menge: neueMenge })
+            .eq('id', eintrag.id);
+
+        if (fehlerUpdate) throw fehlerUpdate;
+
+        // 3. Erfolg: haptisches + visuelles Feedback, Tabelle neu laden
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast('✅ ' + artikelName + ' zurückgebucht (jetzt ' + neueMenge + ')', 'success');
+        if (statusEl) statusEl.innerText = '✅ ' + artikelName + ' gebucht – bereit für nächsten Scan';
+
+        await ladeAlles();
+
+    } catch (err) {
+        console.error(err);
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        showToast('Fehler bei der Rückgabe: ' + (err.message || err), 'error');
+        if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
+    } finally {
+        // Sperre nach kurzer Pause wieder aufheben, damit derselbe Artikel
+        // nicht versehentlich doppelt gebucht wird, aber der/die nächste
+        // Artikel zügig gescannt werden kann.
+        setTimeout(() => { rueckgabeScanSperre = false; }, 2500);
+    }
+}
+
+/**
+ * Öffnet das Kamera-Scanner-Modal und startet html5-qrcode.
+ */
+function oeffneRueckgabeKameraModal() {
+    const modal = document.getElementById('rueckgabeKameraModal');
+    const statusEl = document.getElementById('rueckgabe-scanner-status');
+    modal.style.display = 'block';
+    rueckgabeScanSperre = false;
+    if (statusEl) statusEl.innerText = 'Kamera wird gestartet…';
+
+    rueckgabeQrScanner = new Html5Qrcode('rueckgabe-qr-reader');
+    rueckgabeQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        (decodedText) => {
+            if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
+            verarbeiteRueckgabeScan(decodedText);
+        },
+        () => { /* pro Frame kein Treffer - das ist normal, ignorieren */ }
+    ).then(() => {
+        if (statusEl) statusEl.innerText = 'Bereit – Etikett vor die Kamera halten.';
+    }).catch(err => {
+        console.error(err);
+        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
+        schliesseRueckgabeKameraModal();
+    });
+}
+
+/**
+ * Stoppt die Kamera sauber und schließt das Modal.
+ */
+function schliesseRueckgabeKameraModal() {
+    if (rueckgabeQrScanner) {
+        rueckgabeQrScanner.stop()
+            .then(() => rueckgabeQrScanner.clear())
+            .catch(() => { /* Kamera war evtl. schon gestoppt - ignorieren */ })
+            .finally(() => { rueckgabeQrScanner = null; });
+    }
+    document.getElementById('rueckgabeKameraModal').style.display = 'none';
+}
+
+/**
+ * Startet den nativen Web-NFC-Reader (Chrome/Android, benötigt HTTPS).
+ * Läuft ohne Modal im Hintergrund weiter, bis die Seite verlassen wird.
+ */
+async function starteRueckgabeNfc() {
+    if (!('NDEFReader' in window)) {
+        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android, HTTPS erforderlich).', 'error');
+        return;
+    }
+
+    try {
+        rueckgabeScanSperre = false;
+        const reader = new NDEFReader();
+        await reader.scan();
+        rueckgabeNfcReader = reader;
+        showToast('📶 NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+
+        reader.onreading = (event) => {
+            try {
+                const record = event.message.records[0];
+                const decoder = new TextDecoder(record.encoding || 'utf-8');
+                const text = decoder.decode(record.data);
+                verarbeiteRueckgabeScan(text);
+            } catch (e) {
+                console.error(e);
+                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
+            }
+        };
+
+        reader.onreadingerror = () => {
+            showToast('Lesefehler beim NFC-Tag. Bitte erneut halten.', 'error');
+        };
+    } catch (err) {
+        console.error(err);
+        showToast('NFC-Scan konnte nicht gestartet werden: ' + (err.message || err), 'error');
+    }
 }
