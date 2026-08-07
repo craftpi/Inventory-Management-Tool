@@ -244,6 +244,55 @@
             line-height: 1.35;
         }
 
+        .etiketten-toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .etiketten-liste {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .etikett-zeile {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 10px 12px;
+            border: 1px solid #d9e3ec;
+            border-radius: 10px;
+            background: #fbfdff;
+            flex-wrap: wrap;
+        }
+        .etikett-qr {
+            width: 90px;
+            height: 90px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+            border: 1px dashed #c9d5df;
+            border-radius: 8px;
+        }
+        .etikett-info {
+            flex: 1;
+            min-width: 140px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .etikett-info small { color: #7f8c8d; }
+        .etikett-aktionen {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .etikett-aktionen .btn { padding: 8px 12px; font-size: 0.85em; }
+
         .survey-page {
             max-width: 760px;
             margin: 0 auto;
@@ -762,6 +811,20 @@
                     <button class="btn" style="background:#34495e; width:auto;" onclick="zurHauptseiteZurueck()">Zur Hauptseite</button>
                 </div>
 
+                <div class="entnahme-summary-card" style="margin-bottom:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <strong>🔄 Schnell-Rückgabe</strong>
+                            <p style="margin:4px 0 0; color:#5f6b77; font-size:0.9em;">Für Helfer beim Abbau: Artikel-Etikett scannen, der Lagerbestand wird automatisch um +1 erhöht.</p>
+                        </div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button class="btn" style="background:#16a085; width:auto;" onclick="oeffneRueckgabeKameraModal()">📷 Kamera-Scan</button>
+                            <button class="btn" style="background:#2980b9; width:auto;" onclick="starteRueckgabeNfc()">📶 NFC-Scan (Android)</button>
+                        </div>
+                    </div>
+                    <p style="margin:10px 0 0; font-size:0.8em; color:#8a97a3;">iPhone: NFC-Tag oder QR-Etikett einfach mit der normalen Kamera/NFC des Handys antippen bzw. scannen – die Rückgabe wird automatisch gebucht, sobald die Seite sich öffnet.</p>
+                </div>
+
                 <details class="entnahme-accordion" style="margin-bottom: 14px;" id="entnahme-historie-panel">
                     <summary>Aktuelle Entnahmen</summary>
                     <div class="entnahme-accordion-body">
@@ -985,7 +1048,23 @@
             </div>
         </div>
     </div>
-    
+
+    <div id="etiketten-ansicht" style="display:none; padding: 30px 0;">
+        <div class="survey-page" style="max-width: 900px;">
+            <h1>🏷️ Artikel-Etiketten</h1>
+            <p class="survey-note">Erzeugt für jeden Artikel einen QR-Code (öffnet automatisch die Schnell-Rückgabe). Auf Android können damit auch direkt leere NFC-Tags beschrieben werden.</p>
+
+            <div class="etiketten-toolbar">
+                <input type="text" id="etiketten-suche" placeholder="🔍 Artikel suchen…" oninput="renderArtikelEtikettenListe()" style="flex:1; min-width:200px; padding:10px; border:2px solid #3498db; border-radius:8px; box-sizing:border-box;">
+                <button class="btn" style="background:#1f5f8b; width:auto;" onclick="druckeAlleEtiketten()">🖨️ Alle drucken</button>
+            </div>
+
+            <div id="etiketten-liste" class="etiketten-liste">
+                <p style="text-align:center; color:#7f8c8d;">Lade Artikel…</p>
+            </div>
+        </div>
+    </div>
+
     <div class="modus-switch">
         <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Lager-Modus</button>
         <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Modus</button>
@@ -1013,8 +1092,8 @@
                 <button class="btn lager-edit-only" style="display:none;" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Orte verwalten</button>
-                <button class="btn" style="background-color: #16a085;" onclick="oeffneRueckgabeKameraModal()">📷 Rückgabe (Kamera)</button>
-                <button class="btn" style="background-color: #2980b9;" onclick="starteRueckgabeNfc()">📶 Rückgabe (NFC)</button>
+                <button class="btn lager-edit-only" style="display:none; background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
+                <button class="btn" style="background-color: #16a085;" onclick="geheZuEntnahmeprotokoll()">🔄 Entnahmeprotokoll &amp; Rückgabe</button>
             </div>
         </div>
         <div class="table-responsive">

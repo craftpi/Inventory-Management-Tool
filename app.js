@@ -43,6 +43,7 @@ const ENTNAHME_AUDIT_TABLE = 'lager_entnahme_audit';
 const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular') === '1';
 const QRGEN_MODUS = new URLSearchParams(window.location.search).get('qrgen') === '1';
 const ENTNAHME_MODUS = new URLSearchParams(window.location.search).get('entnahme') === '1';
+const ETIKETTEN_MODUS = new URLSearchParams(window.location.search).get('etiketten') === '1';
 const INITIAL_REGAL_FILTER = new URLSearchParams(window.location.search).get('regal') || '';
 const LOCAL_SESSION_STORAGE_KEY = 'trilager_local_session_v2';
 const LOGIN_ATTEMPTS_STORAGE_KEY = 'trilager_login_attempts_v1';
@@ -2294,6 +2295,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
+    if (ETIKETTEN_MODUS) {
+        await initEtikettenModus();
+        return;
+    }
+
     initRegalQrTool();
 
     if (FORMULAR_MODUS) {
@@ -2307,6 +2313,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('login-overlay').style.display = 'none'; 
         ladeAlles(); 
         pruefeUndZeigeOnboarding(); 
+        pruefeUndVerarbeiteRueckgabeLink();
     } else { 
         document.getElementById('login-overlay').style.display = 'flex'; 
     }
@@ -2412,8 +2419,14 @@ async function handleLogin() {
             return;
         }
 
+        if (ETIKETTEN_MODUS) {
+            await initEtikettenModus();
+            return;
+        }
+
         ladeAlles();
         pruefeUndZeigeOnboarding();
+        pruefeUndVerarbeiteRueckgabeLink();
     }
 }
 
@@ -4041,22 +4054,47 @@ async function formularAntwortenLaden() {
 // =========================================================================
 
 /**
+ * Extrahiert die Artikel-ID aus einem gescannten Code. Unterstützt zwei Formate:
+ * 1. Einfacher Text "artikel:ID" (klassischer QR-/NFC-Text, In-App-Scanner)
+ * 2. Eine URL mit ?rueckgabe=ID (funktioniert auch mit der normalen Kamera-App
+ *    des Handys und mit dem NFC-Hintergrund-Lesen von iOS/Android, ganz ohne
+ *    Web-NFC-API)
+ */
+function extrahiereArtikelIdAusScan(rawText) {
+    const text = String(rawText || '').trim();
+    if (!text) return null;
+
+    const einfacherMatch = /^artikel:(.+)$/i.exec(text);
+    if (einfacherMatch) return einfacherMatch[1].trim();
+
+    try {
+        const url = new URL(text);
+        const id = url.searchParams.get('rueckgabe');
+        if (id) return id.trim();
+    } catch (e) {
+        // kein gültiges URL-Format - ignorieren, es war wohl kein Treffer
+    }
+
+    return null;
+}
+
+/**
  * Zentrale Verarbeitung eines gescannten Codes, egal ob er von der Kamera
- * (QR/Barcode) oder von einem NFC-Tag kommt.
+ * (QR/Barcode), von einem NFC-Tag oder vom automatischen Öffnen eines
+ * ?rueckgabe=ID-Links kommt.
  */
 async function verarbeiteRueckgabeScan(rawCode) {
     if (rueckgabeScanSperre) return; // kurz nach einem Treffer: weitere Scans ignorieren
 
     const code = String(rawCode || '').trim();
-    const match = /^artikel:(.+)$/i.exec(code);
+    const artikelId = extrahiereArtikelIdAusScan(code);
 
-    if (!match) {
+    if (!artikelId) {
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('Unbekannter Code: "' + code + '" (erwartet: artikel:ID)', 'error');
+        showToast('Unbekannter Code: "' + code + '"', 'error');
         return;
     }
 
-    const artikelId = match[1].trim();
     rueckgabeScanSperre = true; // sofort sperren, noch bevor die DB-Antwort da ist
 
     const statusEl = document.getElementById('rueckgabe-scanner-status');
@@ -4170,10 +4208,21 @@ async function starteRueckgabeNfc() {
 
         reader.onreading = (event) => {
             try {
-                const record = event.message.records[0];
-                const decoder = new TextDecoder(record.encoding || 'utf-8');
-                const text = decoder.decode(record.data);
-                verarbeiteRueckgabeScan(text);
+                let payload = '';
+                for (const record of event.message.records) {
+                    if (record.recordType === 'url' || record.recordType === 'absolute-url') {
+                        payload = new TextDecoder().decode(record.data);
+                    } else if (record.recordType === 'text') {
+                        const decoder = new TextDecoder(record.encoding || 'utf-8');
+                        payload = decoder.decode(record.data);
+                    }
+                    if (payload) break;
+                }
+                if (!payload) {
+                    showToast('NFC-Tag enthält kein lesbares Format.', 'error');
+                    return;
+                }
+                verarbeiteRueckgabeScan(payload);
             } catch (e) {
                 console.error(e);
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
@@ -4187,4 +4236,251 @@ async function starteRueckgabeNfc() {
         console.error(err);
         showToast('NFC-Scan konnte nicht gestartet werden: ' + (err.message || err), 'error');
     }
+}
+
+/**
+ * Navigiert von der Hauptseite zum Entnahmeprotokoll (dort liegen jetzt auch
+ * die Rückgabe-Buttons). Nutzt denselben Link wie der bestehende Teilen-Link.
+ */
+function geheZuEntnahmeprotokoll() {
+    window.location.href = gibEntnahmeLink();
+}
+
+/**
+ * Prüft beim Laden der Seite, ob ein ?rueckgabe=ID-Parameter in der URL
+ * steckt (z.B. weil ein iPhone einen NFC-Tag oder QR-Code mit der System-
+ * Kamera/NFC geöffnet hat) und bucht die Rückgabe automatisch. Entfernt den
+ * Parameter danach sofort aus der URL, damit ein Neuladen der Seite nicht
+ * versehentlich nochmal bucht.
+ */
+function pruefeUndVerarbeiteRueckgabeLink() {
+    const params = new URLSearchParams(window.location.search);
+    const artikelId = params.get('rueckgabe');
+    if (!artikelId) return;
+
+    params.delete('rueckgabe');
+    const restQuery = params.toString();
+    const neueUrl = window.location.pathname + (restQuery ? '?' + restQuery : '') + window.location.hash;
+    window.history.replaceState({}, '', neueUrl);
+
+    verarbeiteRueckgabeScan('artikel:' + artikelId);
+}
+
+// =========================================================================
+// ARTIKEL-ETIKETTEN (QR-Code & NFC-Tag pro Artikel erzeugen/beschreiben)
+// Aufrufbar über index.html?etiketten=1
+// =========================================================================
+
+/**
+ * Öffnet das Etiketten-Tool in einem neuen Tab (analog zum bestehenden
+ * QR-Generator-Fenster für Regale).
+ */
+function oeffneEtikettenTool() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('etiketten', '1');
+    window.open(url.toString(), '_blank', 'noopener');
+}
+
+/**
+ * Baut den Rückgabe-Link für einen einzelnen Artikel. Dieser Link wird sowohl
+ * im QR-Code als auch im NFC-Tag hinterlegt.
+ */
+function gibArtikelRueckgabeLink(artikelId) {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('rueckgabe', artikelId);
+    return url.toString();
+}
+
+async function initEtikettenModus() {
+    const view = document.getElementById('etiketten-ansicht');
+    if (view) view.style.display = 'block';
+
+    const appContainer = document.querySelector('.container');
+    if (appContainer) {
+        appContainer.style.background = 'transparent';
+        appContainer.style.boxShadow = 'none';
+        appContainer.style.maxWidth = '1000px';
+        appContainer.style.padding = '0';
+        Array.from(appContainer.children).forEach(child => {
+            child.style.display = (child.id === 'etiketten-ansicht') ? 'block' : 'none';
+        });
+    }
+
+    const appFooter = document.querySelector('.app-footer');
+    if (appFooter) appFooter.style.display = '';
+
+    const hoverDate = document.getElementById('hover-date-info');
+    const hoverRes = document.getElementById('hover-res-info');
+    if (hoverDate) hoverDate.style.display = 'none';
+    if (hoverRes) hoverRes.style.display = 'none';
+
+    document.title = 'Artikel-Etiketten';
+
+    const localSession = holeLokaleSession();
+    if (!localSession) {
+        const loginOverlay = document.getElementById('login-overlay');
+        if (loginOverlay) loginOverlay.style.display = 'flex';
+        return; // handleLogin() ruft bei ETIKETTEN_MODUS erneut initEtikettenModus() auf
+    }
+
+    setzeAuthToken(localSession.token);
+    const loginOverlay = document.getElementById('login-overlay');
+    if (loginOverlay) loginOverlay.style.display = 'none';
+
+    await ladeLagerorte();
+    await ladeBestand(); // füllt alleArtikelInfos
+    renderArtikelEtikettenListe();
+}
+
+function renderArtikelEtikettenListe() {
+    const ziel = document.getElementById('etiketten-liste');
+    if (!ziel) return;
+
+    const suchfeld = document.getElementById('etiketten-suche');
+    const suchtext = (suchfeld?.value || '').trim().toLowerCase();
+
+    const artikelGefiltert = [...alleArtikelInfos]
+        .filter(a => !suchtext
+            || (a.name || '').toLowerCase().includes(suchtext)
+            || (a.kategorie || '').toLowerCase().includes(suchtext))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+
+    if (artikelGefiltert.length === 0) {
+        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d;">Keine Artikel gefunden.</p>';
+        return;
+    }
+
+    ziel.innerHTML = '';
+    artikelGefiltert.forEach(art => {
+        const link = gibArtikelRueckgabeLink(art.id);
+        const nameEscaped = escapeHtml(art.name);
+        const nameJs = String(art.name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+        const zeile = document.createElement('div');
+        zeile.className = 'etikett-zeile';
+        zeile.innerHTML = `
+            <div class="etikett-qr" id="etikett-qr-${art.id}"></div>
+            <div class="etikett-info">
+                <strong>${nameEscaped}</strong>
+                <small>${escapeHtml(art.kategorie || 'Ohne Kategorie')}</small>
+            </div>
+            <div class="etikett-aktionen">
+                <button class="btn" style="background:#1f5f8b;" onclick="downloadArtikelQr('${art.id}', '${nameJs}')">⬇️ QR (PNG)</button>
+                <button class="btn" style="background:#2980b9;" onclick="schreibeNfcTagFuerArtikel('${art.id}', '${nameJs}')">📶 NFC schreiben</button>
+            </div>
+        `;
+        ziel.appendChild(zeile);
+
+        new QRCode(zeile.querySelector('.etikett-qr'), {
+            text: link,
+            width: 90,
+            height: 90,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+        });
+    });
+}
+
+function downloadArtikelQr(artikelId, artikelName) {
+    const container = document.getElementById('etikett-qr-' + artikelId);
+    const canvas = container ? container.querySelector('canvas') : null;
+    if (!canvas) {
+        showToast('QR-Code konnte nicht erzeugt werden.', 'error');
+        return;
+    }
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = canvas.width;
+    exportCanvas.height = canvas.height;
+    const ctx = exportCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(canvas, 0, 0);
+
+    const safeName = String(artikelName || 'artikel').replace(/[^a-z0-9-_]+/gi, '_') || 'artikel';
+    const anchor = document.createElement('a');
+    anchor.href = exportCanvas.toDataURL('image/png');
+    anchor.download = `qr_${safeName}.png`;
+    anchor.click();
+}
+
+/**
+ * Beschreibt einen leeren NFC-Tag mit dem Rückgabe-Link des Artikels.
+ * Funktioniert nur mit Chrome auf Android (Web NFC), da iOS Safari das
+ * Schreiben von NFC-Tags aus dem Browser heraus nicht erlaubt.
+ */
+async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
+    if (!('NDEFReader' in window)) {
+        showToast('NFC-Beschreiben wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android).', 'error');
+        return;
+    }
+
+    try {
+        const link = gibArtikelRueckgabeLink(artikelId);
+        const writer = new NDEFReader();
+        showToast('📶 Leeren NFC-Tag jetzt an das Handy halten…', 'success');
+        await writer.write({ records: [{ recordType: 'url', data: link }] });
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
+    } catch (err) {
+        console.error(err);
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        showToast('Schreiben fehlgeschlagen: ' + (err.message || err), 'error');
+    }
+}
+
+/**
+ * Öffnet ein Druckfenster mit allen Artikel-QR-Codes als Etiketten-Bogen.
+ */
+function druckeAlleEtiketten() {
+    const artikelListe = [...alleArtikelInfos].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+    if (artikelListe.length === 0) {
+        showToast('Keine Artikel zum Drucken vorhanden.', 'warning');
+        return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+        showToast('Popup wurde blockiert. Bitte Popups für diese Seite erlauben.', 'error');
+        return;
+    }
+
+    let itemsHtml = '';
+    artikelListe.forEach(art => {
+        const link = gibArtikelRueckgabeLink(art.id);
+        itemsHtml += `<div class="etikett-print-item">
+            <div class="etikett-print-qr" data-link="${escapeHtml(link)}"></div>
+            <div class="etikett-print-name">${escapeHtml(art.name)}</div>
+        </div>`;
+    });
+
+    const html = `<html><head><title>Artikel-Etiketten drucken</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+        <style>
+            body { font-family: sans-serif; padding: 10mm; }
+            .etikett-print-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10mm; }
+            .etikett-print-item { text-align: center; page-break-inside: avoid; }
+            .etikett-print-name { margin-top: 4px; font-size: 11px; word-break: break-word; }
+            .no-print { margin-bottom: 15px; }
+            @media print { .no-print { display: none; } @page { size: A4; margin: 10mm; } }
+        </style>
+        </head><body>
+            <button class="no-print" onclick="window.print()" style="padding:10px; cursor:pointer;">🖨️ Jetzt drucken</button>
+            <div class="etikett-print-grid" id="etikett-print-grid">${itemsHtml}</div>
+            <script>
+                window.addEventListener('load', function () {
+                    document.querySelectorAll('.etikett-print-qr').forEach(function (el) {
+                        new QRCode(el, { text: el.dataset.link, width: 110, height: 110, correctLevel: QRCode.CorrectLevel.M });
+                    });
+                });
+            <\/script>
+        </body></html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
 }
