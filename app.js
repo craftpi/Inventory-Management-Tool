@@ -94,10 +94,15 @@ let entnahmeSammelVorlageBestaetigtFuerId = '';
 let entnahmeSammelAutoSaveInFlight = false;
 let entnahmeSammelAutoSaveNachholen = false;
 
-// --- Schnell-Rückgabe (Pool-Ausgleich) ---
+// --- Schnell-Rückgabe (Pool-Ausgleich) = EINBUCHEN per Scan ---
 let rueckgabeQrScanner = null;      // aktive html5-qrcode Instanz
 let rueckgabeScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
 let rueckgabeNfcReader = null;      // aktiver NDEFReader
+
+// --- Schnell-Ausbuchen (Entnahme-Wizard Schritt 3) = AUSBUCHEN per Scan ---
+let ausbuchenQrScanner = null;      // aktive html5-qrcode Instanz
+let ausbuchenScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
+let ausbuchenNfcReader = null;      // aktiver NDEFReader
 
 function holeLokaleSession() {
     try {
@@ -4079,11 +4084,45 @@ function extrahiereArtikelIdAusScan(rawText) {
 }
 
 /**
+ * Prüft anhand von bestand.letzte_scan_richtung, ob ein Scan in dieselbe
+ * Richtung geht wie der zuletzt für diesen Bestandseintrag verarbeitete Scan
+ * (z.B. zweimal hintereinander "eingebucht", ohne dass dazwischen
+ * ausgebucht wurde). Das erkennt auch Duplikate, die Minuten oder Stunden
+ * auseinander liegen und nicht mehr von der kurzen Zeit-Sperre
+ * (rueckgabeScanSperre / ausbuchenScanSperre) abgefangen werden.
+ *
+ * Gibt bei einem erkannten Duplikat { blockiert: true } zurück, OHNE die
+ * Datenbank zu verändern. Der Aufrufer muss dann selbst entscheiden
+ * (z.B. Rückfrage an den Nutzer per zeigeBestaetigungsDialog) und bei
+ * Bestätigung erneut mit erzwingen=true aufrufen.
+ */
+async function pruefeUndSetzeScanRichtung(bestandEintrag, richtung, erzwingen) {
+    if (!erzwingen && bestandEintrag.letzte_scan_richtung === richtung) {
+        return { blockiert: true };
+    }
+
+    const { error } = await dbClient
+        .from('bestand')
+        .update({
+            letzte_scan_richtung: richtung,
+            letzte_scan_zeit: new Date().toISOString()
+        })
+        .eq('id', bestandEintrag.id);
+
+    if (error) throw error;
+    return { blockiert: false };
+}
+
+/**
  * Zentrale Verarbeitung eines gescannten Codes, egal ob er von der Kamera
  * (QR/Barcode), von einem NFC-Tag oder vom automatischen Öffnen eines
- * ?rueckgabe=ID-Links kommt.
+ * ?rueckgabe=ID-Links kommt. richtung ist immer 'ein' (Einbuchen).
+ *
+ * @param {string} rawCode Der gescannte Roh-Text/URL.
+ * @param {boolean} erzwingen Wenn true, wird die Duplikat-Prüfung übersprungen
+ *   (Nutzer hat die Rückfrage "Trotzdem buchen?" bestätigt).
  */
-async function verarbeiteRueckgabeScan(rawCode) {
+async function verarbeiteRueckgabeScan(rawCode, erzwingen = false) {
     if (rueckgabeScanSperre) return; // kurz nach einem Treffer: weitere Scans ignorieren
 
     const code = String(rawCode || '').trim();
@@ -4104,7 +4143,7 @@ async function verarbeiteRueckgabeScan(rawCode) {
         // 1. Ersten Bestandseintrag (= Lagerort) für diesen Artikel suchen
         const { data: bestandEintraege, error: fehlerSuche } = await dbClient
             .from('bestand')
-            .select('id, menge, artikel_id, artikel(id, name)')
+            .select('id, menge, artikel_id, letzte_scan_richtung, artikel(id, name)')
             .eq('artikel_id', artikelId)
             .limit(1);
 
@@ -4117,8 +4156,31 @@ async function verarbeiteRueckgabeScan(rawCode) {
         }
 
         const eintrag = bestandEintraege[0];
-        const neueMenge = (Number(eintrag.menge) || 0) + 1;
         const artikelName = eintrag.artikel?.name || ('Artikel ' + artikelId);
+
+        // 1b. Duplikat-Prüfung: wurde dieser Artikel zuletzt schon eingebucht?
+        const { blockiert } = await pruefeUndSetzeScanRichtung(eintrag, 'ein', erzwingen);
+        if (blockiert) {
+            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+            if (statusEl) statusEl.innerText = '⚠️ Bereits eingebucht – manuelle Prüfung nötig';
+
+            rueckgabeScanSperre = false; // sofortiges erneutes Scannen/Bestätigen erlauben
+            const ok = await zeigeBestaetigungsDialog({
+                titel: 'Bereits eingebucht',
+                text: `"${artikelName}" wurde zuletzt bereits eingebucht. Wurde wirklich erneut ein Exemplar zurückgegeben?`,
+                okText: 'Ja, trotzdem buchen',
+                okFarbe: '#e67e22',
+                icon: '⚠️'
+            });
+            if (ok) {
+                await verarbeiteRueckgabeScan(code, true);
+            } else {
+                showToast('Buchung abgebrochen – bitte Bestand manuell prüfen.', 'warning');
+            }
+            return;
+        }
+
+        const neueMenge = (Number(eintrag.menge) || 0) + 1;
 
         // 2. Menge um +1 erhöhen
         const { error: fehlerUpdate } = await dbClient
@@ -4223,6 +4285,205 @@ async function starteRueckgabeNfc() {
                     return;
                 }
                 verarbeiteRueckgabeScan(payload);
+            } catch (e) {
+                console.error(e);
+                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
+            }
+        };
+
+        reader.onreadingerror = () => {
+            showToast('Lesefehler beim NFC-Tag. Bitte erneut halten.', 'error');
+        };
+    } catch (err) {
+        console.error(err);
+        showToast('NFC-Scan konnte nicht gestartet werden: ' + (err.message || err), 'error');
+    }
+}
+
+// =========================================================================
+// SCHNELL-AUSBUCHEN (Entnahme-Wizard Schritt 3) per QR/NFC-Scan
+// Scan-Format identisch zur Rückgabe: "artikel:<artikel_id>"
+// Fügt den gescannten Artikel mit Menge 1 zur aktuellen Materialliste
+// (entnahmeMaterialien) hinzu, statt direkt die Datenbank zu ändern - die
+// eigentliche Buchung passiert wie gehabt erst beim Abschließen des Wizards.
+// =========================================================================
+
+/**
+ * Zentrale Verarbeitung eines gescannten Codes für das Ausbuchen. richtung
+ * ist immer 'aus'. Nutzt dieselbe Duplikat-Prüfung wie das Einbuchen, nur
+ * mit umgekehrter Richtung, sodass ein Artikel, der zuletzt eingebucht
+ * wurde, beim Ausbuchen natürlich nicht blockiert wird (und umgekehrt).
+ *
+ * @param {string} rawCode Der gescannte Roh-Text.
+ * @param {boolean} erzwingen Wenn true, wird die Duplikat-Prüfung übersprungen.
+ */
+async function verarbeiteAusbuchenScan(rawCode, erzwingen = false) {
+    if (ausbuchenScanSperre) return;
+
+    const code = String(rawCode || '').trim();
+    const artikelId = extrahiereArtikelIdAusScan(code);
+
+    if (!artikelId) {
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        showToast('Unbekannter Code: "' + code + '"', 'error');
+        return;
+    }
+
+    ausbuchenScanSperre = true;
+
+    const statusEl = document.getElementById('ausbuchen-scanner-status');
+    if (statusEl) statusEl.innerText = 'Buche aus…';
+
+    try {
+        const { data: bestandEintraege, error: fehlerSuche } = await dbClient
+            .from('bestand')
+            .select('id, menge, artikel_id, letzte_scan_richtung, artikel(id, name, kategorie, einheit)')
+            .eq('artikel_id', artikelId)
+            .limit(1);
+
+        if (fehlerSuche) throw fehlerSuche;
+
+        if (!bestandEintraege || bestandEintraege.length === 0) {
+            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+            showToast('Kein Lagerplatz für Artikel-ID ' + artikelId + ' gefunden.', 'error');
+            return;
+        }
+
+        const eintrag = bestandEintraege[0];
+        const artikel = eintrag.artikel || {};
+        const artikelName = artikel.name || ('Artikel ' + artikelId);
+
+        // Duplikat-Prüfung: wurde dieser Artikel zuletzt schon ausgebucht?
+        const { blockiert } = await pruefeUndSetzeScanRichtung(eintrag, 'aus', erzwingen);
+        if (blockiert) {
+            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+            if (statusEl) statusEl.innerText = '⚠️ Bereits ausgebucht – manuelle Prüfung nötig';
+
+            ausbuchenScanSperre = false;
+            const ok = await zeigeBestaetigungsDialog({
+                titel: 'Bereits ausgebucht',
+                text: `"${artikelName}" wurde zuletzt bereits ausgebucht. Wurde wirklich noch ein Exemplar entnommen?`,
+                okText: 'Ja, trotzdem hinzufügen',
+                okFarbe: '#e67e22',
+                icon: '⚠️'
+            });
+            if (ok) {
+                await verarbeiteAusbuchenScan(code, true);
+            } else {
+                showToast('Nicht hinzugefügt – bitte Materialliste manuell prüfen.', 'warning');
+            }
+            return;
+        }
+
+        // Wie beim manuellen Hinzufügen (entnahmeMaterialHinzufuegen): bereits
+        // vorhandenen Eintrag hochzählen statt einen zweiten anzulegen.
+        const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
+        if (vorhandenerEintrag) {
+            vorhandenerEintrag.menge += 1;
+        } else {
+            entnahmeMaterialien.push({
+                artikel_id: artikel.id,
+                label: artikelName,
+                kategorie: artikel.kategorie || '',
+                einheit: artikel.einheit || 'Stück',
+                menge: 1
+            });
+        }
+
+        renderEntnahmeMaterialien();
+        entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
+        entnahmeWizardAktualisieren();
+
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast('✅ ' + artikelName + ' zur Entnahme hinzugefügt', 'success');
+        if (statusEl) statusEl.innerText = '✅ ' + artikelName + ' hinzugefügt – bereit für nächsten Scan';
+
+    } catch (err) {
+        console.error(err);
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
+        if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
+    } finally {
+        setTimeout(() => { ausbuchenScanSperre = false; }, 2500);
+    }
+}
+
+/**
+ * Öffnet das Kamera-Scanner-Modal für das Ausbuchen und startet html5-qrcode.
+ */
+function oeffneAusbuchenKameraModal() {
+    const modal = document.getElementById('ausbuchenKameraModal');
+    const statusEl = document.getElementById('ausbuchen-scanner-status');
+    modal.style.display = 'block';
+    ausbuchenScanSperre = false;
+    if (statusEl) statusEl.innerText = 'Kamera wird gestartet…';
+
+    ausbuchenQrScanner = new Html5Qrcode('ausbuchen-qr-reader');
+    ausbuchenQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        (decodedText) => {
+            if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
+            verarbeiteAusbuchenScan(decodedText);
+        },
+        () => { /* pro Frame kein Treffer - das ist normal, ignorieren */ }
+    ).then(() => {
+        if (statusEl) statusEl.innerText = 'Bereit – Etikett vor die Kamera halten.';
+    }).catch(err => {
+        console.error(err);
+        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
+        schliesseAusbuchenKameraModal();
+    });
+}
+
+/**
+ * Stoppt die Kamera sauber und schließt das Modal.
+ */
+function schliesseAusbuchenKameraModal() {
+    if (ausbuchenQrScanner) {
+        ausbuchenQrScanner.stop()
+            .then(() => ausbuchenQrScanner.clear())
+            .catch(() => { /* Kamera war evtl. schon gestoppt - ignorieren */ })
+            .finally(() => { ausbuchenQrScanner = null; });
+    }
+    document.getElementById('ausbuchenKameraModal').style.display = 'none';
+}
+
+/**
+ * Startet den nativen Web-NFC-Reader (Chrome/Android, benötigt HTTPS) für
+ * das Ausbuchen. Läuft ohne Modal im Hintergrund weiter, solange Schritt 3
+ * des Wizards geöffnet ist.
+ */
+async function starteAusbuchenNfc() {
+    if (!('NDEFReader' in window)) {
+        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android, HTTPS erforderlich).', 'error');
+        return;
+    }
+
+    try {
+        ausbuchenScanSperre = false;
+        const reader = new NDEFReader();
+        await reader.scan();
+        ausbuchenNfcReader = reader;
+        showToast('📶 NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+
+        reader.onreading = (event) => {
+            try {
+                let payload = '';
+                for (const record of event.message.records) {
+                    if (record.recordType === 'url' || record.recordType === 'absolute-url') {
+                        payload = new TextDecoder().decode(record.data);
+                    } else if (record.recordType === 'text') {
+                        const decoder = new TextDecoder(record.encoding || 'utf-8');
+                        payload = decoder.decode(record.data);
+                    }
+                    if (payload) break;
+                }
+                if (!payload) {
+                    showToast('NFC-Tag enthält kein lesbares Format.', 'error');
+                    return;
+                }
+                verarbeiteAusbuchenScan(payload);
             } catch (e) {
                 console.error(e);
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');

@@ -889,6 +889,21 @@
                     <section class="entnahme-card entnahme-step-panel" data-entnahme-step-panel="3">
                         <h3 style="margin-top: 0;">Schritt 3 von 3: Material hinzufügen</h3>
                         <p style="margin-top:0; color:#5f6b77;">Material suchen, Menge setzen und direkt hinzufügen.</p>
+
+                        <div class="entnahme-summary-card" style="margin-bottom:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                                <div>
+                                    <strong>📤 Schnell-Ausbuchen</strong>
+                                    <p style="margin:4px 0 0; color:#5f6b77; font-size:0.9em;">Artikel-Etikett scannen, der Artikel wird automatisch mit Menge 1 zur Liste unten hinzugefügt.</p>
+                                </div>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button class="btn" style="background:#c0392b; width:auto;" onclick="oeffneAusbuchenKameraModal()">📷 Kamera-Scan</button>
+                                    <button class="btn" style="background:#2980b9; width:auto;" onclick="starteAusbuchenNfc()">📶 NFC-Scan (Android)</button>
+                                </div>
+                            </div>
+                            <p style="margin:10px 0 0; font-size:0.8em; color:#8a97a3;">iPhone: für NFC-Tags die Kamera-Scan-Funktion nutzen (QR-Etikett) – Web-NFC im Browser gibt es auf iOS nicht.</p>
+                        </div>
+
                         <div class="entnahme-grid" style="grid-template-columns: 1.5fr 0.45fr auto; align-items: end;">
                             <div class="form-group" style="margin-bottom:0;">
                                 <label for="entnahme-artikel-input">Material</label>
@@ -1405,6 +1420,19 @@
         <p id="rueckgabe-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
         <div class="flex-buttons">
             <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseRueckgabeKameraModal()">Schließen</button>
+        </div>
+    </div>
+</div>
+
+<div id="ausbuchenKameraModal" class="modal" onclick="if (event.target === this) schliesseAusbuchenKameraModal()">
+    <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="schliesseAusbuchenKameraModal()" title="Schließen" aria-label="Schließen">✕</button>
+        <h2>📷 Schnell-Ausbuchen – Kamera</h2>
+        <p style="font-size: 0.85em; color: #666;">Etikett des Artikels vor die Kamera halten. Der Artikel wird automatisch mit Menge 1 zur Materialliste hinzugefügt.</p>
+        <div id="ausbuchen-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
+        <p id="ausbuchen-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
+        <div class="flex-buttons">
+            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseAusbuchenKameraModal()">Schließen</button>
         </div>
     </div>
 </div>
