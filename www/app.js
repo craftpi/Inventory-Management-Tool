@@ -3,6 +3,8 @@
 const SUPABASE_URL = 'https://trilager-api.pius-s.de';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRyaWxhZ2VyIiwiaWF0IjoxNzg1ODA3MzI1LCJleHAiOjIxMDExNjczMjV9.COsEZ-KOGycjE2S1eALGohmmjosW8CZs038jezg6lSU';
 
+const { NFC, Ndef } = window.nfc || {};
+
 function storageAvailable(type) {
     try {
         var storage = window[type];
@@ -4271,17 +4273,30 @@ function schliesseRueckgabeKameraModal() {
 }
 
 async function starteRueckgabeNfc() {
-    // 1. Prüfen, ob wir in der nativen Android-App sind
-    if (window.TrisportApp) {
+    // 1. Prüfen, ob wir in der nativen App (Capacitor/Phonegap) sind
+    if (typeof window.nfc !== 'undefined') {
         rueckgabeScanSperre = false;
-        window.TrisportApp.startNfcRead('rueckgabe');
         showToast('📶 App-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+        
+        window.nfc.addNdefListener((nfcEvent) => {
+            try {
+                let payload = window.nfc.bytesToString(nfcEvent.tag.ndefMessage[0].payload);
+                // Manche Tags haben Sprachkürzel (wie 'en' oder 'de') davor, die schneiden wir ab
+                if (payload.length > 3 && payload.charCodeAt(0) < 5) {
+                    payload = payload.substring(payload.charCodeAt(0) + 1);
+                }
+                verarbeiteRueckgabeScan(payload);
+                window.nfc.removeNdefListener(); // Hängt sich nach einem Scan wieder ab
+            } catch (e) {
+                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
+            }
+        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
         return;
     }
 
-    // 2. Fallback: Normaler Web-NFC Code für Chrome
+    // 2. Fallback für den normalen Web-Browser (Chrome)
     if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt.', 'error');
+        showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
         return;
     }
     try {
@@ -4303,22 +4318,13 @@ async function starteRueckgabeNfc() {
                     }
                     if (payload) break;
                 }
-                if (!payload) {
-                    showToast('NFC-Tag enthält kein lesbares Format.', 'error');
-                    return;
-                }
-                verarbeiteRueckgabeScan(payload);
+                if (payload) verarbeiteRueckgabeScan(payload);
             } catch (e) {
-                console.error(e);
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
         };
-        reader.onreadingerror = () => {
-            showToast('Lesefehler beim NFC-Tag. Bitte erneut halten.', 'error');
-        };
     } catch (err) {
-        console.error(err);
-        showToast('NFC-Scan konnte nicht gestartet werden: ' + (err.message || err), 'error');
+        showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
     }
 }
 
@@ -4446,17 +4452,29 @@ function schliesseAusbuchenKameraModal() {
 }
 
 async function starteAusbuchenNfc() {
-    // 1. Prüfen, ob wir in der nativen Android-App sind
-    if (window.TrisportApp) {
+    // 1. Prüfen, ob wir in der nativen App (Capacitor/Phonegap) sind
+    if (typeof window.nfc !== 'undefined') {
         ausbuchenScanSperre = false;
-        window.TrisportApp.startNfcRead('ausbuchen');
         showToast('📶 App-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+        
+        window.nfc.addNdefListener((nfcEvent) => {
+            try {
+                let payload = window.nfc.bytesToString(nfcEvent.tag.ndefMessage[0].payload);
+                if (payload.length > 3 && payload.charCodeAt(0) < 5) {
+                    payload = payload.substring(payload.charCodeAt(0) + 1);
+                }
+                verarbeiteAusbuchenScan(payload);
+                window.nfc.removeNdefListener();
+            } catch (e) {
+                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
+            }
+        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
         return;
     }
 
-    // 2. Fallback: Normaler Web-NFC Code für Chrome
+    // 2. Fallback für den normalen Web-Browser
     if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt.', 'error');
+        showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
         return;
     }
     try {
@@ -4478,22 +4496,13 @@ async function starteAusbuchenNfc() {
                     }
                     if (payload) break;
                 }
-                if (!payload) {
-                    showToast('NFC-Tag enthält kein lesbares Format.', 'error');
-                    return;
-                }
-                verarbeiteAusbuchenScan(payload);
+                if (payload) verarbeiteAusbuchenScan(payload);
             } catch (e) {
-                console.error(e);
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
         };
-        reader.onreadingerror = () => {
-            showToast('Lesefehler beim NFC-Tag. Bitte erneut halten.', 'error');
-        };
     } catch (err) {
-        console.error(err);
-        showToast('NFC-Scan konnte nicht gestartet werden: ' + (err.message || err), 'error');
+        showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
     }
 }
 
@@ -4671,16 +4680,27 @@ function downloadArtikelQr(artikelId, artikelName) {
 async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
     const link = gibArtikelRueckgabeLink(artikelId);
 
-    // 1. Prüfen, ob wir in der nativen Android-App sind
-    if (window.TrisportApp) {
-        window.TrisportApp.startNfcWrite(link);
+    // 1. Prüfen, ob wir in der nativen App sind
+    if (typeof window.nfc !== 'undefined') {
         showToast('📶 App: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
+        
+        window.nfc.addNdefListener(() => {
+            const record = window.ndef.uriRecord(link);
+            window.nfc.write([record], () => {
+                if (navigator.vibrate) navigator.vibrate(200);
+                showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
+                window.nfc.removeNdefListener();
+            }, (err) => {
+                showToast('Schreiben fehlgeschlagen: ' + err, 'error');
+                window.nfc.removeNdefListener();
+            });
+        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
         return;
     }
 
-    // 2. Fallback: Normaler Web-NFC Code für Chrome
+    // 2. Fallback für den normalen Web-Browser
     if (!('NDEFReader' in window)) {
-        showToast('NFC-Beschreiben wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android).', 'error');
+        showToast('NFC-Beschreiben wird nicht unterstützt.', 'error');
         return;
     }
     try {
@@ -4690,9 +4710,7 @@ async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
         if (navigator.vibrate) navigator.vibrate(200);
         showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
     } catch (err) {
-        console.error(err);
-        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('Schreiben fehlgeschlagen: ' + (err.message || err), 'error');
+        showToast('Schreiben fehlgeschlagen: ' + err, 'error');
     }
 }
 
