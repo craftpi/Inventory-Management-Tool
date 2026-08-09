@@ -4114,16 +4114,12 @@ async function pruefeUndSetzeScanRichtung(bestandEintrag, richtung, erzwingen) {
 }
 
 /**
- * Zentrale Verarbeitung eines gescannten Codes, egal ob er von der Kamera
- * (QR/Barcode), von einem NFC-Tag oder vom automatischen Öffnen eines
- * ?rueckgabe=ID-Links kommt. richtung ist immer 'ein' (Einbuchen).
- *
- * @param {string} rawCode Der gescannte Roh-Text/URL.
- * @param {boolean} erzwingen Wenn true, wird die Duplikat-Prüfung übersprungen
- *   (Nutzer hat die Rückfrage "Trotzdem buchen?" bestätigt).
+ * Zentrale Verarbeitung eines gescannten Codes beim ZURÜCKBRINGEN (Check-In).
+ * Sucht die offene Ausleihe (Entnahme) und reduziert diese um 1,
+ * wodurch der Artikel automatisch wieder verfügbar wird.
  */
-async function verarbeiteRueckgabeScan(rawCode, erzwingen = false) {
-    if (rueckgabeScanSperre) return; // kurz nach einem Treffer: weitere Scans ignorieren
+async function verarbeiteRueckgabeScan(rawCode) {
+    if (rueckgabeScanSperre) return;
 
     const code = String(rawCode || '').trim();
     const artikelId = extrahiereArtikelIdAusScan(code);
@@ -4134,68 +4130,84 @@ async function verarbeiteRueckgabeScan(rawCode, erzwingen = false) {
         return;
     }
 
-    rueckgabeScanSperre = true; // sofort sperren, noch bevor die DB-Antwort da ist
+    rueckgabeScanSperre = true;
 
     const statusEl = document.getElementById('rueckgabe-scanner-status');
     if (statusEl) statusEl.innerText = 'Buche zurück…';
 
     try {
-        // 1. Ersten Bestandseintrag (= Lagerort) für diesen Artikel suchen
-        const { data: bestandEintraege, error: fehlerSuche } = await dbClient
-            .from('bestand')
-            .select('id, menge, artikel_id, letzte_scan_richtung, artikel(id, name)')
-            .eq('artikel_id', artikelId)
-            .limit(1);
+        // 1. Artikelnamen für besseres Feedback laden
+        const { data: artikelDaten } = await dbClient
+            .from('artikel')
+            .select('name')
+            .eq('id', artikelId)
+            .single();
+        
+        const artikelName = artikelDaten?.name || ('Artikel ' + artikelId);
 
-        if (fehlerSuche) throw fehlerSuche;
+        // 2. Offene Entnahmen abrufen (hier liegen die ausgeliehenen Sachen)
+        const { data: entnahmen, error: fetchError } = await dbClient
+            .from(ENTNAHME_PROTOKOLL_TABLE)
+            .select('*')
+            .order('created_at', { ascending: true }); // Älteste zuerst abarbeiten
 
-        if (!bestandEintraege || bestandEintraege.length === 0) {
-            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            showToast('Kein Lagerplatz für Artikel-ID ' + artikelId + ' gefunden.', 'error');
-            return;
-        }
+        if (fetchError) throw fetchError;
 
-        const eintrag = bestandEintraege[0];
-        const artikelName = eintrag.artikel?.name || ('Artikel ' + artikelId);
+        let gefundeneEntnahme = null;
+        let materialIndex = -1;
 
-        // 1b. Duplikat-Prüfung: wurde dieser Artikel zuletzt schon eingebucht?
-        const { blockiert } = await pruefeUndSetzeScanRichtung(eintrag, 'ein', erzwingen);
-        if (blockiert) {
-            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            if (statusEl) statusEl.innerText = '⚠️ Bereits zurückgebucht – manuelle Prüfung nötig';
-
-            rueckgabeScanSperre = true; // sofortiges erneutes Scannen/Bestätigen erlauben
-            const ok = await zeigeBestaetigungsDialog({
-                titel: 'Bereits alles rückgebucht',
-                text: `"${artikelName}" dieser Artikel ist bereits komplett rückgebucht. Überprüfe die Gesamtmenge bitte!`,
-                okText: 'Ja, trotzdem buchen',
-                okFarbe: '#e67e22',
-                icon: '⚠️'
-            });
-            if (ok) {
-                await verarbeiteRueckgabeScan(code, true);
-            } else {
-                showToast('Buchung abgebrochen – bitte Bestand manuell prüfen.', 'warning');
+        // 3. Suche eine Entnahme, bei der genau dieser Artikel noch ausgeliehen ist (Menge > 0)
+        for (let e of (entnahmen || [])) {
+            const mats = Array.isArray(e.materialien) ? e.materialien : [];
+            const idx = mats.findIndex(m => String(m.artikel_id) === String(artikelId) && Number(m.menge) > 0);
+            if (idx !== -1) {
+                gefundeneEntnahme = e;
+                materialIndex = idx;
+                break;
             }
+        }
+
+        // Wenn keine Entnahme gefunden wurde, ist der Artikel schon vollzählig (Gesamtmenge erreicht)!
+        if (!gefundeneEntnahme) {
+            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+            showToast('Fehler: Der Artikel ist bereits vollzählig im System!', 'error');
+            if (statusEl) statusEl.innerText = '⚠️ Bereits vollzählig im Lager';
             return;
         }
 
-        const neueMenge = (Number(eintrag.menge) || 0) + 1;
+        // 4. Menge in der gefundenen Entnahme um 1 reduzieren
+        const neueMaterialien = [...gefundeneEntnahme.materialien];
+        neueMaterialien[materialIndex].menge -= 1;
 
-        // 2. Menge um +1 erhöhen
-        const { error: fehlerUpdate } = await dbClient
-            .from('bestand')
-            .update({ menge: neueMenge })
-            .eq('id', eintrag.id);
+        // Wenn die Menge 0 erreicht, den Artikel ganz aus dieser Entnahme-Liste streichen
+        if (neueMaterialien[materialIndex].menge <= 0) {
+            neueMaterialien.splice(materialIndex, 1);
+        }
 
-        if (fehlerUpdate) throw fehlerUpdate;
+        // 5. Datenbank aktualisieren
+        if (neueMaterialien.length === 0) {
+            // Entnahme ist jetzt komplett leer -> Protokolleintrag löschen
+            const { error: deleteError } = await dbClient
+                .from(ENTNAHME_PROTOKOLL_TABLE)
+                .delete()
+                .eq('id', gefundeneEntnahme.id);
+            if (deleteError) throw deleteError;
+        } else {
+            // Es sind noch andere Sachen in der Entnahme -> nur updaten
+            const { error: updateError } = await dbClient
+                .from(ENTNAHME_PROTOKOLL_TABLE)
+                .update({ materialien: neueMaterialien })
+                .eq('id', gefundeneEntnahme.id);
+            if (updateError) throw updateError;
+        }
 
-        // 3. Erfolg: haptisches + visuelles Feedback, Tabelle neu laden
         if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ ' + artikelName + ' zurückgebucht (jetzt ' + neueMenge + ')', 'success');
-        if (statusEl) statusEl.innerText = '✅ ' + artikelName + ' gebucht – bereit für nächsten Scan';
+        showToast('✅ 1x ' + artikelName + ' zurückgebucht!', 'success');
+        if (statusEl) statusEl.innerText = '✅ 1x ' + artikelName + ' gebucht – bereit für nächsten Scan';
 
+        // GUI synchronisieren (Zähler im Hauptfenster aktualisieren sich nun korrekt!)
         await ladeAlles();
+        await ladeEntnahmeHistorie();
 
     } catch (err) {
         console.error(err);
@@ -4203,10 +4215,8 @@ async function verarbeiteRueckgabeScan(rawCode, erzwingen = false) {
         showToast('Fehler bei der Rückgabe: ' + (err.message || err), 'error');
         if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
     } finally {
-        // Sperre nach kurzer Pause wieder aufheben, damit derselbe Artikel
-        // nicht versehentlich doppelt gebucht wird, aber der/die nächste
-        // Artikel zügig gescannt werden kann.
-        setTimeout(() => { rueckgabeScanSperre = false; }, 2500);
+        // Sperre nach kurzer Zeit aufheben (Schutz vor wilden Doppel-Scans)
+        setTimeout(() => { rueckgabeScanSperre = false; }, 2000);
     }
 }
 
@@ -4300,24 +4310,11 @@ async function starteRueckgabeNfc() {
     }
 }
 
-// =========================================================================
-// SCHNELL-AUSBUCHEN (Entnahme-Wizard Schritt 3) per QR/NFC-Scan
-// Scan-Format identisch zur Rückgabe: "artikel:<artikel_id>"
-// Fügt den gescannten Artikel mit Menge 1 zur aktuellen Materialliste
-// (entnahmeMaterialien) hinzu, statt direkt die Datenbank zu ändern - die
-// eigentliche Buchung passiert wie gehabt erst beim Abschließen des Wizards.
-// =========================================================================
-
 /**
- * Zentrale Verarbeitung eines gescannten Codes für das Ausbuchen. richtung
- * ist immer 'aus'. Nutzt dieselbe Duplikat-Prüfung wie das Einbuchen, nur
- * mit umgekehrter Richtung, sodass ein Artikel, der zuletzt eingebucht
- * wurde, beim Ausbuchen natürlich nicht blockiert wird (und umgekehrt).
- *
- * @param {string} rawCode Der gescannte Roh-Text.
- * @param {boolean} erzwingen Wenn true, wird die Duplikat-Prüfung übersprungen.
+ * Zentrale Verarbeitung eines gescannten Codes beim AUSBUCHEN (Check-Out im Wizard Schritt 3).
+ * Prüft strikt die noch verfügbare Menge (verfuegbar) gegen den Basiswert, bevor +1 gesetzt wird.
  */
-async function verarbeiteAusbuchenScan(rawCode, erzwingen = false) {
+async function verarbeiteAusbuchenScan(rawCode) {
     if (ausbuchenScanSperre) return;
 
     const code = String(rawCode || '').trim();
@@ -4335,49 +4332,40 @@ async function verarbeiteAusbuchenScan(rawCode, erzwingen = false) {
     if (statusEl) statusEl.innerText = 'Buche aus…';
 
     try {
-        const { data: bestandEintraege, error: fehlerSuche } = await dbClient
-            .from('bestand')
-            .select('id, menge, artikel_id, letzte_scan_richtung, artikel(id, name, kategorie, einheit)')
-            .eq('artikel_id', artikelId)
-            .limit(1);
-
-        if (fehlerSuche) throw fehlerSuche;
-
-        if (!bestandEintraege || bestandEintraege.length === 0) {
+        // Artikel direkt aus dem schnellen Zwischenspeicher holen
+        const artikel = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
+        if (!artikel) {
             if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            showToast('Kein Lagerplatz für Artikel-ID ' + artikelId + ' gefunden.', 'error');
+            showToast('Kein Artikel mit dieser ID gefunden.', 'error');
             return;
         }
 
-        const eintrag = bestandEintraege[0];
-        const artikel = eintrag.artikel || {};
         const artikelName = artikel.name || ('Artikel ' + artikelId);
-
-        // Duplikat-Prüfung: wurde dieser Artikel zuletzt schon ausgebucht?
-        const { blockiert } = await pruefeUndSetzeScanRichtung(eintrag, 'aus', erzwingen);
-        if (blockiert) {
-            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            if (statusEl) statusEl.innerText = '⚠️ Bereits ausgebucht – manuelle Prüfung nötig';
-
-            ausbuchenScanSperre = false;
-            const ok = await zeigeBestaetigungsDialog({
-                titel: 'Bereits ausgebucht',
-                text: `"${artikelName}" wurde zuletzt bereits ausgebucht. Wurde wirklich noch ein Exemplar entnommen?`,
-                okText: 'Ja, trotzdem hinzufügen',
-                okFarbe: '#e67e22',
-                icon: '⚠️'
-            });
-            if (ok) {
-                await verarbeiteAusbuchenScan(code, true);
-            } else {
-                showToast('Nicht hinzugefügt – bitte Materialliste manuell prüfen.', 'warning');
-            }
-            return;
+        
+        // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
+        const bestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
+        let maxVerfuegbar = berechneArtikelVerfuegbarkeit(artikelId, bestaende);
+        
+        // Berücksichtige, was du gerade im Wizard schon gescannt hast, aber noch nicht final gespeichert ist
+        let wizardMenge = 0;
+        const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
+        if (vorhandenerEintrag) {
+            wizardMenge = Number(vorhandenerEintrag.menge) || 0;
         }
 
-        // Wie beim manuellen Hinzufügen (entnahmeMaterialHinzufuegen): bereits
-        // vorhandenen Eintrag hochzählen statt einen zweiten anzulegen.
-        const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
+        // Reguläre Gegenstände (nicht unendlich "∞" oder nur auf Strich "-" gesetzt) blockieren, wenn Zähler = 0
+        if (maxVerfuegbar !== '∞' && maxVerfuegbar !== '-') {
+            const verbleibend = Number(maxVerfuegbar) - wizardMenge;
+            if (verbleibend <= 0) {
+                if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+                // Das ist die gewünschte Fehlermeldung, wenn alles ausgebucht ist!
+                showToast('Alles ausgebucht! Keine weiteren Artikel verfügbar.', 'error');
+                if (statusEl) statusEl.innerText = '⚠️ Alles ausgebucht!';
+                return;
+            }
+        }
+        
+        // Menge um +1 im Entnahme-Entwurf erhöhen
         if (vorhandenerEintrag) {
             vorhandenerEintrag.menge += 1;
         } else {
@@ -4395,8 +4383,8 @@ async function verarbeiteAusbuchenScan(rawCode, erzwingen = false) {
         entnahmeWizardAktualisieren();
 
         if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ ' + artikelName + ' zur Entnahme hinzugefügt', 'success');
-        if (statusEl) statusEl.innerText = '✅ ' + artikelName + ' hinzugefügt – bereit für nächsten Scan';
+        showToast('✅ 1x ' + artikelName + ' zur Entnahme hinzugefügt', 'success');
+        if (statusEl) statusEl.innerText = '✅ 1x ' + artikelName + ' hinzugefügt – bereit für nächsten Scan';
 
     } catch (err) {
         console.error(err);
@@ -4404,7 +4392,7 @@ async function verarbeiteAusbuchenScan(rawCode, erzwingen = false) {
         showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
         if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
     } finally {
-        setTimeout(() => { ausbuchenScanSperre = false; }, 2500);
+        setTimeout(() => { ausbuchenScanSperre = false; }, 2000); // Erlaubt flüssiges Scannen nach 2 Sekunden
     }
 }
 
