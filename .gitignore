@@ -27,3 +27,9 @@ supabase_entnahme_schema.sql
 
 *.env
 docker-compose.yml
+
+## Node modules
+node_modules/
+package-lock.json
+package.json
+capacitor.config.json
