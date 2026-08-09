@@ -4162,12 +4162,12 @@ async function verarbeiteRueckgabeScan(rawCode, erzwingen = false) {
         const { blockiert } = await pruefeUndSetzeScanRichtung(eintrag, 'ein', erzwingen);
         if (blockiert) {
             if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            if (statusEl) statusEl.innerText = '⚠️ Bereits eingebucht – manuelle Prüfung nötig';
+            if (statusEl) statusEl.innerText = '⚠️ Bereits zurückgebucht – manuelle Prüfung nötig';
 
-            rueckgabeScanSperre = false; // sofortiges erneutes Scannen/Bestätigen erlauben
+            rueckgabeScanSperre = true; // sofortiges erneutes Scannen/Bestätigen erlauben
             const ok = await zeigeBestaetigungsDialog({
-                titel: 'Bereits eingebucht',
-                text: `"${artikelName}" wurde zuletzt bereits eingebucht. Wurde wirklich erneut ein Exemplar zurückgegeben?`,
+                titel: 'Bereits alles rückgebucht',
+                text: `"${artikelName}" dieser Artikel ist bereits komplett rückgebucht. Überprüfe die Gesamtmenge bitte!`,
                 okText: 'Ja, trotzdem buchen',
                 okFarbe: '#e67e22',
                 icon: '⚠️'
