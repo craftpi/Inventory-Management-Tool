@@ -4270,22 +4270,26 @@ function schliesseRueckgabeKameraModal() {
     document.getElementById('rueckgabeKameraModal').style.display = 'none';
 }
 
-/**
- * Startet den nativen Web-NFC-Reader (Chrome/Android, benötigt HTTPS).
- * Läuft ohne Modal im Hintergrund weiter, bis die Seite verlassen wird.
- */
 async function starteRueckgabeNfc() {
-    if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android, HTTPS erforderlich).', 'error');
+    // 1. Prüfen, ob wir in der nativen Android-App sind
+    if (window.TrisportApp) {
+        rueckgabeScanSperre = false;
+        window.TrisportApp.startNfcRead('rueckgabe');
+        showToast('📶 App-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
         return;
     }
 
+    // 2. Fallback: Normaler Web-NFC Code für Chrome
+    if (!('NDEFReader' in window)) {
+        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt.', 'error');
+        return;
+    }
     try {
         rueckgabeScanSperre = false;
         const reader = new NDEFReader();
         await reader.scan();
         rueckgabeNfcReader = reader;
-        showToast('📶 NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+        showToast('📶 Web-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
 
         reader.onreading = (event) => {
             try {
@@ -4309,7 +4313,6 @@ async function starteRueckgabeNfc() {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
         };
-
         reader.onreadingerror = () => {
             showToast('Lesefehler beim NFC-Tag. Bitte erneut halten.', 'error');
         };
@@ -4442,23 +4445,26 @@ function schliesseAusbuchenKameraModal() {
     document.getElementById('ausbuchenKameraModal').style.display = 'none';
 }
 
-/**
- * Startet den nativen Web-NFC-Reader (Chrome/Android, benötigt HTTPS) für
- * das Ausbuchen. Läuft ohne Modal im Hintergrund weiter, solange Schritt 3
- * des Wizards geöffnet ist.
- */
 async function starteAusbuchenNfc() {
-    if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android, HTTPS erforderlich).', 'error');
+    // 1. Prüfen, ob wir in der nativen Android-App sind
+    if (window.TrisportApp) {
+        ausbuchenScanSperre = false;
+        window.TrisportApp.startNfcRead('ausbuchen');
+        showToast('📶 App-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
         return;
     }
 
+    // 2. Fallback: Normaler Web-NFC Code für Chrome
+    if (!('NDEFReader' in window)) {
+        showToast('Web NFC wird von diesem Gerät/Browser nicht unterstützt.', 'error');
+        return;
+    }
     try {
         ausbuchenScanSperre = false;
         const reader = new NDEFReader();
         await reader.scan();
         ausbuchenNfcReader = reader;
-        showToast('📶 NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+        showToast('📶 Web-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
 
         reader.onreading = (event) => {
             try {
@@ -4482,7 +4488,6 @@ async function starteAusbuchenNfc() {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
         };
-
         reader.onreadingerror = () => {
             showToast('Lesefehler beim NFC-Tag. Bitte erneut halten.', 'error');
         };
@@ -4663,21 +4668,24 @@ function downloadArtikelQr(artikelId, artikelName) {
     anchor.click();
 }
 
-/**
- * Beschreibt einen leeren NFC-Tag mit dem Rückgabe-Link des Artikels.
- * Funktioniert nur mit Chrome auf Android (Web NFC), da iOS Safari das
- * Schreiben von NFC-Tags aus dem Browser heraus nicht erlaubt.
- */
 async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
+    const link = gibArtikelRueckgabeLink(artikelId);
+
+    // 1. Prüfen, ob wir in der nativen Android-App sind
+    if (window.TrisportApp) {
+        window.TrisportApp.startNfcWrite(link);
+        showToast('📶 App: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
+        return;
+    }
+
+    // 2. Fallback: Normaler Web-NFC Code für Chrome
     if (!('NDEFReader' in window)) {
         showToast('NFC-Beschreiben wird von diesem Gerät/Browser nicht unterstützt (nur Chrome auf Android).', 'error');
         return;
     }
-
     try {
-        const link = gibArtikelRueckgabeLink(artikelId);
         const writer = new NDEFReader();
-        showToast('📶 Leeren NFC-Tag jetzt an das Handy halten…', 'success');
+        showToast('📶 Web-NFC: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
         await writer.write({ records: [{ recordType: 'url', data: link }] });
         if (navigator.vibrate) navigator.vibrate(200);
         showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
@@ -4738,3 +4746,26 @@ function druckeAlleEtiketten() {
     printWindow.document.write(html);
     printWindow.document.close();
 }
+// =========================================================================
+// NATIVE APP-BRÜCKE (Empfänger für Android-App Signale)
+// =========================================================================
+
+// Wird von der Android-App aufgerufen, wenn ein NFC-Tag gelesen wurde
+window.onNativeNfcRead = function(payload, action) {
+    if (action === 'rueckgabe') {
+        verarbeiteRueckgabeScan(payload);
+    } else if (action === 'ausbuchen') {
+        verarbeiteAusbuchenScan(payload);
+    }
+};
+
+// Wird von der Android-App aufgerufen, wenn das Schreiben fertig/fehlgeschlagen ist
+window.onNativeNfcWriteResult = function(success, message) {
+    if (success) {
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast('✅ NFC-Tag erfolgreich über die App beschrieben!', 'success');
+    } else {
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        showToast('App-Schreiben fehlgeschlagen: ' + message, 'error');
+    }
+};
