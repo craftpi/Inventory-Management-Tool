@@ -1786,6 +1786,26 @@ function entnahmeSammelvorlageNeu() {
     entnahmeSammelvorlageInFormenLaden('');
 }
 
+// --- NEUE HILFSFUNKTION FÜR STRIKTE BESTANDSKONTROLLE ---
+function holeVerbleibendeMenge(artikelId, ignoriereWizardIndex = -1) {
+    const bestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
+    const maxVerfuegbar = berechneArtikelVerfuegbarkeit(artikelId, bestaende);
+
+    // Sonderartikel (Unendlich oder rein auf Nachkauf/Verfügbarkeit geprüft) durchwinken
+    if (maxVerfuegbar === '∞') return '∞';
+    if (maxVerfuegbar === '-') return '-';
+
+    let wizardMenge = 0;
+    // Berücksichtigen, was gerade schon im Wizard in der Liste liegt
+    entnahmeMaterialien.forEach((item, idx) => {
+        if (String(item.artikel_id) === String(artikelId) && idx !== ignoriereWizardIndex) {
+            wizardMenge += (Number(item.menge) || 0);
+        }
+    });
+
+    return Math.max(0, Number(maxVerfuegbar) - wizardMenge);
+}
+
 function entnahmeMaterialHinzufuegen(inputId = 'entnahme-artikel-input', mengeId = 'entnahme-artikel-menge') {
     const input = document.getElementById(inputId);
     const mengeInput = document.getElementById(mengeId);
@@ -1807,6 +1827,15 @@ function entnahmeMaterialHinzufuegen(inputId = 'entnahme-artikel-input', mengeId
     if (menge <= 0) {
         showToast('Bitte eine Menge größer 0 eingeben.', 'warning');
         return;
+    }
+
+    // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
+    const verbleibend = holeVerbleibendeMenge(artikel.id);
+    if (verbleibend !== '∞' && verbleibend !== '-') {
+        if (menge > verbleibend) {
+            showToast(`Fehler: Es sind nur noch ${verbleibend} verfügbar!`, 'error');
+            return; // Blockiert das Hinzufügen komplett
+        }
     }
 
     const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
@@ -1837,10 +1866,20 @@ function entnahmeModalMaterialHinzufuegen() {
 function entnahmeMaterialMengeAendern(index, neueMenge) {
     if (!entnahmeMaterialien[index]) return;
 
-    const menge = werteMengeAus(neueMenge);
+    const artikelId = entnahmeMaterialien[index].artikel_id;
+    let menge = werteMengeAus(neueMenge);
+
     if (menge <= 0) {
         entnahmeMaterialien.splice(index, 1);
     } else {
+        // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
+        const verbleibend = holeVerbleibendeMenge(artikelId, index); // Eigene Zeile bei der Prüfung abziehen
+        if (verbleibend !== '∞' && verbleibend !== '-') {
+            if (menge > verbleibend) {
+                showToast(`Maximal ${verbleibend} verfügbar! Menge wurde automatisch angepasst.`, 'warning');
+                menge = verbleibend; // Kappt die Menge auf das Maximum
+            }
+        }
         entnahmeMaterialien[index].menge = menge;
     }
 
@@ -4310,7 +4349,6 @@ async function verarbeiteAusbuchenScan(rawCode) {
     if (statusEl) statusEl.innerText = 'Buche aus…';
 
     try {
-        // Artikel direkt aus dem schnellen Zwischenspeicher holen
         const artikel = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
         if (!artikel) {
             if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
@@ -4321,29 +4359,18 @@ async function verarbeiteAusbuchenScan(rawCode) {
         const artikelName = artikel.name || ('Artikel ' + artikelId);
         
         // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
-        const bestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
-        let maxVerfuegbar = berechneArtikelVerfuegbarkeit(artikelId, bestaende);
-        
-        // Berücksichtige, was du gerade im Wizard schon gescannt hast, aber noch nicht final gespeichert ist
-        let wizardMenge = 0;
-        const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
-        if (vorhandenerEintrag) {
-            wizardMenge = Number(vorhandenerEintrag.menge) || 0;
-        }
+        const verbleibend = holeVerbleibendeMenge(artikelId);
 
-        // Reguläre Gegenstände (nicht unendlich "∞" oder nur auf Strich "-" gesetzt) blockieren, wenn Zähler = 0
-        if (maxVerfuegbar !== '∞' && maxVerfuegbar !== '-') {
-            const verbleibend = Number(maxVerfuegbar) - wizardMenge;
+        if (verbleibend !== '∞' && verbleibend !== '-') {
             if (verbleibend <= 0) {
                 if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-                // Das ist die gewünschte Fehlermeldung, wenn alles ausgebucht ist!
                 showToast('Alles ausgebucht! Keine weiteren Artikel verfügbar.', 'error');
                 if (statusEl) statusEl.innerText = '⚠️ Alles ausgebucht!';
                 return;
             }
         }
         
-        // Menge um +1 im Entnahme-Entwurf erhöhen
+        const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
         if (vorhandenerEintrag) {
             vorhandenerEintrag.menge += 1;
         } else {
@@ -4370,7 +4397,7 @@ async function verarbeiteAusbuchenScan(rawCode) {
         showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
         if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
     } finally {
-        setTimeout(() => { ausbuchenScanSperre = false; }, 2000); // Erlaubt flüssiges Scannen nach 2 Sekunden
+        setTimeout(() => { ausbuchenScanSperre = false; }, 2000); 
     }
 }
 
