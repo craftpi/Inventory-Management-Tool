@@ -4084,36 +4084,6 @@ function extrahiereArtikelIdAusScan(rawText) {
 }
 
 /**
- * Prüft anhand von bestand.letzte_scan_richtung, ob ein Scan in dieselbe
- * Richtung geht wie der zuletzt für diesen Bestandseintrag verarbeitete Scan
- * (z.B. zweimal hintereinander "eingebucht", ohne dass dazwischen
- * ausgebucht wurde). Das erkennt auch Duplikate, die Minuten oder Stunden
- * auseinander liegen und nicht mehr von der kurzen Zeit-Sperre
- * (rueckgabeScanSperre / ausbuchenScanSperre) abgefangen werden.
- *
- * Gibt bei einem erkannten Duplikat { blockiert: true } zurück, OHNE die
- * Datenbank zu verändern. Der Aufrufer muss dann selbst entscheiden
- * (z.B. Rückfrage an den Nutzer per zeigeBestaetigungsDialog) und bei
- * Bestätigung erneut mit erzwingen=true aufrufen.
- */
-async function pruefeUndSetzeScanRichtung(bestandEintrag, richtung, erzwingen) {
-    if (!erzwingen && bestandEintrag.letzte_scan_richtung === richtung) {
-        return { blockiert: true };
-    }
-
-    const { error } = await dbClient
-        .from('bestand')
-        .update({
-            letzte_scan_richtung: richtung,
-            letzte_scan_zeit: new Date().toISOString()
-        })
-        .eq('id', bestandEintrag.id);
-
-    if (error) throw error;
-    return { blockiert: false };
-}
-
-/**
  * Zentrale Verarbeitung eines gescannten Codes beim ZURÜCKBRINGEN (Check-In).
  * Sucht die offene Ausleihe (Entnahme) und reduziert diese um 1,
  * wodurch der Artikel automatisch wieder verfügbar wird.
@@ -4309,6 +4279,14 @@ async function starteRueckgabeNfc() {
         showToast('NFC-Scan konnte nicht gestartet werden: ' + (err.message || err), 'error');
     }
 }
+
+// =========================================================================
+// SCHNELL-AUSBUCHEN (Entnahme-Wizard Schritt 3) per QR/NFC-Scan
+// Scan-Format identisch zur Rückgabe: "artikel:<artikel_id>"
+// Fügt den gescannten Artikel mit Menge 1 zur aktuellen Materialliste
+// (entnahmeMaterialien) hinzu, statt direkt die Datenbank zu ändern - die
+// eigentliche Buchung passiert wie gehabt erst beim Abschließen des Wizards.
+// =========================================================================
 
 /**
  * Zentrale Verarbeitung eines gescannten Codes beim AUSBUCHEN (Check-Out im Wizard Schritt 3).
