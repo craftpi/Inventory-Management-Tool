@@ -9,14 +9,25 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
-        html { scroll-behavior: smooth; }
-        body { font-family: Arial, sans-serif; background: linear-gradient(160deg, #e3000f 0%, #b8000c 100%); color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); animation: containerEnter 0.35s cubic-bezier(0.16,1,0.3,1); }
+        /* ==========================================================
+           RESPONSIVE GRUNDLAGE
+           - box-sizing:border-box überall, damit Padding/Border nie
+             zu horizontalem Überlauf auf schmalen Handys führt
+           - fließende Basis-Schriftgröße: skaliert sanft zwischen
+             kleinen Handys (~360px) und sehr großen Monitoren (~2200px+),
+             alle em-Angaben im restlichen CSS skalieren automatisch mit
+           - Bilder/Canvas/SVG dürfen nie breiter als ihr Container werden
+           ========================================================== */
+        *, *::before, *::after { box-sizing: border-box; }
+        html { scroll-behavior: smooth; font-size: clamp(15px, 0.55vw + 13px, 18.5px); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: hidden; }
+        img, svg, canvas { max-width: 100%; height: auto; }
+        body { font-family: Arial, sans-serif; background: linear-gradient(160deg, #e3000f 0%, #b8000c 100%); color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; overflow-x: hidden; }
+        .container { max-width: 800px; width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); animation: containerEnter 0.35s cubic-bezier(0.16,1,0.3,1); }
         @keyframes containerEnter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         p.subtitle { color: #666; margin-bottom: 25px; line-height: 1.4; text-align: center; }
         
-        .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease; font-size: 0.95em; font-weight: bold; }
+        .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease; font-size: 0.95em; font-weight: bold; min-height: 44px; }
         .btn:hover { background-color: #2980b9; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
         .btn:active { transform: translateY(0); box-shadow: none; }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
@@ -38,7 +49,7 @@
         tbody tr { transition: background-color 0.15s ease; }
         tbody tr:hover { background-color: #f4f8fb; }
         
-        .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; transition: color 0.2s, background-color 0.2s, border-color 0.2s; }
+        .menge-input { width: 80px; padding: 8px 4px; text-align: center; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; min-height: 40px; transition: color 0.2s, background-color 0.2s, border-color 0.2s; }
         .bestand-menge-input.bestand-menge-ok { color: #1f7a37; background: #edf8f0; border-color: #8fd0a3; }
         .bestand-menge-input.bestand-menge-low { color: #b42318; background: #fff1f0; border-color: #f2b4ae; }
         .bestand-status-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 58px; padding: 6px 12px; border-radius: 999px; font-weight: bold; font-size: 0.92em; line-height: 1; }
@@ -141,7 +152,7 @@
 
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
+        .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; min-height: 44px; }
         
         .flex-buttons { display: flex; gap: 10px; margin-top: 25px; }
         .btn-save { background-color: #27ae60; flex: 2; }
@@ -617,6 +628,18 @@
             vertical-align: middle;
         }
 
+        /* ===== TABLET (601–960px): Breite Grids etwas enger fassen, ===== 
+           ===== bevor sie beim <600px-Breakpoint ganz umbrechen.      ===== */
+        @media (min-width: 601px) and (max-width: 960px) {
+            .container { max-width: 92vw; padding: 24px; }
+            .survey-page, .entnahme-page { max-width: 94vw; padding: 24px 20px; }
+            .entnahme-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .regal-qr-grid { grid-template-columns: 1fr; }
+            .regal-qr-preview-wrap #regal-qr-preview { width: 200px; height: 200px; margin: 0 auto; }
+            .modal-content { max-width: 88vw; }
+        }
+
+        /* ===== HANDY (≤600px) ===== */
         @media (max-width: 600px) {
             body { padding: 10px 5px; }
             .container { padding: 15px 10px; }
@@ -627,7 +650,7 @@
             .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
             .packlisten-wrapper button { flex: 1; width: auto; }
             .flex-buttons { flex-direction: column; }
-            .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; }
+            .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; width: 94%; }
             .survey-page { padding: 18px 12px; }
             .regal-qr-grid { grid-template-columns: 1fr; }
             .regal-qr-preview-wrap #regal-qr-preview { width: 180px; height: 180px; }
@@ -642,6 +665,58 @@
 
             /* Allow info boxes and labels to wrap nicely */
             #entnahme-benutzer-info, #entnahme-sammel-info { word-break: break-word; white-space: normal; }
+
+            /* h1-Kopfzeile (Titel + Hilfe/Abmelden-Buttons) auf schmalen Handys
+               untereinander statt nebeneinander gequetscht */
+            h1 { flex-direction: column; align-items: flex-start; gap: 8px; }
+            h1 > span:last-child { width: 100%; }
+            h1 > span:last-child .btn { width: auto; flex: 1; }
+
+            /* Kauflisten-Modal: Name/Menge-Zeile bricht sauber um statt zu quetschen */
+            #manuell-kauf-name { flex: 1 1 100% !important; }
+            #manuell-kauf-menge { flex: 1 1 70px !important; }
+
+            /* Etiketten- und Regal-QR-Werkzeuge: Aktionen volle Breite für leichteres Tippen */
+            .etikett-aktionen .btn, .etiketten-toolbar .btn { width: auto; }
+            .etiketten-toolbar { flex-direction: column; align-items: stretch; }
+            .etiketten-toolbar > * { width: 100%; }
+        }
+
+        /* ===== SEHR KLEINE HANDYS (≤400px, z.B. iPhone SE) ===== */
+        @media (max-width: 400px) {
+            body { padding: 6px 4px; }
+            .container { padding: 12px 8px; border-radius: 8px; }
+            h1 { font-size: 1.25em; }
+            .survey-page, .entnahme-page { padding: 14px 10px; border-radius: 8px; }
+            .entnahme-hero { padding: 14px 12px; }
+            .entnahme-hero-pill { font-size: 0.82em; padding: 6px 10px; }
+            .modal-content { padding: 12px; width: 96%; }
+            th, td { padding: 8px 4px; font-size: 0.85em; }
+            .onboarding-icon { width: 44px; height: 44px; font-size: 1.4em; }
+            .onboarding-step { gap: 10px; }
+            .entnahme-return-stepper { min-width: 104px; }
+            .entnahme-return-stepper button { width: 30px; min-width: 30px; }
+            #login-overlay > div { padding: 28px 18px; }
+        }
+
+        /* ===== GROSSE BILDSCHIRME (≥1400px) ===== */
+        @media (min-width: 1400px) {
+            body { padding: 60px 20px; }
+            .container { max-width: 1040px; padding: 40px 44px; }
+            .survey-page { max-width: 860px; padding: 40px; }
+            .entnahme-page { max-width: 1180px; padding: 40px; }
+            th, td { padding: 14px 16px; }
+            .entnahme-material-table th, .entnahme-material-table td { padding: 12px 14px; }
+            .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { padding: 12px; }
+            .modal-content { max-width: 720px; }
+            #vorlagenModal .modal-content, .entnahme-page .modal-content { max-width: 860px; }
+        }
+
+        /* ===== SEHR GROSSE / ULTRAWIDE BILDSCHIRME (≥1900px) ===== */
+        @media (min-width: 1900px) {
+            .container { max-width: 1180px; }
+            .entnahme-page { max-width: 1320px; }
+            html { font-size: 18.5px; }
         }
 
         /* "Zurück zur Hauptseite"-Leiste für Unteransichten (Entnahme-Protokoll,
