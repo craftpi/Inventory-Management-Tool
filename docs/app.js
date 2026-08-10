@@ -1116,6 +1116,23 @@ function initEntnahmeLink() {
     linkEl.innerText = entnahmeLink;
 }
 
+/**
+ * Bringt den Nutzer aus einer Unteransicht (Entnahme-Protokoll, QR-Generator,
+ * Etiketten-Tool, Anforderungs-Formular) zurück zur Hauptseite.
+ *
+ * Diese Unteransichten werden über eigene URLs geöffnet (?entnahme=1,
+ * ?qrgen=1, ?etiketten=1, ?formular=1) - entweder per window.location.href
+ * (gleicher Tab) oder per window.open(..., '_blank') (neuer Tab/Fenster).
+ * In der Android-App (WebView) gibt es dabei keine Browser-Zurück-Funktion,
+ * daher navigieren wir hier aktiv zur Basis-URL ohne Query-Parameter zurück.
+ */
+function zurueckZurHauptseite() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    window.location.href = url.toString();
+}
+
 function initFormularModus() {
     const formularView = document.getElementById('formular-ansicht');
     if (formularView) formularView.style.display = 'block';

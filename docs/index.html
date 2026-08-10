@@ -643,6 +643,36 @@
             /* Allow info boxes and labels to wrap nicely */
             #entnahme-benutzer-info, #entnahme-sammel-info { word-break: break-word; white-space: normal; }
         }
+
+        /* "Zurück zur Hauptseite"-Leiste für Unteransichten (Entnahme-Protokoll,
+           QR-Generator, Etiketten-Tool, Anforderungs-Formular). Diese Ansichten
+           werden über eigene URLs (?entnahme=1, ?qrgen=1, ...) geöffnet - in der
+           Android-App gibt es dort sonst keine Möglichkeit, zur Hauptseite
+           zurückzukehren. */
+        .subview-backbar {
+            max-width: 900px;
+            margin: 0 auto 16px auto;
+            padding: 0 20px;
+        }
+        .subview-back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #34495e;
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 0.95em;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .subview-back-btn:hover { background: #2c3e50; }
+        @media (max-width: 700px) {
+            .subview-backbar { padding: 0 12px; }
+            .subview-back-btn { width: 100%; justify-content: center; padding: 12px 16px; }
+        }
     </style>
 </head>
 <body>
@@ -650,6 +680,9 @@
 <div id="toast-container"></div>
 
 <div id="formular-ansicht" style="display:none; padding: 30px 0;">
+    <div class="subview-backbar">
+        <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+    </div>
     <div class="survey-page">
         <h1>📝 Lager-Anforderungsabfrage</h1>
         <p class="survey-note">Bitte beantworte die beiden Fragen mit Freitext. Danke!</p>
@@ -787,6 +820,9 @@
     </div>
 
     <div id="entnahme-ansicht" style="display:none; padding: 30px 0;">
+        <div class="subview-backbar">
+            <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+        </div>
         <div class="entnahme-page">
             <div class="entnahme-hero">
                 <h1>📋 Entnahme anlegen</h1>
@@ -1037,6 +1073,9 @@
     </div>
 
     <div id="qrgen-ansicht" style="display:none; padding: 30px 0;">
+        <div class="subview-backbar">
+            <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+        </div>
         <div class="survey-page" style="max-width: 900px;">
             <h1>QR-Code für Regal-Beschriftungen</h1>
             <p class="survey-note">Dieses Fenster erzeugt einen QR-Code, der das Lager direkt auf das Regal aus der Klammer filtert.</p>
@@ -1065,6 +1104,9 @@
     </div>
 
     <div id="etiketten-ansicht" style="display:none; padding: 30px 0;">
+        <div class="subview-backbar">
+            <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+        </div>
         <div class="survey-page" style="max-width: 900px;">
             <h1>🏷️ Artikel-Etiketten</h1>
             <p class="survey-note">Erzeugt für jeden Artikel einen QR-Code (öffnet automatisch die Schnell-Rückgabe). Auf Android können damit auch direkt leere NFC-Tags beschrieben werden.</p>
