@@ -849,17 +849,13 @@ function toggleNachkaufCheckbox(checkbox) {
 }
 
 function gibFormularLink() {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
+    const url = new URL('https://trilager.pius-s.de');
     url.searchParams.set('formular', '1');
     return url.toString();
 }
 
 function gibEntnahmeLink() {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
+    const url = new URL('https://trilager.pius-s.de');
     url.searchParams.set('entnahme', '1');
     return url.toString();
 }
@@ -919,9 +915,7 @@ function textEnthaeltRegal(text, regalName) {
 
 function gibRegalLink(regalText) {
     const regalName = extrahiereRegalName(regalText);
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
+    const url = new URL('https://trilager.pius-s.de');
     if (regalName) {
         url.searchParams.set('regal', regalName);
     }
@@ -4568,14 +4562,8 @@ function oeffneEtikettenTool() {
     window.open(url.toString(), '_blank', 'noopener');
 }
 
-/**
- * Baut den Rückgabe-Link für einen einzelnen Artikel. Dieser Link wird sowohl
- * im QR-Code als auch im NFC-Tag hinterlegt.
- */
 function gibArtikelRueckgabeLink(artikelId) {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
+    const url = new URL('https://trilager.pius-s.de');
     url.searchParams.set('rueckgabe', artikelId);
     return url.toString();
 }
