@@ -100,11 +100,20 @@ let entnahmeSammelAutoSaveNachholen = false;
 let rueckgabeQrScanner = null;      // aktive html5-qrcode Instanz
 let rueckgabeScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
 let rueckgabeNfcReader = null;      // aktiver NDEFReader
+let rueckgabeNfcAbortController = null; // zum sauberen Stoppen des Web-NFC-Scans
 
 // --- Schnell-Ausbuchen (Entnahme-Wizard Schritt 3) = AUSBUCHEN per Scan ---
 let ausbuchenQrScanner = null;      // aktive html5-qrcode Instanz
 let ausbuchenScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
 let ausbuchenNfcReader = null;      // aktiver NDEFReader
+let ausbuchenNfcAbortController = null; // zum sauberen Stoppen des Web-NFC-Scans
+
+// --- NFC-Modus-Switch: es kann immer nur EIN NFC-Modus gleichzeitig aktiv
+// sein (entweder Rückgabe oder Ausbuchen). Aktivieren des einen Modus
+// deaktiviert automatisch den anderen. Der Modus bleibt aktiv (auch über
+// mehrere Scans hinweg) bis er manuell gewechselt oder das Entnahmeprotokoll
+// verlassen wird (Seiten-Reload räumt ohnehin alles auf).
+let aktiverNfcModus = null; // null | 'rueckgabe' | 'ausbuchen'
 
 function holeLokaleSession() {
     try {
@@ -1121,6 +1130,7 @@ function initEntnahmeLink() {
  * daher navigieren wir hier aktiv zur Basis-URL ohne Query-Parameter zurück.
  */
 function zurueckZurHauptseite() {
+    deaktiviereAlleNfcModi();
     const url = new URL(window.location.href);
     url.search = '';
     url.hash = '';
@@ -2153,6 +2163,21 @@ function entnahmeRueckgabeMaterialienAuslesen(entnahmeId) {
     return rueckgaenge;
 }
 
+/**
+ * Schreibt einen Eintrag in das Append-Only-Rückgabe-Log (lager_entnahme_audit).
+ * ereignis: 'entnahme' | 'teilrueckgabe' | 'rueckgabe'
+ * Fehler beim Schreiben werden nur geloggt (nicht blockierend), damit eine
+ * fehlgeschlagene Log-Buchung nie die eigentliche Rückgabe verhindert.
+ */
+async function entnahmeAuditEintragSchreiben(auditPayload) {
+    try {
+        const { error } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
+        if (error) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', error);
+    } catch (e) {
+        console.error('Fehler beim Schreiben des Audit-Eintrags:', e);
+    }
+}
+
 async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
     const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
     if (!entnahme) return;
@@ -2163,20 +2188,47 @@ async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
         return;
     }
 
-    const neueMaterialien = Array.isArray(entnahme.materialien)
+    const urspruenglicheMaterialien = Array.isArray(entnahme.materialien)
         ? entnahme.materialien.map(item => ({ ...item }))
         : [];
+    const neueMaterialien = urspruenglicheMaterialien.map(item => ({ ...item }));
+
+    // Für das Rückgabe-Log: pro Position die tatsächlich zurückgegebene Menge
+    // (= bisherige Menge minus neu gesetzte Restmenge) sammeln.
+    const zurueckgegebenePositionen = [];
 
     rueckgaenge.sort((a, b) => b.index - a.index).forEach(({ index, menge }) => {
         const material = neueMaterialien[index];
         if (!material) return;
 
-        material.menge = Math.max(0, Number(menge) || 0);
+        const bisherigeMenge = Math.max(0, Number(material.menge) || 0);
+        const neueRestmenge = Math.max(0, Number(menge) || 0);
+        const zurueckgegebeneMenge = bisherigeMenge - neueRestmenge;
+
+        if (zurueckgegebeneMenge > 0) {
+            zurueckgegebenePositionen.unshift({
+                artikel_id: material.artikel_id,
+                label: material.label,
+                kategorie: material.kategorie,
+                einheit: material.einheit,
+                menge: zurueckgegebeneMenge
+            });
+        }
+
+        material.menge = neueRestmenge;
 
         if (material.menge <= 0) {
             neueMaterialien.splice(index, 1);
         }
     });
+
+    const auditBasis = {
+        entnahme_id: String(entnahmeId),
+        name: entnahme.name || '',
+        kontakt: entnahme.kontakt || '',
+        benutzer_vorlage_id: entnahme.benutzer_vorlage_id || null,
+        sammelvorlage_id: entnahme.sammelvorlage_id || null
+    };
 
     if (neueMaterialien.length === 0) {
         const loeschRes = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).delete().eq('id', entnahmeId);
@@ -2185,6 +2237,14 @@ async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
             console.error(loeschRes.error);
             return;
         }
+
+        // Vollständig zurückgegeben -> die komplette (ursprüngliche) Materialliste
+        // wandert als "rueckgabe"-Ereignis ins Log.
+        await entnahmeAuditEintragSchreiben({
+            ...auditBasis,
+            materialien: urspruenglicheMaterialien,
+            ereignis: 'rueckgabe'
+        });
 
         showToast('Entnahme vollständig zurückgegeben und entfernt.');
     } else {
@@ -2197,6 +2257,14 @@ async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
             showToast('Rückgabe konnte nicht gespeichert werden.', 'error');
             console.error(error);
             return;
+        }
+
+        if (zurueckgegebenePositionen.length > 0) {
+            await entnahmeAuditEintragSchreiben({
+                ...auditBasis,
+                materialien: zurueckgegebenePositionen,
+                ereignis: 'teilrueckgabe'
+            });
         }
 
         showToast('Teilrückgabe gespeichert.');
@@ -2218,8 +2286,101 @@ async function entnahmeKomplettZurueckgeben(entnahmeId) {
         return;
     }
 
+    await entnahmeAuditEintragSchreiben({
+        entnahme_id: String(entnahmeId),
+        name: entnahme.name || '',
+        kontakt: entnahme.kontakt || '',
+        materialien: Array.isArray(entnahme.materialien) ? entnahme.materialien.map(item => ({ ...item })) : [],
+        benutzer_vorlage_id: entnahme.benutzer_vorlage_id || null,
+        sammelvorlage_id: entnahme.sammelvorlage_id || null,
+        ereignis: 'rueckgabe'
+    });
+
     showToast('Entnahme entfernt.');
     await ladeEntnahmeHistorie();
+}
+
+// =========================================================================
+// RÜCKGABE-LOG (Admin-Ansicht)
+// Zeigt alle "rueckgabe"/"teilrueckgabe"-Ereignisse aus dem Append-Only-
+// Audit-Log (lager_entnahme_audit). Bewusst nicht prominent auf der Seite
+// platziert - nur über einen kleinen Link erreichbar, da rein administrativ.
+// =========================================================================
+
+let entnahmeLogEintraege = [];
+let entnahmeLogGeladen = false;
+
+function entnahmeLogEreignisLabel(ereignis) {
+    if (ereignis === 'rueckgabe') return '✅ Vollständig zurückgegeben';
+    if (ereignis === 'teilrueckgabe') return '↩️ Teilrückgabe';
+    return ereignis || '';
+}
+
+function entnahmeLogMaterialLabel(material) {
+    const menge = material?.menge != null ? material.menge : '';
+    const einheit = material?.einheit ? ` ${material.einheit}` : '';
+    const label = material?.label || material?.artikel_id || 'Unbekanntes Material';
+    return `${menge}${einheit} × ${label}`.trim();
+}
+
+function renderEntnahmeLog() {
+    const container = document.getElementById('entnahme-log-liste');
+    if (!container) return;
+
+    if (!entnahmeLogEintraege.length) {
+        container.innerHTML = '<p style="color:#666; margin:0;">Noch keine zurückgegebenen Entnahmen im Log.</p>';
+        return;
+    }
+
+    container.innerHTML = entnahmeLogEintraege.map(eintrag => {
+        const materialien = Array.isArray(eintrag.materialien) ? eintrag.materialien : [];
+        return `
+            <div class="entnahme-log-eintrag" style="border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:10px;">
+                <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px; align-items:baseline;">
+                    <strong>${escapeHtml(eintrag.name || 'Ohne Namen')}</strong>
+                    <small style="color:#5f6b77;">${escapeHtml(entnahmeDatumAnzeigen(eintrag.created_at))}</small>
+                </div>
+                <div style="font-size:0.85em; color:#8a97a3; margin:2px 0 6px;">${escapeHtml(entnahmeLogEreignisLabel(eintrag.ereignis))}${eintrag.kontakt ? ' · ' + escapeHtml(eintrag.kontakt) : ''}</div>
+                <ul style="margin:0; padding-left:18px; color:#3a4652;">
+                    ${materialien.map(m => `<li>${escapeHtml(entnahmeLogMaterialLabel(m))}</li>`).join('') || '<li>Keine Materialien erfasst</li>'}
+                </ul>
+            </div>
+        `;
+    }).join('');
+}
+
+async function ladeEntnahmeLog() {
+    const container = document.getElementById('entnahme-log-liste');
+    if (container) container.innerHTML = '<p style="color:#666; margin:0;">Lade Log…</p>';
+
+    const { data, error } = await dbClient
+        .from(ENTNAHME_AUDIT_TABLE)
+        .select('*')
+        .in('ereignis', ['rueckgabe', 'teilrueckgabe'])
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+    if (error) {
+        console.error(error);
+        if (container) container.innerHTML = '<p style="color:#c0392b; margin:0;">Log konnte nicht geladen werden.</p>';
+        return;
+    }
+
+    entnahmeLogEintraege = data || [];
+    entnahmeLogGeladen = true;
+    renderEntnahmeLog();
+}
+
+async function oeffneEntnahmeLog() {
+    const modal = document.getElementById('entnahmeLogModal');
+    if (!modal) return;
+    modal.style.display = 'block';
+    await ladeEntnahmeLog();
+}
+
+function schliesseEntnahmeLog() {
+    const modal = document.getElementById('entnahmeLogModal');
+    if (modal) modal.style.display = 'none';
 }
 
 async function entnahmeProtokollSpeichern(options = {}) {
@@ -2284,7 +2445,8 @@ async function entnahmeProtokollSpeichern(options = {}) {
                 kontakt,
                 materialien: payload.materialien,
                 benutzer_vorlage_id: benutzerVorlageId,
-                sammelvorlage_id: sammelvorlageId
+                sammelvorlage_id: sammelvorlageId,
+                ereignis: 'entnahme'
             };
             const { error: auditError } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
             if (auditError) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', auditError);
@@ -2318,6 +2480,7 @@ async function entnahmeAbschliessen() {
 }
 
 async function zurHauptseiteZurueck(nachSpeichern = false) {
+    deaktiviereAlleNfcModi();
     const url = new URL(window.location.href);
     url.searchParams.delete('entnahme');
     if (/\/index\.html?$/i.test(url.pathname)) {
@@ -4280,12 +4443,75 @@ function schliesseRueckgabeKameraModal() {
     document.getElementById('rueckgabeKameraModal').style.display = 'none';
 }
 
+/**
+ * Stoppt einen laufenden NFC-Modus sauber (App-NFC-Listener entfernen bzw.
+ * Web-NFC-Scan abbrechen) und räumt die zugehörigen Variablen auf.
+ */
+function deaktiviereNfcModus(modus) {
+    if (modus === 'rueckgabe') {
+        if (typeof window.nfc !== 'undefined') {
+            try { window.nfc.removeNdefListener(); } catch (e) { /* war evtl. schon abgehängt */ }
+        }
+        if (rueckgabeNfcAbortController) {
+            rueckgabeNfcAbortController.abort();
+            rueckgabeNfcAbortController = null;
+        }
+        rueckgabeNfcReader = null;
+    } else if (modus === 'ausbuchen') {
+        if (typeof window.nfc !== 'undefined') {
+            try { window.nfc.removeNdefListener(); } catch (e) { /* war evtl. schon abgehängt */ }
+        }
+        if (ausbuchenNfcAbortController) {
+            ausbuchenNfcAbortController.abort();
+            ausbuchenNfcAbortController = null;
+        }
+        ausbuchenNfcReader = null;
+    }
+
+    if (aktiverNfcModus === modus) aktiverNfcModus = null;
+    aktualisiereNfcModusUI();
+}
+
+/** Deaktiviert jeden gerade laufenden NFC-Modus, z.B. beim Verlassen der Seite. */
+function deaktiviereAlleNfcModi() {
+    deaktiviereNfcModus('rueckgabe');
+    deaktiviereNfcModus('ausbuchen');
+}
+
+/** Spiegelt den aktiven NFC-Modus optisch auf den beiden NFC-Buttons wider. */
+function aktualisiereNfcModusUI() {
+    const rueckgabeBtn = document.getElementById('rueckgabe-nfc-btn');
+    const ausbuchenBtn = document.getElementById('ausbuchen-nfc-btn');
+    if (rueckgabeBtn) {
+        rueckgabeBtn.classList.toggle('nfc-aktiv', aktiverNfcModus === 'rueckgabe');
+        rueckgabeBtn.innerText = aktiverNfcModus === 'rueckgabe' ? '📶 NFC aktiv – antippen zum Stoppen' : '📶 NFC-Scan (Android)';
+    }
+    if (ausbuchenBtn) {
+        ausbuchenBtn.classList.toggle('nfc-aktiv', aktiverNfcModus === 'ausbuchen');
+        ausbuchenBtn.innerText = aktiverNfcModus === 'ausbuchen' ? '📶 NFC aktiv – antippen zum Stoppen' : '📶 NFC-Scan (Android)';
+    }
+}
+
 async function starteRueckgabeNfc() {
+    // Läuft der Rückgabe-Modus bereits? Dann fungiert der Button als Stopp-Schalter.
+    if (aktiverNfcModus === 'rueckgabe') {
+        deaktiviereNfcModus('rueckgabe');
+        showToast('📶 NFC-Rückgabe-Modus gestoppt.', 'success');
+        return;
+    }
+
+    // Switch-Verhalten: der jeweils andere Modus wird automatisch deaktiviert,
+    // es kann immer nur ein NFC-Modus gleichzeitig aktiv sein.
+    if (aktiverNfcModus === 'ausbuchen') deaktiviereNfcModus('ausbuchen');
+
+    aktiverNfcModus = 'rueckgabe';
+    aktualisiereNfcModusUI();
+
     // 1. Prüfen, ob wir in der nativen App (Capacitor/Phonegap) sind
     if (typeof window.nfc !== 'undefined') {
         rueckgabeScanSperre = false;
-        showToast('📶 App-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
-        
+        showToast('📶 App-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
+
         window.nfc.addNdefListener((nfcEvent) => {
             try {
                 let record = nfcEvent.tag.ndefMessage[0];
@@ -4301,7 +4527,9 @@ async function starteRueckgabeNfc() {
                 }
 
                 verarbeiteRueckgabeScan(payloadText);
-                window.nfc.removeNdefListener(); // Hängt sich nach einem Scan wieder ab
+                // Listener bewusst NICHT entfernen: der Modus bleibt aktiv, damit
+                // direkt der nächste Tag gescannt werden kann, ohne den Button
+                // erneut zu drücken. Deaktivierung nur per Moduswechsel/Stopp.
             } catch (e) {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
@@ -4312,14 +4540,17 @@ async function starteRueckgabeNfc() {
     // 2. Fallback für den normalen Web-Browser (Chrome)
     if (!('NDEFReader' in window)) {
         showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
+        aktiverNfcModus = null;
+        aktualisiereNfcModusUI();
         return;
     }
     try {
         rueckgabeScanSperre = false;
+        rueckgabeNfcAbortController = new AbortController();
         const reader = new NDEFReader();
-        await reader.scan();
+        await reader.scan({ signal: rueckgabeNfcAbortController.signal });
         rueckgabeNfcReader = reader;
-        showToast('📶 Web-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+        showToast('📶 Web-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
 
         reader.onreading = (event) => {
             try {
@@ -4339,7 +4570,11 @@ async function starteRueckgabeNfc() {
             }
         };
     } catch (err) {
-        showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
+        if (err && err.name !== 'AbortError') {
+            showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
+        }
+        if (aktiverNfcModus === 'rueckgabe') aktiverNfcModus = null;
+        aktualisiereNfcModusUI();
     }
 }
 
@@ -4467,11 +4702,25 @@ function schliesseAusbuchenKameraModal() {
 }
 
 async function starteAusbuchenNfc() {
+    // Läuft der Ausbuchen-Modus bereits? Dann fungiert der Button als Stopp-Schalter.
+    if (aktiverNfcModus === 'ausbuchen') {
+        deaktiviereNfcModus('ausbuchen');
+        showToast('📶 NFC-Ausbuchen-Modus gestoppt.', 'success');
+        return;
+    }
+
+    // Switch-Verhalten: der jeweils andere Modus wird automatisch deaktiviert,
+    // es kann immer nur ein NFC-Modus gleichzeitig aktiv sein.
+    if (aktiverNfcModus === 'rueckgabe') deaktiviereNfcModus('rueckgabe');
+
+    aktiverNfcModus = 'ausbuchen';
+    aktualisiereNfcModusUI();
+
     // 1. Prüfen, ob wir in der nativen App (Capacitor/Phonegap) sind
     if (typeof window.nfc !== 'undefined') {
         ausbuchenScanSperre = false;
-        showToast('📶 App-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
-        
+        showToast('📶 App-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
+
         window.nfc.addNdefListener((nfcEvent) => {
             try {
                 let record = nfcEvent.tag.ndefMessage[0];
@@ -4487,7 +4736,9 @@ async function starteAusbuchenNfc() {
                 }
 
                 verarbeiteAusbuchenScan(payloadText);
-                window.nfc.removeNdefListener();
+                // Listener bewusst NICHT entfernen: der Modus bleibt aktiv, damit
+                // direkt der nächste Tag gescannt werden kann, ohne den Button
+                // erneut zu drücken. Deaktivierung nur per Moduswechsel/Stopp.
             } catch (e) {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
@@ -4498,14 +4749,17 @@ async function starteAusbuchenNfc() {
     // 2. Fallback für den normalen Web-Browser
     if (!('NDEFReader' in window)) {
         showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
+        aktiverNfcModus = null;
+        aktualisiereNfcModusUI();
         return;
     }
     try {
         ausbuchenScanSperre = false;
+        ausbuchenNfcAbortController = new AbortController();
         const reader = new NDEFReader();
-        await reader.scan();
+        await reader.scan({ signal: ausbuchenNfcAbortController.signal });
         ausbuchenNfcReader = reader;
-        showToast('📶 Web-NFC aktiv – Tag jetzt ans Smartphone halten…', 'success');
+        showToast('📶 Web-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
 
         reader.onreading = (event) => {
             try {
@@ -4525,7 +4779,11 @@ async function starteAusbuchenNfc() {
             }
         };
     } catch (err) {
-        showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
+        if (err && err.name !== 'AbortError') {
+            showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
+        }
+        if (aktiverNfcModus === 'ausbuchen') aktiverNfcModus = null;
+        aktualisiereNfcModusUI();
     }
 }
 

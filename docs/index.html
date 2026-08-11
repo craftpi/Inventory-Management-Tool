@@ -748,6 +748,15 @@
             .subview-backbar { padding: 0 12px; }
             .subview-back-btn { width: 100%; justify-content: center; padding: 12px 16px; }
         }
+    .btn.nfc-aktiv {
+        background:#e67e22 !important;
+        box-shadow: 0 0 0 3px rgba(230, 126, 34, 0.35);
+        animation: nfcPulse 1.4s ease-in-out infinite;
+    }
+    @keyframes nfcPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.75; }
+    }
     </style>
 </head>
 <body>
@@ -922,6 +931,10 @@
                     <button class="btn" style="background:#34495e; width:auto;" onclick="zurHauptseiteZurueck()">Zur Hauptseite</button>
                 </div>
 
+                <div style="text-align:right; margin: -6px 0 14px;">
+                    <a href="#" onclick="oeffneEntnahmeLog(); return false;" style="font-size:0.8em; color:#8a97a3; text-decoration:underline;">Rückgabe-Log (Admin)</a>
+                </div>
+
                 <div class="entnahme-summary-card" style="margin-bottom:14px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                         <div>
@@ -930,7 +943,7 @@
                         </div>
                         <div style="display:flex; gap:8px; flex-wrap:wrap;">
                             <button class="btn" style="background:#16a085; width:auto;" onclick="oeffneRueckgabeKameraModal()">📷 Kamera-Scan</button>
-                            <button class="btn" style="background:#2980b9; width:auto;" onclick="starteRueckgabeNfc()">📶 NFC-Scan (Android)</button>
+                            <button id="rueckgabe-nfc-btn" class="btn" style="background:#2980b9; width:auto;" onclick="starteRueckgabeNfc()">📶 NFC-Scan (Android)</button>
                         </div>
                     </div>
                     <p style="margin:10px 0 0; font-size:0.8em; color:#8a97a3;">iPhone: NFC-Tag oder QR-Etikett einfach mit der normalen Kamera/NFC des Handys antippen bzw. scannen – die Rückgabe wird automatisch gebucht, sobald die Seite sich öffnet.</p>
@@ -1009,7 +1022,7 @@
                                 </div>
                                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
                                     <button class="btn" style="background:#c0392b; width:auto;" onclick="oeffneAusbuchenKameraModal()">📷 Kamera-Scan</button>
-                                    <button class="btn" style="background:#2980b9; width:auto;" onclick="starteAusbuchenNfc()">📶 NFC-Scan (Android)</button>
+                                    <button id="ausbuchen-nfc-btn" class="btn" style="background:#2980b9; width:auto;" onclick="starteAusbuchenNfc()">📶 NFC-Scan (Android)</button>
                                 </div>
                             </div>
                             <p style="margin:10px 0 0; font-size:0.8em; color:#8a97a3;">iPhone: für NFC-Tags die Kamera-Scan-Funktion nutzen (QR-Etikett) – Web-NFC im Browser gibt es auf iOS nicht.</p>
@@ -1550,6 +1563,18 @@
         <p id="ausbuchen-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
         <div class="flex-buttons">
             <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseAusbuchenKameraModal()">Schließen</button>
+        </div>
+    </div>
+</div>
+
+<div id="entnahmeLogModal" class="modal" onclick="if (event.target === this) schliesseEntnahmeLog()">
+    <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="schliesseEntnahmeLog()" title="Schließen" aria-label="Schließen">✕</button>
+        <h2>🗂️ Rückgabe-Log</h2>
+        <p style="font-size: 0.85em; color: #666;">Admin-Übersicht: alle vollständig oder teilweise zurückgegebenen Entnahmen, unveränderlich protokolliert.</p>
+        <div id="entnahme-log-liste" style="max-height: 60vh; overflow-y: auto; margin-top: 10px;"></div>
+        <div class="flex-buttons">
+            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseEntnahmeLog()">Schließen</button>
         </div>
     </div>
 </div>
