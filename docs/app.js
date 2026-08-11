@@ -4288,12 +4288,19 @@ async function starteRueckgabeNfc() {
         
         window.nfc.addNdefListener((nfcEvent) => {
             try {
-                let payload = window.nfc.bytesToString(nfcEvent.tag.ndefMessage[0].payload);
-                // Manche Tags haben Sprachkürzel (wie 'en' oder 'de') davor, die schneiden wir ab
-                if (payload.length > 3 && payload.charCodeAt(0) < 5) {
-                    payload = payload.substring(payload.charCodeAt(0) + 1);
+                let record = nfcEvent.tag.ndefMessage[0];
+                let payloadText = "";
+                
+                // Prüfen ob es ein professioneller Web-Link (URI) oder Text ist
+                if (record.tnf === 1 && record.type[0] === 85) { 
+                    payloadText = window.ndef.uriHelper.decodePayload(record.payload);
+                } else if (record.tnf === 1 && record.type[0] === 84) { 
+                    payloadText = window.ndef.textHelper.decodePayload(record.payload);
+                } else {
+                    payloadText = window.nfc.bytesToString(record.payload);
                 }
-                verarbeiteRueckgabeScan(payload);
+
+                verarbeiteRueckgabeScan(payloadText);
                 window.nfc.removeNdefListener(); // Hängt sich nach einem Scan wieder ab
             } catch (e) {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
@@ -4467,11 +4474,19 @@ async function starteAusbuchenNfc() {
         
         window.nfc.addNdefListener((nfcEvent) => {
             try {
-                let payload = window.nfc.bytesToString(nfcEvent.tag.ndefMessage[0].payload);
-                if (payload.length > 3 && payload.charCodeAt(0) < 5) {
-                    payload = payload.substring(payload.charCodeAt(0) + 1);
+                let record = nfcEvent.tag.ndefMessage[0];
+                let payloadText = "";
+                
+                // Prüfen ob es ein professioneller Web-Link (URI) oder Text ist
+                if (record.tnf === 1 && record.type[0] === 85) { 
+                    payloadText = window.ndef.uriHelper.decodePayload(record.payload);
+                } else if (record.tnf === 1 && record.type[0] === 84) { 
+                    payloadText = window.ndef.textHelper.decodePayload(record.payload);
+                } else {
+                    payloadText = window.nfc.bytesToString(record.payload);
                 }
-                verarbeiteAusbuchenScan(payload);
+
+                verarbeiteAusbuchenScan(payloadText);
                 window.nfc.removeNdefListener();
             } catch (e) {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
