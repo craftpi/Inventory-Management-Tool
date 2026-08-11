@@ -4699,19 +4699,30 @@ async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
 
     // 1. Prüfen, ob wir in der nativen App sind
     if (typeof window.nfc !== 'undefined') {
-        showToast('📶 App: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
+        showToast('📶 App: NFC-Tag jetzt an das Handy halten…', 'success');
         
-        window.nfc.addNdefListener(() => {
+        // Das ist die Aktion, die ausgeführt wird, wenn ein Tag erkannt wird
+        const schreibeAktion = () => {
             const record = window.ndef.uriRecord(link);
             window.nfc.write([record], () => {
                 if (navigator.vibrate) navigator.vibrate(200);
                 showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
+                // Zuhörer nach Erfolg wieder abschalten
                 window.nfc.removeNdefListener();
+                window.nfc.removeNdefFormatableListener(); 
             }, (err) => {
                 showToast('Schreiben fehlgeschlagen: ' + err, 'error');
                 window.nfc.removeNdefListener();
+                window.nfc.removeNdefFormatableListener();
             });
-        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
+        };
+
+        // Zuhörer 1: Für bereits formatierte Tags (die meisten)
+        window.nfc.addNdefListener(schreibeAktion, () => {}, (err) => { console.log(err); });
+        
+        // Zuhörer 2: Für komplett fabrikneue, unformatierte Tags! (Formatiert sie automatisch)
+        window.nfc.addNdefFormatableListener(schreibeAktion, () => {}, (err) => { console.log(err); });
+        
         return;
     }
 
