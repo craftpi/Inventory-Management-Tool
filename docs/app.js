@@ -4121,16 +4121,13 @@ function extrahiereArtikelIdAusScan(rawText) {
     const text = String(rawText || '').trim();
     if (!text) return null;
 
+    // 1. Format: artikel:123 (Für normale QR-Codes)
     const einfacherMatch = /^artikel:(.+)$/i.exec(text);
     if (einfacherMatch) return einfacherMatch[1].trim();
 
-    try {
-        const url = new URL(text);
-        const id = url.searchParams.get('rueckgabe');
-        if (id) return id.trim();
-    } catch (e) {
-        // kein gültiges URL-Format - ignorieren, es war wohl kein Treffer
-    }
+    // 2. Format: URL-Parameter (Kugelsicher: Sucht einfach nach "rueckgabe=...")
+    const urlMatch = /rueckgabe=([^&\s]+)/i.exec(text);
+    if (urlMatch) return urlMatch[1].trim();
 
     return null;
 }
