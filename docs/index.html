@@ -44,6 +44,15 @@
         
         .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; min-width: 500px; }
+        /* Feste Pixel-Spaltenbreiten (früher 120px/100px) skalierten nicht mit,
+           als der Container breiter wurde - dadurch wurde der Lagerort/Menge-
+           Bereich immer schmaler im Verhältnis. table-layout:fixed + Prozent-
+           Breiten sorgen dafür, dass diese Spalte mit dem Container mitwächst
+           und der Lagerort-Text mehr Platz bekommt, ohne die Namensspalte zu
+           berühren. */
+        .lager-table { table-layout: fixed; }
+        .lager-table .lager-th-ort { width: 34%; }
+        .lager-table .lager-th-menge { width: 20%; }
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
         th { background-color: #3498db; color: white; }
         tbody tr { transition: background-color 0.15s ease; }
@@ -655,11 +664,12 @@
 
         /* ===== HANDY (≤600px) ===== */
         @media (max-width: 600px) {
-            /* Der rote Verlauf sieht auf großen Bildschirmen edel aus, engt auf dem
-               Handy aber den Kontrast/Lesekomfort ein - hier daher ein ruhiger,
-               heller Hintergrund statt des Farbverlaufs. */
-            body { padding: 10px 5px; background: #eef1f5; }
-            .container { padding: 15px 10px; }
+            /* Der äußere "Rand" um die weiße Karte kostet auf kleinen Screens
+               wertvollen Platz. Der Container nutzt hier daher fast die volle
+               Breite - der rote Verlauf bleibt als Farbe erhalten, ist aber
+               kaum noch sichtbar, weil außenrum kein Platz mehr verschenkt wird. */
+            body { padding: 8px 4px; }
+            .container { padding: 15px 10px; max-width: 100%; border-radius: 10px; }
             .action-bar, .action-group { flex-direction: column; align-items: stretch; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
@@ -1271,7 +1281,7 @@
             </div>
         </div>
         <div class="table-responsive">
-            <table>
+            <table class="lager-table">
                 <thead>
                     <tr>
                         <th style="vertical-align: middle;">
@@ -1283,8 +1293,8 @@
                                 <span>Kategorie / Artikel</span>
                             </div>
                         </th>
-                        <th style="vertical-align: middle; width: 120px;">Lagerort</th>
-                        <th style="vertical-align: middle; width: 100px;">Menge</th>
+                        <th style="vertical-align: middle;" class="lager-th-ort">Lagerort</th>
+                        <th style="vertical-align: middle;" class="lager-th-menge">Menge</th>
                     </tr>
                 </thead>
                 <tbody id="lager-tabelle"><tr><td colspan="3" style="padding:30px;"><div class="ladespinner-wrap"><span class="ladespinner"></span> Lade Daten...</div></td></tr></tbody>
