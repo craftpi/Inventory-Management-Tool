@@ -68,6 +68,20 @@
         .bestand-action-row > * { height: 46px; box-sizing: border-box; }
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
         .sub-sum-badge { font-size: 0.75em; background: #7f8c8d; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; font-weight: normal; }
+
+        /* Lagerort/Menge-Zeile je Bestandseintrag: flex-wrap sorgt dafür, dass
+           lange Lagerort-Namen sauber umbrechen statt in eine zu schmale
+           Spalte gequetscht zu werden oder über den Rand zu laufen. */
+        .badge-markiert { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #f39c12; color: #fff; font-size: 0.75em; font-weight: bold; vertical-align: middle; }
+        .bestand-ort-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px; }
+        .bestand-ort-name { font-size: 0.9em; color: #666; flex: 1 1 180px; min-width: 0; word-break: break-word; }
+        .bestand-ort-qty-wrap { display: flex; align-items: center; gap: 5px; justify-content: flex-end; flex: 0 0 auto; }
+        .bestand-einheit { color: #888; font-size: 0.8em; }
+        .bestand-extra-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-top: 2px; font-size: 0.82em; line-height: 1.2; font-family: inherit; flex-wrap: wrap; }
+        .bestand-verfuegbar-info { min-width: 120px; display: flex; flex-direction: column; justify-content: flex-start; white-space: nowrap; font-size: inherit; font-family: inherit; font-weight: normal; text-align: left; }
+        .bestand-nachkauf-hinweis { margin-top: 4px; font-size: 0.8em; font-weight: bold; }
+        .bestand-reserviert-info { font-size: 0.82em; color: #d35400; font-weight: normal; cursor: help; display: inline-flex; align-items: center; white-space: nowrap; }
+        .bestand-kommentar-anzeige { margin-top: 4px; color: #6b7280; font-size: 0.8em; font-weight: normal; line-height: 1.35; display: flex; align-items: flex-start; gap: 6px; padding-left: 18px; }
         
         .event-warning { color: #e74c3c; font-weight: bold; background: #fdf0ed; padding: 4px 8px; border-radius: 4px; }
         .event-ok { color: #27ae60; font-weight: bold; }
@@ -641,11 +655,25 @@
 
         /* ===== HANDY (≤600px) ===== */
         @media (max-width: 600px) {
-            body { padding: 10px 5px; }
+            /* Der rote Verlauf sieht auf großen Bildschirmen edel aus, engt auf dem
+               Handy aber den Kontrast/Lesekomfort ein - hier daher ein ruhiger,
+               heller Hintergrund statt des Farbverlaufs. */
+            body { padding: 10px 5px; background: #eef1f5; }
             .container { padding: 15px 10px; }
             .action-bar, .action-group { flex-direction: column; align-items: stretch; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
+
+            /* Lagerort/Menge/Verfügbar-Zeilen: auf dem Handy deutlich größer und
+               damit besser lesbar; auf großen Bildschirmen unverändert kompakt. */
+            .bestand-ort-name { font-size: 1em; }
+            .bestand-einheit { font-size: 0.9em; }
+            .bestand-extra-row { font-size: 0.95em; }
+            .bestand-kommentar-anzeige { font-size: 0.92em; }
+            .bestand-reserviert-info { font-size: 0.9em; }
+            .bestand-nachkauf-hinweis { font-size: 0.92em; }
+            .badge-markiert { font-size: 0.8em; padding: 3px 10px; }
+            .sub-sum-badge { font-size: 0.8em; }
             .packlisten-wrapper { flex-direction: row; flex-wrap: wrap; }
             .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
             .packlisten-wrapper button { flex: 1; width: auto; }

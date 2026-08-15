@@ -3116,7 +3116,7 @@ function tabelleAktualisieren(daten) {
             let displayName = gruppe.artikel.name;
             let indent = 25;
             let iconLabel = '↳';
-            const wichtigBadge = gruppe.artikel.wichtig ? '<span style="display:inline-block; margin-left:8px; padding:2px 8px; border-radius:999px; background:#f39c12; color:#fff; font-size:0.75em; font-weight:bold; vertical-align:middle;">MARKIERT</span>' : '';
+            const wichtigBadge = gruppe.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
             const hatKommentar = gruppe.artikel.kommentar && gruppe.artikel.kommentar.trim() !== '';
             const bubbleColor = hatKommentar ? '#3498db' : '#bdc3c7'; 
             const bubbleFill = hatKommentar ? '#3498db' : 'none'; 
@@ -3130,7 +3130,7 @@ function tabelleAktualisieren(daten) {
                     </svg>
                 </span>` : '';
             const kommentarAnzeige = !isEditMode && hatKommentar ? `
-                <div style="margin-top: 4px; color: #6b7280; font-size: 0.8em; font-weight: normal; line-height: 1.35; display: flex; align-items: flex-start; gap: 6px; padding-left: 18px;">
+                <div class="bestand-kommentar-anzeige">
                     <span style="flex: 0 0 auto; color: #3498db; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-top: 1px;">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
@@ -3167,7 +3167,7 @@ function tabelleAktualisieren(daten) {
                     const safeLName = escapeHtml(lName);
                     hoverText += `• ${Number(lMenge) || 0}x in <i>${safeLName}</i><br>`;
                 }
-                resHtml = `<div class="no-select" style="font-size: 0.82em; color: #d35400; font-weight: normal; cursor: help; display: inline-flex; align-items: center; white-space: nowrap;"
+                resHtml = `<div class="no-select bestand-reserviert-info"
                     data-hover-type="res" data-hover-content="${hoverText}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
@@ -3185,8 +3185,8 @@ function tabelleAktualisieren(daten) {
                 ? 'Nachkaufen'
                 : (hatMinusBestand ? 'Verfügbar' : (verfuegbarkeit === '∞' ? '∞' : `${verfuegbarkeit}`));
             const nachkaufHinweis = hatNachkaufMarkierung
-                ? '<div style="margin-top: 4px; color: #c0392b; font-size: 0.8em; font-weight: bold;">Nachkaufen</div>'
-                : (hatMinusBestand ? '<div style="margin-top: 4px; color: #27ae60; font-size: 0.8em; font-weight: bold;">Verfügbar</div>' : '');
+                ? '<div class="bestand-nachkauf-hinweis" style="color: #c0392b;">Nachkaufen</div>'
+                : (hatMinusBestand ? '<div class="bestand-nachkauf-hinweis" style="color: #27ae60;">Verfügbar</div>' : '');
 
             gruppe.bestaende.forEach(b => {
                 const isInfLocal = (Number(b.menge) === -1);
@@ -3195,7 +3195,7 @@ function tabelleAktualisieren(daten) {
                 let mengeZelle = "";
                 
                 if (isInfLocal) {
-                    mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small style="color: #888; font-size: 0.8em; margin-left: 3px;">${einheit}</small>`;
+                    mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small class="bestand-einheit" style="margin-left: 3px;">${einheit}</small>`;
                 } else if (isStrichLocal || isStrichNachkaufLocal) {
                     const strichStatus = isStrichNachkaufLocal ? 'warn' : 'ok';
                     const strichTitle = isStrichNachkaufLocal ? 'Nachkauf erforderlich' : 'Ausreichend vorhanden';
@@ -3203,15 +3203,15 @@ function tabelleAktualisieren(daten) {
                 } else {
                     const wertKlasse = Number(b.menge) > 0 ? 'bestand-menge-ok' : 'bestand-menge-low';
                     mengeZelle = `
-                        <div style="display: flex; align-items: center; gap: 5px; justify-content: flex-end;">
+                        <div class="bestand-ort-qty-wrap">
                             <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${wertKlasse}" value="${b.menge}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width: 60px;">
-                            <small style="color: #888; font-size: 0.8em; width: 45px; text-align: left;">${einheit}</small>
+                            <small class="bestand-einheit" style="width: 45px; text-align: left;">${einheit}</small>
                         </div>`;
                 }
 
                 bestandInfoHtml += `
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px;">
-                        <span style="font-size: 0.9em; color: #666;">📍 ${escapeHtml(b.lagerorte.name)}</span>
+                    <div class="bestand-ort-row">
+                        <span class="bestand-ort-name">📍 ${escapeHtml(b.lagerorte.name)}</span>
                         ${mengeZelle}
                     </div>`;
             });
@@ -3226,9 +3226,9 @@ function tabelleAktualisieren(daten) {
                 <td colspan="2" style="vertical-align: top;">
                     <div style="display: flex; flex-direction: column; gap: 6px;">
                         ${bestandInfoHtml}
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-top: 2px; font-size: 0.82em; line-height: 1.2; font-family: inherit;">
+                        <div class="bestand-extra-row">
                             ${resHtml ? '<div>' + resHtml + '</div>' : ''}
-                            <div style="min-width: 120px; display: flex; flex-direction: column; justify-content: flex-start; color: ${verfuegbarkeitFarbe}; white-space: nowrap; font-size: inherit; font-family: inherit; font-weight: normal; text-align: left;">
+                            <div class="bestand-verfuegbar-info" style="color: ${verfuegbarkeitFarbe};">
                                 ${hatNachkaufMarkierung ? '' : (hatMinusBestand ? '' : `Verfügbar: <strong>${verfuegbarkeitWert}</strong>`)}
                                 ${nachkaufHinweis}
                             </div>
