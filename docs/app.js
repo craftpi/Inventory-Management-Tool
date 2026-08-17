@@ -4358,13 +4358,32 @@ async function verarbeiteRueckgabeScan(rawCode) {
         }
 
         // 4. Menge in der gefundenen Entnahme um 1 reduzieren
+        const urspruenglicheMaterialien = gefundeneEntnahme.materialien.map(item => ({ ...item }));
         const neueMaterialien = [...gefundeneEntnahme.materialien];
         neueMaterialien[materialIndex].menge -= 1;
+
+        // Für den Audit-Log: genau die zurückgegebene Position (immer Menge 1
+        // pro Scan) festhalten, bevor sie ggf. aus der Liste entfernt wird.
+        const auditPosition = {
+            artikel_id: urspruenglicheMaterialien[materialIndex].artikel_id,
+            label: urspruenglicheMaterialien[materialIndex].label || artikelName,
+            kategorie: urspruenglicheMaterialien[materialIndex].kategorie,
+            einheit: urspruenglicheMaterialien[materialIndex].einheit,
+            menge: 1
+        };
 
         // Wenn die Menge 0 erreicht, den Artikel ganz aus dieser Entnahme-Liste streichen
         if (neueMaterialien[materialIndex].menge <= 0) {
             neueMaterialien.splice(materialIndex, 1);
         }
+
+        const auditBasis = {
+            entnahme_id: String(gefundeneEntnahme.id),
+            name: gefundeneEntnahme.name || '',
+            kontakt: gefundeneEntnahme.kontakt || '',
+            benutzer_vorlage_id: gefundeneEntnahme.benutzer_vorlage_id || null,
+            sammelvorlage_id: gefundeneEntnahme.sammelvorlage_id || null
+        };
 
         // 5. Datenbank aktualisieren
         if (neueMaterialien.length === 0) {
@@ -4374,6 +4393,15 @@ async function verarbeiteRueckgabeScan(rawCode) {
                 .delete()
                 .eq('id', gefundeneEntnahme.id);
             if (deleteError) throw deleteError;
+
+            // Letzte Position dieser Entnahme wurde zurückgegeben -> komplette
+            // (ursprüngliche) Materialliste als "rueckgabe"-Ereignis loggen,
+            // analog zu entnahmeKomplettZurueckgeben() im Admin-Bereich.
+            await entnahmeAuditEintragSchreiben({
+                ...auditBasis,
+                materialien: urspruenglicheMaterialien,
+                ereignis: 'rueckgabe'
+            });
         } else {
             // Es sind noch andere Sachen in der Entnahme -> nur updaten
             const { error: updateError } = await dbClient
@@ -4381,6 +4409,13 @@ async function verarbeiteRueckgabeScan(rawCode) {
                 .update({ materialien: neueMaterialien })
                 .eq('id', gefundeneEntnahme.id);
             if (updateError) throw updateError;
+
+            // Teilrückgabe (ein einzelner Artikel von mehreren) loggen.
+            await entnahmeAuditEintragSchreiben({
+                ...auditBasis,
+                materialien: [auditPosition],
+                ereignis: 'teilrueckgabe'
+            });
         }
 
         if (navigator.vibrate) navigator.vibrate(200);
@@ -4514,6 +4549,13 @@ async function starteRueckgabeNfc() {
 
         window.nfc.addNdefListener((nfcEvent) => {
             try {
+                // Sicherheitsnetz: Falls ein alter (eigentlich schon per
+                // removeNdefListener() abgemeldeter) Listener trotzdem noch
+                // ein Event feuert, hier hart abbrechen, sobald der Modus
+                // gewechselt wurde. Verhindert, dass "Ausbuchen"-Scans noch
+                // verarbeitet werden, während laut UI "Rückgabe" aktiv ist.
+                if (aktiverNfcModus !== 'rueckgabe') return;
+
                 let record = nfcEvent.tag.ndefMessage[0];
                 let payloadText = "";
                 
@@ -4554,6 +4596,11 @@ async function starteRueckgabeNfc() {
 
         reader.onreading = (event) => {
             try {
+                // Gleiches Sicherheitsnetz wie oben: Browser/Android stoppen
+                // eine laufende Web-NFC-Session nach abort() nicht immer
+                // sofort, daher hier zusätzlich den aktiven Modus prüfen.
+                if (aktiverNfcModus !== 'rueckgabe' || reader !== rueckgabeNfcReader) return;
+
                 let payload = '';
                 for (const record of event.message.records) {
                     if (record.recordType === 'url' || record.recordType === 'absolute-url') {
@@ -4723,6 +4770,11 @@ async function starteAusbuchenNfc() {
 
         window.nfc.addNdefListener((nfcEvent) => {
             try {
+                // Sicherheitsnetz: siehe starteRueckgabeNfc() - verhindert, dass
+                // ein noch nicht sauber abgemeldeter alter Listener nach dem
+                // Wechsel zu "Rückgabe" trotzdem noch Ausbuchen-Scans verarbeitet.
+                if (aktiverNfcModus !== 'ausbuchen') return;
+
                 let record = nfcEvent.tag.ndefMessage[0];
                 let payloadText = "";
                 
@@ -4763,6 +4815,9 @@ async function starteAusbuchenNfc() {
 
         reader.onreading = (event) => {
             try {
+                // Gleiches Sicherheitsnetz wie in starteRueckgabeNfc().
+                if (aktiverNfcModus !== 'ausbuchen' || reader !== ausbuchenNfcReader) return;
+
                 let payload = '';
                 for (const record of event.message.records) {
                     if (record.recordType === 'url' || record.recordType === 'absolute-url') {
