@@ -4934,6 +4934,10 @@ async function initEtikettenModus() {
     renderArtikelEtikettenListe();
 }
 
+// Merkt sich, welche Artikel-IDs für den Etiketten-Druck ausgewählt sind
+// (bleibt auch beim Filtern/Suchen erhalten).
+let etikettenAuswahlIds = new Set();
+
 function renderArtikelEtikettenListe() {
     const ziel = document.getElementById('etiketten-liste');
     if (!ziel) return;
@@ -4949,6 +4953,7 @@ function renderArtikelEtikettenListe() {
 
     if (artikelGefiltert.length === 0) {
         ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d;">Keine Artikel gefunden.</p>';
+        aktualisiereEtikettenAuswahlUI();
         return;
     }
 
@@ -4957,14 +4962,18 @@ function renderArtikelEtikettenListe() {
         const link = gibArtikelRueckgabeLink(art.id);
         const nameEscaped = escapeHtml(art.name);
         const nameJs = String(art.name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const istAusgewaehlt = etikettenAuswahlIds.has(String(art.id));
 
         const zeile = document.createElement('div');
-        zeile.className = 'etikett-zeile';
+        zeile.className = 'etikett-zeile' + (istAusgewaehlt ? ' ist-ausgewaehlt' : '');
         zeile.innerHTML = `
+            <label class="etikett-checkbox-wrap">
+                <input type="checkbox" class="etikett-checkbox" data-id="${art.id}" ${istAusgewaehlt ? 'checked' : ''} onchange="toggleEtikettAuswahl('${art.id}', this.checked)">
+            </label>
             <div class="etikett-qr" id="etikett-qr-${art.id}"></div>
             <div class="etikett-info">
                 <strong>${nameEscaped}</strong>
-                <small>${escapeHtml(art.kategorie || 'Ohne Kategorie')}</small>
+                <small>${escapeHtml(art.kategorie || 'Ohne Kategorie')} · ${escapeHtml(formatArtikelId(art.id))}</small>
             </div>
             <div class="etikett-aktionen">
                 <button class="btn" style="background:#1f5f8b;" onclick="downloadArtikelQr('${art.id}', '${nameJs}')">⬇️ QR (PNG)</button>
@@ -4982,6 +4991,54 @@ function renderArtikelEtikettenListe() {
             correctLevel: QRCode.CorrectLevel.M
         });
     });
+
+    aktualisiereEtikettenAuswahlUI();
+}
+
+/**
+ * Formatiert die Artikel-ID einheitlich fürs Etikett (z.B. "#00042").
+ * Bei nicht-numerischen IDs (z.B. UUID) wird die ID unverändert angezeigt.
+ */
+function formatArtikelId(id) {
+    if (id === null || id === undefined || id === '') return '–';
+    const n = Number(id);
+    if (Number.isFinite(n)) return '#' + String(n).padStart(5, '0');
+    return String(id);
+}
+
+function toggleEtikettAuswahl(artikelId, checked) {
+    const id = String(artikelId);
+    if (checked) etikettenAuswahlIds.add(id);
+    else etikettenAuswahlIds.delete(id);
+
+    const zeile = document.querySelector(`.etikett-checkbox[data-id="${CSS.escape(id)}"]`)?.closest('.etikett-zeile');
+    if (zeile) zeile.classList.toggle('ist-ausgewaehlt', checked);
+
+    aktualisiereEtikettenAuswahlUI();
+}
+
+function toggleAlleEtikettenAuswahl(checked) {
+    document.querySelectorAll('.etikett-checkbox').forEach(cb => {
+        cb.checked = checked;
+        const id = String(cb.dataset.id);
+        if (checked) etikettenAuswahlIds.add(id);
+        else etikettenAuswahlIds.delete(id);
+        cb.closest('.etikett-zeile')?.classList.toggle('ist-ausgewaehlt', checked);
+    });
+    aktualisiereEtikettenAuswahlUI();
+}
+
+function aktualisiereEtikettenAuswahlUI() {
+    const countEl = document.getElementById('etiketten-auswahl-count');
+    const btn = document.getElementById('etiketten-auswahl-drucken-btn');
+    if (countEl) countEl.textContent = etikettenAuswahlIds.size;
+    if (btn) btn.disabled = etikettenAuswahlIds.size === 0;
+
+    const alleCb = document.getElementById('etiketten-alle-auswaehlen');
+    if (alleCb) {
+        const sichtbar = document.querySelectorAll('.etikett-checkbox');
+        alleCb.checked = sichtbar.length > 0 && Array.from(sichtbar).every(cb => cb.checked);
+    }
 }
 
 function downloadArtikelQr(artikelId, artikelName) {
@@ -5056,11 +5113,36 @@ async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
 }
 
 /**
- * Öffnet ein Druckfenster mit allen Artikel-QR-Codes als Etiketten-Bogen.
+ * Öffnet ein Druckfenster mit den QR-Codes ALLER Artikel als Etiketten-Bogen.
  */
 function druckeAlleEtiketten() {
     const artikelListe = [...alleArtikelInfos].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
-    if (artikelListe.length === 0) {
+    druckeEtiketten(artikelListe);
+}
+
+/**
+ * Öffnet ein Druckfenster nur mit den aktuell über die Checkboxen
+ * ausgewählten Artikeln.
+ */
+function druckeAusgewaehlteEtiketten() {
+    if (etikettenAuswahlIds.size === 0) {
+        showToast('Bitte zuerst Artikel auswählen.', 'warning');
+        return;
+    }
+    const artikelListe = alleArtikelInfos
+        .filter(a => etikettenAuswahlIds.has(String(a.id)))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+    druckeEtiketten(artikelListe);
+}
+
+/**
+ * Öffnet ein Druckfenster mit Etiketten für die übergebene Artikelliste.
+ * Layout: QR-Code, darunter Name und Artikel-ID – Textbreite ist auf die
+ * Breite des QR-Codes begrenzt, die Schrift schrumpft bei Bedarf automatisch
+ * (statt abgeschnitten zu werden), damit alles lesbar bleibt.
+ */
+function druckeEtiketten(artikelListe) {
+    if (!artikelListe || artikelListe.length === 0) {
         showToast('Keine Artikel zum Drucken vorhanden.', 'warning');
         return;
     }
@@ -5076,27 +5158,112 @@ function druckeAlleEtiketten() {
         const link = gibArtikelRueckgabeLink(art.id);
         itemsHtml += `<div class="etikett-print-item">
             <div class="etikett-print-qr" data-link="${escapeHtml(link)}"></div>
-            <div class="etikett-print-name">${escapeHtml(art.name)}</div>
+            <div class="etikett-print-text">
+                <div class="etikett-print-name">${escapeHtml(art.name)}</div>
+                <div class="etikett-print-id">${escapeHtml(formatArtikelId(art.id))}</div>
+            </div>
         </div>`;
     });
 
     const html = `<html><head><title>Artikel-Etiketten drucken</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
         <style>
-            body { font-family: sans-serif; padding: 10mm; }
-            .etikett-print-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10mm; }
-            .etikett-print-item { text-align: center; page-break-inside: avoid; }
-            .etikett-print-name { margin-top: 4px; font-size: 11px; word-break: break-word; }
+            * { box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; padding: 10mm; margin: 0; }
+            .etikett-print-toolbar { margin-bottom: 15px; display: flex; align-items: center; gap: 12px; }
+            .etikett-print-toolbar button { padding: 10px 16px; font-size: 14px; cursor: pointer; }
+            .etikett-print-toolbar span { color: #555; font-size: 13px; }
+
+            /* 4 Etiketten pro Reihe auf A4 - Größe passt zu gängigem Etikettenpapier (ca. 45x45mm) */
+            .etikett-print-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 6mm 5mm;
+            }
+            .etikett-print-item {
+                width: 42mm;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 3mm 2mm 2.5mm;
+                border: 1px dashed #bbb;
+                border-radius: 2mm;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            .etikett-print-qr {
+                width: 32mm;
+                height: 32mm;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .etikett-print-qr canvas,
+            .etikett-print-qr img {
+                width: 100% !important;
+                height: 100% !important;
+            }
+
+            /* Text darf NIE breiter als der QR-Code werden */
+            .etikett-print-text {
+                width: 32mm;
+                text-align: center;
+                margin-top: 1.5mm;
+            }
+            .etikett-print-name {
+                font-weight: 700;
+                font-size: 12px;
+                line-height: 1.15;
+                word-break: break-word;
+                overflow-wrap: break-word;
+                hyphens: auto;
+                height: 9mm;           /* fixe Höhe = Platz für ca. 2 Zeilen */
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .etikett-print-id {
+                margin-top: 0.8mm;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9px;
+                letter-spacing: 0.4px;
+                color: #555;
+            }
+
             .no-print { margin-bottom: 15px; }
-            @media print { .no-print { display: none; } @page { size: A4; margin: 10mm; } }
+            @media print {
+                .no-print { display: none; }
+                @page { size: A4; margin: 10mm; }
+                .etikett-print-item { border-color: #ddd; }
+            }
         </style>
         </head><body>
-            <button class="no-print" onclick="window.print()" style="padding:10px; cursor:pointer;">🖨️ Jetzt drucken</button>
+            <div class="no-print etikett-print-toolbar">
+                <button onclick="window.print()">🖨️ Jetzt drucken</button>
+                <span>${artikelListe.length} Etikett${artikelListe.length === 1 ? '' : 'en'}</span>
+            </div>
             <div class="etikett-print-grid" id="etikett-print-grid">${itemsHtml}</div>
             <script>
                 window.addEventListener('load', function () {
+                    // QR-Codes in hoher Auflösung erzeugen (werden per CSS auf 32mm skaliert -> scharfer Druck)
                     document.querySelectorAll('.etikett-print-qr').forEach(function (el) {
-                        new QRCode(el, { text: el.dataset.link, width: 110, height: 110, correctLevel: QRCode.CorrectLevel.M });
+                        new QRCode(el, { text: el.dataset.link, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+                    });
+
+                    // Schrift automatisch verkleinern, bis der Name in die feste Box passt,
+                    // statt ihn abzuschneiden. Untergrenze verhindert unleserlich kleine Schrift.
+                    function fitText(el, maxFontPx, minFontPx) {
+                        let size = maxFontPx;
+                        el.style.fontSize = size + 'px';
+                        while (el.scrollHeight > el.clientHeight && size > minFontPx) {
+                            size -= 0.5;
+                            el.style.fontSize = size + 'px';
+                        }
+                    }
+
+                    document.querySelectorAll('.etikett-print-name').forEach(function (el) {
+                        fitText(el, 12, 6.5);
                     });
                 });
             <\/script>

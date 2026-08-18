@@ -301,6 +301,29 @@
             background: #fbfdff;
             flex-wrap: wrap;
         }
+        .etikett-zeile.ist-ausgewaehlt {
+            border-color: #27ae60;
+            background: #f2fbf5;
+        }
+        .etikett-checkbox-wrap {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .etikett-checkbox-wrap input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .etiketten-toolbar label.etiketten-select-all {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.9em;
+            color: #34495e;
+            cursor: pointer;
+            white-space: nowrap;
+        }
         .etikett-qr {
             width: 90px;
             height: 90px;
@@ -1240,6 +1263,11 @@
 
             <div class="etiketten-toolbar">
                 <input type="text" id="etiketten-suche" placeholder="🔍 Artikel suchen…" oninput="renderArtikelEtikettenListe()" style="flex:1; min-width:200px; padding:10px; border:2px solid #3498db; border-radius:8px; box-sizing:border-box;">
+                <label class="etiketten-select-all">
+                    <input type="checkbox" id="etiketten-alle-auswaehlen" onchange="toggleAlleEtikettenAuswahl(this.checked)">
+                    Alle auswählen
+                </label>
+                <button class="btn" style="background:#27ae60; width:auto;" id="etiketten-auswahl-drucken-btn" onclick="druckeAusgewaehlteEtiketten()" disabled>🖨️ Auswahl drucken (<span id="etiketten-auswahl-count">0</span>)</button>
                 <button class="btn" style="background:#1f5f8b; width:auto;" onclick="druckeAlleEtiketten()">🖨️ Alle drucken</button>
             </div>
 
