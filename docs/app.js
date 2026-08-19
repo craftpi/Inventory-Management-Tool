@@ -3376,7 +3376,15 @@ async function speichereBearbeitung() {
             if (!weiter) return;
         }
 
-        await dbClient.from('artikel').update({ name: nName, kategorie: nKat, einheit: nEinheit, wichtig: nWichtig }).eq('id', aid);
+        const { error: updateErr } = await dbClient.from('artikel').update({ name: nName, kategorie: nKat, einheit: nEinheit, wichtig: nWichtig }).eq('id', aid);
+        if (updateErr) {
+            if (updateErr.code === '23505') {
+                showToast(`Ein anderer Artikel heißt bereits "${nName}" (von der Datenbank verhindert).`, "error");
+            } else {
+                showToast("Fehler: " + updateErr.message, "error");
+            }
+            return;
+        }
         await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
         const inserts = [];
@@ -3459,7 +3467,16 @@ async function artikelAnlegen() {
         }
 
         const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, einheit: e, wichtig: w }]).select();
-        if (err) { showToast("Fehler: " + err.message, "error"); return; }
+        if (err) {
+            // 23505 = unique_violation -> greift der DB-Constraint auf lower(name),
+            // z.B. weil zwei Nutzer/Tabs gleichzeitig denselben Artikel angelegt haben.
+            if (err.code === '23505') {
+                showToast(`Ein Artikel mit dem Namen "${n}" existiert bereits (von der Datenbank verhindert).`, "error");
+            } else {
+                showToast("Fehler: " + err.message, "error");
+            }
+            return;
+        }
         
         const bestandInserts = [];
         const rows = document.querySelectorAll('#new-orte-wrapper .lagerort-row');
