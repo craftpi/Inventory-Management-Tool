@@ -830,7 +830,7 @@
         <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
     </div>
     <div class="survey-page">
-        <h1>📝 <Lager-Feedbackportal></Lager-Feedbackportal></h1>
+        <h1><span>📝Lager-Feedbackportal</span></h1>
         <p class="survey-note">Bitte beantworte die beiden Fragen mit Freitext. Danke!</p>
 
         <div class="form-group">
@@ -846,6 +846,11 @@
         <div class="form-group">
             <label for="formular-frage2">Frage 2: Welche Materialien sollten zentral verwaltet werden bzw. auf ausreichend Verfügbarkeit geachtet werden?</label>
             <textarea id="formular-frage2" rows="5" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; resize:vertical;"></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="formular-frage3">Frage 3: Gibt es weitere Kommentare oder Vorschläge zur Verbesserung des Lagers?</label>
+            <textarea id="formular-frage3" rows="5" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; resize:vertical;"></textarea>
         </div>
 
         <div class="flex-buttons" style="margin-top: 18px;">
@@ -955,12 +960,9 @@
     </h1>
 
     <div class="share-link-wrap">
-        Feedback Abfragen:
-        <div>
-            <a id="formular-share-link" href="?formular=1" target="_blank" rel="noopener">Formular öffnen</a>
-        </div>
         <div class="share-link-actions">
             <button class="btn" style="background:#1f5f8b;" onclick="oeffneQrGeneratorFenster()">QR-Generator öffnen</button>
+            <button class="btn" style="background:#d29c09;" onclick="window.open('?formular=1', '_blank')">Feedback</button>
         </div>
     </div>
 
