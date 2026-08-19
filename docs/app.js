@@ -1736,6 +1736,7 @@ async function initEntnahmeModus() {
     setzeEntnahmeVorlagenFormSichtbarkeit();
 }
 
+/*
 async function oeffneEntnahmeFenster() {
     const url = new URL(window.location.href);
     url.search = '';
@@ -1746,6 +1747,7 @@ async function oeffneEntnahmeFenster() {
     window.history.replaceState({}, '', url.toString());
     await initEntnahmeModus();
 }
+*/
 
 function entnahmeBenutzerVorlageAuswaehlen() {
     const selectElement = document.getElementById('entnahme-benutzer-vorlage');
