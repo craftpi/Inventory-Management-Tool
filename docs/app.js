@@ -2889,7 +2889,8 @@ function wendeFilterAn() {
         gefilterteDaten = gefilterteDaten.filter(z => 
             (z.artikel?.name || '').toLowerCase().includes(suchText) ||
             (z.artikel?.kategorie || '').toLowerCase().includes(suchText) ||
-            (z.lagerorte?.name || '').toLowerCase().includes(suchText)
+            (z.lagerorte?.name || '').toLowerCase().includes(suchText) ||
+            String(z.artikel?.id ?? '').toLowerCase().includes(suchText)
         );
     }
 
@@ -3140,6 +3141,7 @@ function tabelleAktualisieren(daten) {
                     </span>
                     <span style="min-width: 0; white-space: pre-wrap; word-break: break-word;">${escapeHtml(kommentarText)}</span>
                 </div>` : '';
+            const artikelIdAnzeige = `<div class="bestand-id-anzeige" style="font-size: 0.7em; color: #b0b0b0; margin-top: 2px; user-select: text;">ID: ${escapeHtml(String(gruppe.artikel.id))}</div>`;
             if (isGroup) {
                 indent = 45;
                 iconLabel = '◦';
@@ -3223,7 +3225,7 @@ function tabelleAktualisieren(daten) {
                     data-hover-type="date" data-hover-content="${dateStr}"
                     onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
                     ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
-                    ${iconLabel} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
+                    ${iconLabel} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}${artikelIdAnzeige}
                 </td>
                 <td colspan="2" style="vertical-align: top;">
                     <div style="display: flex; flex-direction: column; gap: 6px;">
