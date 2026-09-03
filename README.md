@@ -51,20 +51,10 @@ Das Tool bietet typischerweise die folgenden Funktionen:
 - Suche nach Artikeln, Seriennummern oder Codes
 - Such-, Sortier- und Exportfunktionen
 - Berichte über aktuelle Bestände und Bewegungen
-- einfache Benutzer- und Rechteverwaltung, falls erforderlich
 
 ## Voraussetzungen
 
-Bevor du das Tool installierst, prüfe die folgenden Voraussetzungen:
-
-- Betriebssystem: Windows, Linux oder macOS
-- Java Runtime / .NET Runtime / Node.js oder andere benötigte Laufzeitumgebung je nach Projekt-Stack
-- Mindest-Speicher: 4 GB RAM (empfohlen)
-- Festplattenspeicher: mindestens 1–2 GB freier Speicher
-- Internetverbindung für Downloads und Updates (falls erforderlich)
-- Datenbank- oder lokale Dateisystem-Unterstützung je nach Implementierung
-
-Hinweis: Die genauen Anforderungen hängen von der konkreten technischen Umsetzung des Tools ab. Falls dieses Projekt auf einer bestimmten Programmiersprache basiert, prüfe die Informationen im Projekt-Ordner oder im Build-Guide.
+Volle NFC funktions unterstützung ist aktuel nur auf android gegeben.
 
 ## Installation
 
