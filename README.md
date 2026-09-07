@@ -2,6 +2,41 @@
 
 Eine einfache und übersichtliche Anwendung zur Verwaltung von Beständen, Artikeln, Lagerbewegungen und Lieferanten. Das Tool eignet sich für kleine bis mittlere Unternehmen, Werkstätten, Lager, Shops oder private Bestandsverwaltung, die ihre Materialien und Produkte effizient kontrollieren möchten.
 
+## 🧰 Neu: Kisten-Check (Behälter-Prüf-Workflow)
+
+Statt NFC-Tags auf jeden Einzelartikel zu kleben, bekommen nur feste **Kisten/Behälter** (Typ A) einen physischen NFC-Tag oder QR-Code. Jede Kiste führt eine digitale Soll-Liste:
+
+- **Zählbare Artikel** (Typ B, z. B. Scheren, Flaschenöffner) – Soll-Stückzahl, beim Check als Ist-Menge erfasst.
+- **Verbrauchsmaterial** (Typ C, z. B. Kabelbinder, Klebeband) – kein Stückzählen, sondern eine Ampel: 🟢 Voll / 🟡 Halb / 🔴 Nachfüllen.
+
+**Ablauf:** Kiste scannen (Kamera-QR-Scan oder NFC unter Android) → Soll/Ist-Checkliste öffnet sich → Ist-Werte antippen/eintragen → speichern. Als "Nachfüllen" markiertes Verbrauchsmaterial landet automatisch auf der Einkaufsliste im Event-Modus.
+
+Neuer Tab **"🧰 Kisten-Check"** neben Lager- und Event-Modus:
+- **+ Neue Kiste**: Name, NFC-/QR-Code (z. B. `AUSSCHANK-01`), optionaler Lagerort, Soll-Inhalt (Artikel + Soll-Menge bzw. automatisch als Füllstand geführt).
+- **📷 Kiste scannen / 📶 NFC-Scan**: öffnet direkt die Checkliste der gescannten Kiste.
+- **📋 Prüfen**: Checkliste auch ohne Scan manuell öffnen.
+
+### ⚠️ Vor dem Deploy: Datenbank-Migration ausführen
+
+Diese Funktion braucht zwei neue Tabellen und ein neues Artikel-Feld. Bitte **einmalig** die Migration `migrations/2026-09-03_behaelter_pruefworkflow.sql` im Supabase-SQL-Editor (oder via `psql`) gegen die trilager-Datenbank ausführen, bevor die neue `docs/`-Version live geht. Die Migration ist idempotent und legt an:
+
+- `artikel.typ` (`'zaehlbar'` | `'verbrauch'`, Standard: `zaehlbar`)
+- Tabelle `behaelter` (Kisten/Assets mit NFC-/QR-Code)
+- Tabelle `behaelter_inhalt` (Soll/Ist je Kiste + Artikel)
+
+Falls ihr Row-Level-Security auf den bestehenden Tabellen nutzt, denkt daran, für `behaelter` und `behaelter_inhalt` die gleichen Policies zu ergänzen (Hinweis + Beispiel steht am Ende der Migrationsdatei).
+
+Den Artikel-Typ (zählbar/Verbrauchsmaterial) legt ihr beim Anlegen/Bearbeiten eines Artikels im normalen Lager-Modus fest ("Typ"-Dropdown im Artikel-Formular).
+
+## 📦 Neu: Flexible Event-Zuordnung von Kisten (Ausbaustufe 2)
+
+Baut auf dem Kisten-Check auf und ergänzt die zweite Migration `migrations/2026-09-03b_kisten_event_zuordnung.sql` (bitte **nach** der ersten Migration ausführen). Eine Kiste kann jetzt direkt einem Event (einer bestehenden Packliste im Event-Modus) zugewiesen werden:
+
+- **Per Scan**: Im Event-Modus bei ausgewähltem Event auf "📷 Kiste zuweisen (Scan)" tippen, NFC-Tag/QR-Code der Kiste scannen → die Kiste ist ab sofort diesem Event zugeordnet.
+- **Manuell**: Alternativ über das Dropdown "Kiste manuell zuweisen" – praktisch für die Vorab-Planung ohne physischen Tag zur Hand.
+- Jede Kiste gehört immer nur einem Event gleichzeitig; über "Lösen" wird sie wieder freigegeben (= gilt wieder als "im Lager").
+- Die zugeordneten Kisten werden im Event-Modus direkt unter der Packliste angezeigt (inkl. offener Prüf-Positionen) und in der Kisten-Check-Übersicht mit einem "📦 Event: ..."-Badge markiert.
+
 ## Inhaltsverzeichnis
 
 - [Überblick](#überblick)
@@ -51,10 +86,20 @@ Das Tool bietet typischerweise die folgenden Funktionen:
 - Suche nach Artikeln, Seriennummern oder Codes
 - Such-, Sortier- und Exportfunktionen
 - Berichte über aktuelle Bestände und Bewegungen
+- einfache Benutzer- und Rechteverwaltung, falls erforderlich
 
 ## Voraussetzungen
 
-Volle NFC funktions unterstützung ist aktuel nur auf android gegeben.
+Bevor du das Tool installierst, prüfe die folgenden Voraussetzungen:
+
+- Betriebssystem: Windows, Linux oder macOS
+- Java Runtime / .NET Runtime / Node.js oder andere benötigte Laufzeitumgebung je nach Projekt-Stack
+- Mindest-Speicher: 4 GB RAM (empfohlen)
+- Festplattenspeicher: mindestens 1–2 GB freier Speicher
+- Internetverbindung für Downloads und Updates (falls erforderlich)
+- Datenbank- oder lokale Dateisystem-Unterstützung je nach Implementierung
+
+Hinweis: Die genauen Anforderungen hängen von der konkreten technischen Umsetzung des Tools ab. Falls dieses Projekt auf einer bestimmten Programmiersprache basiert, prüfe die Informationen im Projekt-Ordner oder im Build-Guide.
 
 ## Installation
 
