@@ -59,9 +59,7 @@ let packlisten = [];
 let packlistenPositionen = [];
 // --- Behälter / Prüf-Workflow (Typ A = Kisten mit NFC-Tag, Soll/Ist-Check) ---
 let kisten = [];                 // Zeilen aus 'behaelter'
-let kistenInhalt = [];           // Zeilen aus 'behaelter_inhalt', inkl. artikel(...)
-let kistenCheckAktuelleId = '';  // Behälter-ID, dessen Check-Modal gerade offen ist
-let kistenCheckLokal = {};       // { inhaltId: { ist_menge, ist_fuellstand } } - Zwischenstand im Check-Modal vor dem Speichern
+let kistenCheckAktuelleId = '';  // Behälter-ID, dessen Inhalt-Editor/Check-Modal gerade offen ist
 let kistenScanAktion = 'check';  // 'check' (Soll/Ist-Checkliste öffnen) | 'zuweisen' (Kiste einem Event zuordnen)
 let alleArtikelInfos = []; 
 let alleLagerorte = []; 
@@ -2787,20 +2785,17 @@ async function ladeAlles() {
 }
 
 /**
- * Lädt alle Behälter (Typ A / Kisten mit NFC-Tag) sowie deren Soll/Ist-Inhalt.
- * Wird bei jedem ladeAlles() mitgeladen, damit z.B. die Einkaufsliste auch
- * "leer" gemeldete Verbrauchsmaterial-Positionen aus den Kisten berücksichtigen kann.
+ * Lädt alle Behälter (Typ A / Kisten mit NFC-Tag). Muss NACH ladeLagerorte()
+ * und ladeBestand() aufgerufen werden, da der Kisten-Inhalt darüber (virtueller
+ * Kisten-Lagerort in alleLagerorte + zugehörige Zeilen in aktuelleDaten) ermittelt wird.
  */
 async function ladeKisten() {
     const { data: kistenData, error: kistenErr } = await dbClient.from('behaelter').select('*').order('name');
     if (kistenErr) { console.error('Fehler beim Laden der Behälter:', kistenErr); kisten = []; }
     else kisten = kistenData || [];
-
-    const { data: inhaltData, error: inhaltErr } = await dbClient
-        .from('behaelter_inhalt')
-        .select('*, artikel(id, name, kategorie, einheit, typ)');
-    if (inhaltErr) { console.error('Fehler beim Laden des Kisten-Inhalts:', inhaltErr); kistenInhalt = []; }
-    else kistenInhalt = inhaltData || [];
+    // Der Inhalt einer Kiste ist ganz normaler Bestand am zugehörigen virtuellen
+    // Lagerort (siehe gibKistenLagerort/gibKistenBestand) - kommt schon über
+    // ladeLagerorte()/ladeBestand() mit, eine eigene Abfrage ist nicht mehr nötig.
 }
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
@@ -3580,13 +3575,18 @@ async function speichereNeuenOrt() {
 function openOrteVerwalten() {
     const sel = document.getElementById('manage-ort-select');
     sel.innerHTML = '';
-    
-    if(alleLagerorte.length === 0) {
-        showToast("Keine Lagerorte vorhanden.", "warning");
+
+    // Virtuelle Kisten-Lagerorte (z.B. "Kiste: Ausschank (Regal B)") werden
+    // automatisch über die Kisten-Verwaltung gepflegt und tauchen hier
+    // deshalb nicht auf - sonst laufen manuelle Umbenennung und Auto-Sync
+    // gegeneinander.
+    const echteOrte = alleLagerorte.filter(o => !o.behaelter_id);
+    if (echteOrte.length === 0) {
+        showToast("Keine (nicht-automatischen) Lagerorte vorhanden.", "warning");
         return;
     }
-    
-    alleLagerorte.forEach(o => sel.add(new Option(o.name, o.id)));
+
+    echteOrte.forEach(o => sel.add(new Option(o.name, o.id)));
     ortSelectChanged();
     document.getElementById('orteModal').style.display = 'block';
 }
@@ -3970,14 +3970,9 @@ function startEinkaufsliste() {
         }
     });
 
-    // Verbrauchsmaterial (Typ C), das beim letzten Kisten-Check als "leer/nachfüllen"
-    // markiert wurde, landet ebenfalls automatisch auf der Einkaufsliste.
-    (Array.isArray(kistenInhalt) ? kistenInhalt : []).forEach(p => {
-        if (p.artikel?.typ === 'verbrauch' && p.ist_fuellstand === 'leer') {
-            const kistenName = kisten.find(k => String(k.id) === String(p.behaelter_id))?.name || 'Kiste';
-            fuegeAutoFehlbestandHinzu(p.artikel.name, 1, `Nachfüllen – Kiste "${kistenName}"`);
-        }
-    });
+    // Hinweis: Bestand an Kisten-Lagerorten (z.B. "Kiste: Ausschank (Regal B)")
+    // ist ganz normaler Bestand und wird durch die Schleife oben automatisch
+    // mit erfasst - kein Sonderfall-Code für Kisten nötig.
 
     if (ulAuto) {
         if (autoFehlbestandListe.length === 0) {
@@ -5401,17 +5396,61 @@ window.onNativeNfcWriteResult = function(success, message) {
 // Scan-Format (QR-Code UND NFC-Tag identisch): "behaelter:<code>"
 // =========================================================================
 
-/** Liefert die Soll/Ist-Positionen einer Kiste, sortiert Typ B vor Typ C. */
-function gibKistenInhalt(behaelterId) {
-    return kistenInhalt
-        .filter(p => String(p.behaelter_id) === String(behaelterId))
+/**
+ * Kisten werden als "virtueller" Lagerort im normalen lagerorte/bestand-System
+ * geführt (Name z.B. "Kiste: Ausschank (Regal B)"). Dadurch tauchen sie
+ * automatisch überall dort auf, wo auch ein normaler Lagerort wählbar ist
+ * (Artikel-Bearbeiten → Lagerorte & Mengen, Sortier-/Filter-Dropdown, Regal-
+ * Gruppierung) - Lagerort und Kiste werden nicht getrennt behandelt.
+ */
+function gibKistenLagerort(behaelterId) {
+    return alleLagerorte.find(o => String(o.behaelter_id) === String(behaelterId)) || null;
+}
+
+/** Aktuelle Bestand-Zeilen (Artikel + Menge) am virtuellen Lagerort dieser Kiste. */
+function gibKistenBestand(behaelterId) {
+    const ort = gibKistenLagerort(behaelterId);
+    if (!ort) return [];
+    return aktuelleDaten
+        .filter(z => String(z.lagerort_id) === String(ort.id))
         .slice()
-        .sort((a, b) => {
-            const ta = a.artikel?.typ === 'verbrauch' ? 1 : 0;
-            const tb = b.artikel?.typ === 'verbrauch' ? 1 : 0;
-            if (ta !== tb) return ta - tb;
-            return String(a.artikel?.name || '').localeCompare(String(b.artikel?.name || ''), 'de');
-        });
+        .sort((a, b) => String(a.artikel?.name || '').localeCompare(String(b.artikel?.name || ''), 'de'));
+}
+
+/** Berechnet den einheitlichen Lagerort-Namen einer Kiste, z.B. "Kiste: Ausschank (Regal B)". */
+function ermittleKistenLagerortName(kiste) {
+    const physischerOrt = kiste?.lagerort_id
+        ? alleLagerorte.find(o => String(o.id) === String(kiste.lagerort_id) && !o.behaelter_id)
+        : null;
+    const regalName = physischerOrt ? extrahiereRegalName(physischerOrt.name) : '';
+    return regalName ? `Kiste: ${kiste.name} (${regalName})` : `Kiste: ${kiste.name}`;
+}
+
+/** Legt den virtuellen Lagerort einer Kiste an bzw. hält seinen Namen synchron (Name/Regal geändert). */
+async function synchronisiereKistenLagerort(kiste) {
+    const zielName = ermittleKistenLagerortName(kiste);
+    const bestehend = gibKistenLagerort(kiste.id);
+
+    if (bestehend) {
+        if (bestehend.name !== zielName) {
+            const { error } = await dbClient.from('lagerorte').update({ name: zielName }).eq('id', bestehend.id);
+            if (error) console.error('Fehler beim Aktualisieren des Kisten-Lagerorts:', error);
+        }
+    } else {
+        const { error } = await dbClient.from('lagerorte').insert([{ name: zielName, behaelter_id: kiste.id }]);
+        if (error) console.error('Fehler beim Anlegen des Kisten-Lagerorts:', error);
+    }
+    await ladeLagerorte();
+}
+
+/** Aktualisiert die Artikel-Datalist, die im Kisten-Inhalt-Editor zum Hinzufügen genutzt wird. */
+function aktualisiereKistenArtikelDatalist() {
+    const artikelDatalist = document.getElementById('kategorie-artikel-liste');
+    if (!artikelDatalist) return;
+    artikelDatalist.innerHTML = alleArtikelInfos
+        .slice()
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de'))
+        .map(a => `<option value="${escapeHtml(a.name)}">`).join('');
 }
 
 /** Rendert die Kisten-Übersicht im "📦 Kisten"-Modus. */
@@ -5432,9 +5471,8 @@ function renderKistenListe() {
     const zeilen = kisten
         .filter(k => !filterText || k.name.toLowerCase().includes(filterText) || String(k.code).toLowerCase().includes(filterText))
         .map(k => {
-            const positionen = gibKistenInhalt(k.id);
-            const offenePositionen = positionen.filter(p => !p.letzte_pruefung);
-            const ortName = alleLagerorte.find(o => String(o.id) === String(k.lagerort_id))?.name || '-';
+            const bestandZeilen = gibKistenBestand(k.id);
+            const ortName = alleLagerorte.find(o => String(o.id) === String(k.lagerort_id) && !o.behaelter_id)?.name || '-';
             const zugewiesenesEvent = k.zugewiesene_packliste_id
                 ? packlisten.find(pl => String(pl.id) === String(k.zugewiesene_packliste_id))
                 : null;
@@ -5443,32 +5481,29 @@ function renderKistenListe() {
                 : '';
 
             let letztePruefung = null;
-            positionen.forEach(p => {
-                if (p.letzte_pruefung && (!letztePruefung || new Date(p.letzte_pruefung) > new Date(letztePruefung))) {
-                    letztePruefung = p.letzte_pruefung;
+            bestandZeilen.forEach(z => {
+                if (z.geprueft_am && (!letztePruefung || new Date(z.geprueft_am) > new Date(letztePruefung))) {
+                    letztePruefung = z.geprueft_am;
                 }
             });
 
-            const nachfuellenCount = positionen.filter(p => p.artikel?.typ === 'verbrauch' && p.ist_fuellstand === 'leer').length;
+            const nachkaufCount = bestandZeilen.filter(z => Number(z.menge) === BESTAND_STRICH_NACHKAUF).length;
 
             let statusBadge = `<span style="color:#7f8c8d;">Noch nie geprüft</span>`;
             if (letztePruefung) {
                 statusBadge = `<span style="color:#27ae60;">✔️ zuletzt ${new Date(letztePruefung).toLocaleDateString('de-DE')}</span>`;
-                if (offenePositionen.length > 0) {
-                    statusBadge += `<br><span style="color:#f39c12;">⚠️ ${offenePositionen.length} Position(en) noch offen</span>`;
-                }
-                if (nachfuellenCount > 0) {
-                    statusBadge += `<br><span style="color:#c0392b;">🔴 ${nachfuellenCount}x Nachfüllen nötig</span>`;
-                }
+            }
+            if (nachkaufCount > 0) {
+                statusBadge += `<br><span style="color:#c0392b;">🔴 ${nachkaufCount}x Nachfüllen nötig</span>`;
             }
 
             return `<tr>
                 <td><strong>${escapeHtml(k.name)}</strong><br><span style="font-family:monospace; color:#7f8c8d; font-size:0.85em;">${escapeHtml(k.code)}</span></td>
                 <td>${escapeHtml(ortName)}${eventBadge}</td>
-                <td>${positionen.length} Position(en)</td>
+                <td>${bestandZeilen.length} Position(en)</td>
                 <td>${statusBadge}</td>
                 <td style="white-space:nowrap;">
-                    <button class="btn" style="background:#16a085; padding:8px 10px; width:auto;" onclick="oeffneKistenCheck(${k.id})" title="Soll/Ist-Check öffnen">📋 Prüfen</button>
+                    <button class="btn" style="background:#16a085; padding:8px 10px; width:auto;" onclick="oeffneKistenCheck(${k.id})" title="Inhalt ansehen/bearbeiten und prüfen">📦 Inhalt / Prüfen</button>
                     <button class="btn" style="background:#3498db; padding:8px 10px; width:auto;" onclick="oeffneKistenModal(${k.id})" title="Bearbeiten">✏️</button>
                     <button class="btn" style="background:#c0392b; padding:8px 10px; width:auto;" onclick="loescheKiste(${k.id})" title="Löschen">🗑️</button>
                 </td>
@@ -5486,9 +5521,11 @@ function oeffneKistenModal(behaelterId = null) {
     document.getElementById('kisten-modal-id').value = behaelterId || '';
     document.getElementById('kisten-modal-titel').innerText = behaelterId ? 'Kiste bearbeiten' : 'Neue Kiste anlegen';
 
+    // Nur "echte" (nicht-virtuelle) Lagerorte dürfen als physischer Standort einer
+    // Kiste gewählt werden - eine Kiste kann nicht "in" einer anderen Kiste stehen.
     const ortSelect = document.getElementById('kisten-modal-ort');
     ortSelect.innerHTML = '<option value="">-- kein fester Lagerort --</option>' +
-        alleLagerorte.map(o => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('');
+        alleLagerorte.filter(o => !o.behaelter_id).map(o => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('');
 
     const kiste = behaelterId ? kisten.find(k => String(k.id) === String(behaelterId)) : null;
     document.getElementById('kisten-modal-name').value = kiste?.name || '';
@@ -5496,15 +5533,19 @@ function oeffneKistenModal(behaelterId = null) {
     document.getElementById('kisten-modal-kommentar').value = kiste?.kommentar || '';
     if (kiste?.lagerort_id) ortSelect.value = kiste.lagerort_id;
 
-    const artikelDatalist = document.getElementById('kategorie-artikel-liste');
-    if (artikelDatalist) {
-        artikelDatalist.innerHTML = alleArtikelInfos
-            .slice()
-            .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de'))
-            .map(a => `<option value="${escapeHtml(a.name)}">`).join('');
+    const inhaltHinweis = document.getElementById('kisten-modal-inhalt-hinweis');
+    const inhaltBtn = document.getElementById('kisten-modal-inhalt-btn');
+    if (inhaltHinweis && inhaltBtn) {
+        if (behaelterId) {
+            inhaltHinweis.innerText = `Lagerort für diese Kiste: ${ermittleKistenLagerortName(kiste)}`;
+            inhaltBtn.style.display = 'inline-block';
+            inhaltBtn.onclick = () => { schliesseKistenModal(); oeffneKistenCheck(behaelterId); };
+        } else {
+            inhaltHinweis.innerText = 'Speichere die Kiste zuerst, um Artikel-Inhalt zu erfassen.';
+            inhaltBtn.style.display = 'none';
+        }
     }
 
-    renderKistenModalInhalt(behaelterId);
     document.getElementById('kisten-loeschen-btn').style.display = behaelterId ? 'inline-block' : 'none';
     modal.style.display = 'block';
 }
@@ -5513,86 +5554,7 @@ function schliesseKistenModal() {
     document.getElementById('kistenModal').style.display = 'none';
 }
 
-/** Rendert die Soll-Inhalt-Zeilen (Artikel + Soll-Menge/Füllstand) im Kisten-Modal. */
-function renderKistenModalInhalt(behaelterId) {
-    const wrapper = document.getElementById('kisten-modal-inhalt-wrapper');
-    wrapper.innerHTML = '';
-    if (!behaelterId) {
-        wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Speichere die Kiste zuerst, um Soll-Positionen hinzuzufügen.</p>';
-        return;
-    }
-
-    const positionen = gibKistenInhalt(behaelterId);
-    if (positionen.length === 0) {
-        wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Positionen. Über das Feld unten hinzufügen.</p>';
-    }
-
-    positionen.forEach(p => {
-        const istTypC = p.artikel?.typ === 'verbrauch';
-        const zeile = document.createElement('div');
-        zeile.className = 'lagerort-row';
-        zeile.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
-        zeile.innerHTML = `
-            <div style="flex:1;">
-                <strong>${escapeHtml(p.artikel?.name || 'Unbekannter Artikel')}</strong>
-                <span style="color:#7f8c8d; font-size:0.85em;"> (${istTypC ? 'Verbrauchsmaterial – Füllstand' : 'Zählbar – Soll-Menge'})</span>
-            </div>
-            ${istTypC
-                ? ''
-                : `<input type="number" min="0" step="1" value="${p.soll_menge ?? 1}" style="width:70px; padding:8px; border-radius:6px; border:1px solid #ccc; text-align:center;" onchange="kistenSollMengeAendern(${p.id}, this.value)">`
-            }
-            <button type="button" class="btn" style="background:#e74c3c; padding:8px 10px; width:auto;" onclick="kistenInhaltEntfernen(${p.id})" title="Position entfernen">🗑️</button>
-        `;
-        wrapper.appendChild(zeile);
-    });
-}
-
-async function kistenSollMengeAendern(inhaltId, neueMenge) {
-    const menge = Math.max(0, Number(neueMenge) || 0);
-    const { error } = await dbClient.from('behaelter_inhalt').update({ soll_menge: menge }).eq('id', inhaltId);
-    if (error) { showToast('Fehler beim Speichern der Soll-Menge.', 'error'); return; }
-    const pos = kistenInhalt.find(p => String(p.id) === String(inhaltId));
-    if (pos) pos.soll_menge = menge;
-}
-
-/** Fügt im Kisten-Modal einen neuen Soll-Artikel zur Kiste hinzu. */
-async function kistenInhaltHinzufuegen() {
-    const behaelterId = document.getElementById('kisten-modal-id').value;
-    if (!behaelterId) { showToast('Bitte zuerst die Kiste speichern.', 'warning'); return; }
-
-    const input = document.getElementById('kisten-modal-artikel-input');
-    const name = (input.value || '').trim();
-    if (!name) return;
-
-    const artikel = alleArtikelInfos.find(a => a.name.toLowerCase() === name.toLowerCase());
-    if (!artikel) { showToast(`Artikel "${name}" nicht gefunden.`, 'error'); return; }
-
-    if (kistenInhalt.some(p => String(p.behaelter_id) === String(behaelterId) && String(p.artikel_id) === String(artikel.id))) {
-        showToast('Dieser Artikel ist bereits in der Kiste hinterlegt.', 'warning');
-        return;
-    }
-
-    const dbObj = { behaelter_id: Number(behaelterId), artikel_id: artikel.id };
-    if (artikel.typ === 'verbrauch') dbObj.ist_fuellstand = 'voll';
-    else dbObj.soll_menge = 1;
-
-    const { error } = await dbClient.from('behaelter_inhalt').insert([dbObj]);
-    if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-
-    input.value = '';
-    await ladeKisten();
-    renderKistenModalInhalt(behaelterId);
-}
-
-async function kistenInhaltEntfernen(inhaltId) {
-    const { error } = await dbClient.from('behaelter_inhalt').delete().eq('id', inhaltId);
-    if (error) { showToast('Fehler beim Entfernen.', 'error'); return; }
-    const behaelterId = document.getElementById('kisten-modal-id').value;
-    await ladeKisten();
-    renderKistenModalInhalt(behaelterId);
-}
-
-/** Speichert Name/Code/Lagerort/Kommentar der Kiste (Stammdaten, nicht den Inhalt). */
+/** Speichert Name/Code/Lagerort/Kommentar der Kiste und hält den virtuellen Kisten-Lagerort synchron. */
 async function speichereKiste() {
     const id = document.getElementById('kisten-modal-id').value;
     const name = document.getElementById('kisten-modal-name').value.trim();
@@ -5611,32 +5573,39 @@ async function speichereKiste() {
     if (id) {
         const { error } = await dbClient.from('behaelter').update(dbObj).eq('id', id);
         if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
+        await synchronisiereKistenLagerort({ id: Number(id), name, lagerort_id: ortId });
         showToast('Kiste aktualisiert!');
-        await ladeKisten();
+        await ladeAlles();
         renderKistenListe();
-        renderKistenModalInhalt(id);
+        schliesseKistenModal();
     } else {
         const { data, error } = await dbClient.from('behaelter').insert([dbObj]).select();
         if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-        showToast('Kiste angelegt! Jetzt Soll-Positionen ergänzen und NFC-Tag mit dem Code beschreiben.');
-        await ladeKisten();
-        const neueId = data?.[0]?.id;
-        document.getElementById('kisten-modal-id').value = neueId || '';
-        document.getElementById('kisten-loeschen-btn').style.display = neueId ? 'inline-block' : 'none';
+        const neueKiste = data?.[0];
+        if (neueKiste) await synchronisiereKistenLagerort(neueKiste);
+        showToast('Kiste angelegt! Jetzt Inhalt erfassen und NFC-Tag mit dem Code beschreiben.');
+        await ladeAlles();
         renderKistenListe();
-        renderKistenModalInhalt(neueId);
+        schliesseKistenModal();
+        if (neueKiste) oeffneKistenCheck(neueKiste.id);
     }
 }
 
 async function loescheKiste(behaelterId) {
     const kiste = kisten.find(k => String(k.id) === String(behaelterId));
-    if (!confirm(`Kiste "${kiste?.name || behaelterId}" wirklich komplett löschen (inkl. Soll-Liste)?`)) return;
+    if (!confirm(`Kiste "${kiste?.name || behaelterId}" wirklich komplett löschen (inkl. Bestand am zugehörigen Kisten-Lagerort)?`)) return;
+
+    const virtOrt = gibKistenLagerort(behaelterId);
+    if (virtOrt) {
+        await dbClient.from('bestand').delete().eq('lagerort_id', virtOrt.id);
+        await dbClient.from('lagerorte').delete().eq('id', virtOrt.id);
+    }
 
     const { error } = await dbClient.from('behaelter').delete().eq('id', behaelterId);
     if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
     showToast('Kiste gelöscht.');
     schliesseKistenModal();
-    await ladeKisten();
+    await ladeAlles();
     renderKistenListe();
 }
 
@@ -5686,133 +5655,152 @@ async function verarbeiteKistenScan(rawCode) {
     }
 }
 
-/** Öffnet die Soll/Ist-Checkliste für eine Kiste (Prüf-Workflow). */
+/**
+ * Öffnet den Inhalt-Editor/Prüf-Bildschirm einer Kiste. Zeigt den echten
+ * Bestand am virtuellen Kisten-Lagerort - exakt dieselben Mengen-/Ampel-
+ * Bedienelemente wie im normalen "Artikel bearbeiten → Lagerorte & Mengen".
+ */
 function oeffneKistenCheck(behaelterId) {
     const kiste = kisten.find(k => String(k.id) === String(behaelterId));
     if (!kiste) { showToast('Kiste nicht gefunden.', 'error'); return; }
+    if (!gibKistenLagerort(behaelterId)) {
+        showToast('Für diese Kiste wurde noch kein Lagerort angelegt - bitte die Kiste einmal speichern.', 'error');
+        return;
+    }
 
     kistenCheckAktuelleId = behaelterId;
-    kistenCheckLokal = {};
+    document.getElementById('kisten-check-titel').innerText = `📦 Inhalt / Prüfen: ${kiste.name}`;
+    document.getElementById('kisten-check-code').innerText = ermittleKistenLagerortName(kiste);
+    aktualisiereKistenArtikelDatalist();
 
-    document.getElementById('kisten-check-titel').innerText = `📋 Prüfen: ${kiste.name}`;
-    document.getElementById('kisten-check-code').innerText = kiste.code;
+    const wrapper = document.getElementById('kisten-check-liste');
+    wrapper.innerHTML = '';
+    const bestand = gibKistenBestand(behaelterId);
+    if (bestand.length === 0) {
+        wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel in dieser Kiste. Über das Feld unten hinzufügen.</p>';
+    } else {
+        bestand.forEach(z => fuegeKistenBestandZeileHinzu(z));
+    }
 
-    gibKistenInhalt(behaelterId).forEach(p => {
-        kistenCheckLokal[p.id] = { ist_menge: p.ist_menge ?? p.soll_menge ?? 0, ist_fuellstand: p.ist_fuellstand || 'voll' };
-    });
-
-    renderKistenCheck();
     document.getElementById('kistenCheckModal').style.display = 'block';
 }
 
 function schliesseKistenCheckModal() {
     document.getElementById('kistenCheckModal').style.display = 'none';
     kistenCheckAktuelleId = '';
-    kistenCheckLokal = {};
-}
-
-/** Rendert die Checkliste (Typ B als Soll/Ist-Stepper, Typ C als Ampel). */
-function renderKistenCheck() {
-    const ziel = document.getElementById('kisten-check-liste');
-    if (!ziel) return;
-
-    const positionen = gibKistenInhalt(kistenCheckAktuelleId);
-    if (positionen.length === 0) {
-        ziel.innerHTML = '<p style="color:#7f8c8d;">Diese Kiste hat noch keine Soll-Positionen. Über "Bearbeiten" ergänzen.</p>';
-        return;
-    }
-
-    ziel.innerHTML = positionen.map(p => {
-        const lokal = kistenCheckLokal[p.id] || {};
-        const artikelName = escapeHtml(p.artikel?.name || '?');
-
-        if (p.artikel?.typ === 'verbrauch') {
-            const status = lokal.ist_fuellstand || 'voll';
-            const ampel = { voll: ['#27ae60', 'Voll'], halb: ['#f39c12', 'Halb'], leer: ['#c0392b', 'Nachfüllen'] };
-            const buttons = ['voll', 'halb', 'leer'].map(s => {
-                const aktiv = status === s;
-                return `<button type="button" class="btn" style="width:auto; padding:8px 14px; background:${aktiv ? ampel[s][0] : '#dfe4ea'}; color:${aktiv ? '#fff' : '#2c3e50'}; font-weight:${aktiv ? 'bold' : 'normal'};" onclick="kistenCheckAmpelSetzen(${p.id}, '${s}')">${ampel[s][1]}</button>`;
-            }).join('');
-            return `<div class="lagerort-row" style="display:flex; gap:10px; align-items:center; justify-content:space-between; padding:10px; border:1px solid #eee; border-radius:8px; margin-bottom:8px;">
-                <div><strong>${artikelName}</strong><br><span style="font-size:0.8em; color:#7f8c8d;">Verbrauchsmaterial</span></div>
-                <div style="display:flex; gap:6px;">${buttons}</div>
-            </div>`;
-        }
-
-        const sollMenge = p.soll_menge ?? 0;
-        const istMenge = lokal.ist_menge ?? sollMenge;
-        const abweichung = istMenge !== sollMenge;
-        return `<div class="lagerort-row" style="display:flex; gap:10px; align-items:center; justify-content:space-between; padding:10px; border:1px solid ${abweichung ? '#f39c12' : '#eee'}; border-radius:8px; margin-bottom:8px;">
-            <div><strong>${artikelName}</strong><br><span style="font-size:0.8em; color:#7f8c8d;">Soll: ${sollMenge}</span></div>
-            <div style="display:flex; align-items:center; gap:8px;">
-                <button type="button" class="btn" style="width:auto; padding:6px 12px; background:#95a5a6;" onclick="kistenCheckIstMengeAendern(${p.id}, -1)">−</button>
-                <input type="number" min="0" style="width:60px; padding:6px; text-align:center; border:1px solid #ccc; border-radius:6px;" value="${istMenge}" onchange="kistenCheckIstMengeSetzen(${p.id}, this.value)">
-                <button type="button" class="btn" style="width:auto; padding:6px 12px; background:#95a5a6;" onclick="kistenCheckIstMengeAendern(${p.id}, 1)">+</button>
-                ${abweichung ? `<span title="Weicht vom Soll ab" style="color:#f39c12;">⚠️</span>` : `<span title="Vollständig" style="color:#27ae60;">✔️</span>`}
-            </div>
-        </div>`;
-    }).join('');
-}
-
-function kistenCheckIstMengeAendern(inhaltId, delta) {
-    const lokal = kistenCheckLokal[inhaltId] || { ist_menge: 0 };
-    lokal.ist_menge = Math.max(0, Number(lokal.ist_menge || 0) + delta);
-    kistenCheckLokal[inhaltId] = lokal;
-    renderKistenCheck();
-}
-
-function kistenCheckIstMengeSetzen(inhaltId, wert) {
-    const lokal = kistenCheckLokal[inhaltId] || {};
-    lokal.ist_menge = Math.max(0, Number(wert) || 0);
-    kistenCheckLokal[inhaltId] = lokal;
-    renderKistenCheck();
-}
-
-function kistenCheckAmpelSetzen(inhaltId, status) {
-    const lokal = kistenCheckLokal[inhaltId] || {};
-    lokal.ist_fuellstand = status;
-    kistenCheckLokal[inhaltId] = lokal;
-    renderKistenCheck();
-}
-
-/** Setzt bei allen Positionen Ist = Soll (bzw. Ist-Füllstand = "voll"). Für den schnellen "alles vollständig"-Fall. */
-function kistenCheckAllesOk() {
-    gibKistenInhalt(kistenCheckAktuelleId).forEach(p => {
-        if (p.artikel?.typ === 'verbrauch') kistenCheckLokal[p.id] = { ist_fuellstand: 'voll' };
-        else kistenCheckLokal[p.id] = { ist_menge: p.soll_menge ?? 0 };
-    });
-    renderKistenCheck();
 }
 
 /**
- * Speichert die erfasste Checkliste in behaelter_inhalt (inkl. Zeitstempel)
- * und trägt Typ-C-Positionen mit Status "leer" automatisch als
- * "Nachbestellen" in die Einkaufsliste ein.
+ * Fügt eine Bestand-Zeile (Artikel + Menge/Ampel) zum Inhalt-Editor hinzu.
+ * Nutzt bewusst dieselben CSS-Klassen wie addEditOrtRow(), damit die
+ * bestehenden Bestand-Helfer (bestandEingabeGeaendert, toggleBestandInf,
+ * toggleBestandMinus, toggleNachkaufCheckbox, setzeBestandStatus,
+ * leseBestandswertAusZeile) unverändert weiterverwendet werden können.
+ */
+function fuegeKistenBestandZeileHinzu(data = null) {
+    const wrapper = document.getElementById('kisten-check-liste');
+    const leerHinweis = wrapper.querySelector('p');
+    if (leerHinweis) leerHinweis.remove();
+
+    const div = document.createElement('div');
+    div.className = 'edit-ort-row';
+    div.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+    div.dataset.bestandId = data?.id || '';
+    div.dataset.artikelId = data?.artikel_id ?? data?.artikel?.id ?? '';
+
+    let displayVal = '1', hiddenOldVal = '1', statusValue = 'zahl';
+    if (data && data.id) {
+        if (data.menge == -1) displayVal = '∞';
+        else if (data.menge == -2) { displayVal = '-'; statusValue = 'strich-ok'; }
+        else if (data.menge == -3) { displayVal = '-'; statusValue = 'strich-warn'; }
+        else displayVal = data.menge;
+        hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge < 0 ? '0' : data.menge);
+    }
+
+    div.innerHTML = `
+        <div class="bestand-row-stack" style="width: 100%;">
+            <div style="font-weight:bold; padding:4px 2px;">${escapeHtml(data?.artikel?.name || 'Unbekannter Artikel')}</div>
+            <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${hiddenOldVal}" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
+                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
+                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne genaue Zählung (Ampel: grün = genug da, rot = nachfüllen)" onclick="toggleBestandMinus(this)">-</button>
+            </div>
+            <label class="bestand-nachkauf-wrap">
+                <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
+                <span>Auf Nachkaufen setzen (🔴 Nachfüllen nötig)</span>
+            </label>
+        </div>
+        <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="entferneKistenBestandZeile(this)" title="Aus Kiste entfernen">🗑️</button>
+    `;
+    setzeBestandStatus(div, statusValue, statusValue === 'strich-warn');
+    wrapper.appendChild(div);
+}
+
+/** Fügt über das Freitext-/Datalist-Feld einen neuen Artikel zur Kiste hinzu (lokal, wird erst beim Speichern angelegt). */
+function kistenCheckArtikelHinzufuegen() {
+    const input = document.getElementById('kisten-check-artikel-input');
+    const name = (input.value || '').trim();
+    if (!name) return;
+
+    const artikel = alleArtikelInfos.find(a => a.name.toLowerCase() === name.toLowerCase());
+    if (!artikel) { showToast(`Artikel "${name}" nicht gefunden.`, 'error'); return; }
+
+    const bereitsDrin = document.querySelector(`#kisten-check-liste .edit-ort-row[data-artikel-id="${artikel.id}"]`);
+    if (bereitsDrin) { showToast('Dieser Artikel ist bereits in der Kiste.', 'warning'); return; }
+
+    fuegeKistenBestandZeileHinzu({ artikel_id: artikel.id, artikel: { name: artikel.name } });
+    input.value = '';
+}
+
+/** Entfernt eine Zeile aus dem Editor - ist sie schon gespeichert, wird der Bestand sofort gelöscht. */
+async function entferneKistenBestandZeile(btn) {
+    const row = btn.closest('.edit-ort-row');
+    const bestandId = row?.dataset.bestandId;
+    if (bestandId) {
+        const { error } = await dbClient.from('bestand').delete().eq('id', bestandId);
+        if (error) { showToast('Fehler beim Entfernen: ' + error.message, 'error'); return; }
+    }
+    row.remove();
+    if (!document.querySelector('#kisten-check-liste .edit-ort-row')) {
+        document.getElementById('kisten-check-liste').innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel in dieser Kiste. Über das Feld unten hinzufügen.</p>';
+    }
+}
+
+/**
+ * Speichert alle Zeilen des Inhalt-Editors als Bestand am virtuellen Kisten-
+ * Lagerort und stempelt "zuletzt geprüft". Da Kisten-Bestand ganz normaler
+ * Bestand ist, greift die bestehende Einkaufsliste (Nachkauf-Markierung)
+ * automatisch mit - ohne Sonderfall-Code.
  */
 async function speichereKistenCheck() {
-    const positionen = gibKistenInhalt(kistenCheckAktuelleId);
-    if (positionen.length === 0) { schliesseKistenCheckModal(); return; }
+    const ort = gibKistenLagerort(kistenCheckAktuelleId);
+    if (!ort) { schliesseKistenCheckModal(); return; }
 
     const jetzt = new Date().toISOString();
     const geprueftVon = holeLokaleSession()?.username || 'Unbekannt';
+    const rows = Array.from(document.querySelectorAll('#kisten-check-liste .edit-ort-row'));
 
-    const updates = positionen.map(p => {
-        const lokal = kistenCheckLokal[p.id] || {};
-        const dbObj = { letzte_pruefung: jetzt, geprueft_von: geprueftVon };
-        if (p.artikel?.typ === 'verbrauch') dbObj.ist_fuellstand = lokal.ist_fuellstand || 'voll';
-        else dbObj.ist_menge = Number(lokal.ist_menge ?? p.soll_menge ?? 0);
-        return dbClient.from('behaelter_inhalt').update(dbObj).eq('id', p.id);
+    const aufgaben = rows.map(row => {
+        const artikelId = row.dataset.artikelId;
+        const bestandId = row.dataset.bestandId;
+        const menge = leseBestandswertAusZeile(row);
+        const alteMengeAusFeld = werteMengeAus(row.querySelector('input')?.getAttribute('data-old-value') || '0');
+        const alteMenge = menge < 0 ? alteMengeAusFeld : menge;
+        const dbObj = { menge, alte_menge: alteMenge, geprueft_am: jetzt, geprueft_von: geprueftVon };
+
+        if (bestandId) return dbClient.from('bestand').update(dbObj).eq('id', bestandId);
+        return dbClient.from('bestand').insert([{ artikel_id: Number(artikelId), lagerort_id: ort.id, ...dbObj }]);
     });
 
     try {
-        await Promise.all(updates);
-        showToast('✅ Kisten-Check gespeichert!');
+        await Promise.all(aufgaben);
+        showToast('✅ Kisten-Inhalt gespeichert!');
         schliesseKistenCheckModal();
-        await ladeKisten();
+        await ladeAlles();
         renderKistenListe();
     } catch (e) {
         console.error(e);
-        showToast('Fehler beim Speichern des Checks.', 'error');
+        showToast('Fehler beim Speichern.', 'error');
     }
 }
 
@@ -6043,15 +6031,15 @@ function renderEventKistenListe() {
         ziel.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Diesem Event ist noch keine Kiste zugeordnet.</p>';
     } else {
         ziel.innerHTML = zugeordnet.map(k => {
-            const positionen = gibKistenInhalt(k.id);
-            const offen = positionen.filter(p => !p.letzte_pruefung).length;
+            const bestandZeilen = gibKistenBestand(k.id);
+            const nieGeprueft = bestandZeilen.filter(z => !z.geprueft_am).length;
             return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #eee; border-radius:8px; margin-bottom:6px;">
                 <div>
                     <strong>${escapeHtml(k.name)}</strong>
-                    <span style="color:#7f8c8d; font-size:0.85em;"> (${escapeHtml(k.code)}) – ${positionen.length} Position(en)${offen ? `, ${offen} noch nicht geprüft` : ''}</span>
+                    <span style="color:#7f8c8d; font-size:0.85em;"> (${escapeHtml(k.code)}) – ${bestandZeilen.length} Position(en)${nieGeprueft ? `, ${nieGeprueft} noch nie geprüft` : ''}</span>
                 </div>
                 <div style="display:flex; gap:6px;">
-                    <button class="btn" style="background:#16a085; padding:6px 10px; width:auto;" onclick="oeffneKistenCheck(${k.id})">📋 Prüfen</button>
+                    <button class="btn" style="background:#16a085; padding:6px 10px; width:auto;" onclick="oeffneKistenCheck(${k.id})">📦 Inhalt / Prüfen</button>
                     <button class="btn" style="background:#c0392b; padding:6px 10px; width:auto;" onclick="entferneKisteVonEvent(${k.id})">Lösen</button>
                 </div>
             </div>`;

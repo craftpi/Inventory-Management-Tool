@@ -1377,8 +1377,9 @@
 
     <div id="ansicht-kisten" style="display: none;">
         <p class="subtitle">
-            Kisten mit physischem NFC-/QR-Tag. Kiste scannen → Soll/Ist-Checkliste öffnet sich.
-            Verbrauchsmaterial wird als Ampel-Füllstand (nicht stückgenau) geführt.
+            Kisten mit physischem NFC-/QR-Tag. Jede Kiste ist zugleich ein normaler Lagerort
+            (z.B. "Kiste: Ausschank (Regal B)") und taucht so auch bei Artikeln, Filtern und
+            Sortierung ganz normal auf. Kiste scannen → Inhalt ansehen/bearbeiten und als geprüft markieren.
         </p>
         <div class="action-bar">
             <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste oder Code suchen..." onkeyup="renderKistenListe()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
@@ -1716,12 +1717,8 @@
         <div class="form-group"><label>Kommentar</label><input type="text" id="kisten-modal-kommentar" placeholder="z.B. steht im Nebenlager Regal 3"></div>
 
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-        <p style="font-weight: bold; margin-bottom: 10px;">📋 Soll-Inhalt dieser Kiste:</p>
-        <div id="kisten-modal-inhalt-wrapper"></div>
-        <div style="display:flex; gap:8px; margin-top:10px;">
-            <input type="text" id="kisten-modal-artikel-input" list="kategorie-artikel-liste" placeholder="Artikelname eingeben..." style="flex:1; padding:10px; border-radius:6px; border:1px solid #ccc;">
-            <button type="button" class="btn" style="background:#3498db; width:auto;" onclick="kistenInhaltHinzufuegen()">➕ Hinzufügen</button>
-        </div>
+        <p id="kisten-modal-inhalt-hinweis" style="font-size:0.9em; color:#7f8c8d;">Speichere die Kiste zuerst, um Artikel-Inhalt zu erfassen.</p>
+        <button type="button" id="kisten-modal-inhalt-btn" class="btn" style="background:#16a085; display:none;">📦 Inhalt erfassen / prüfen</button>
 
         <div class="flex-buttons" style="margin-top: 20px;">
             <button class="btn btn-save" onclick="speichereKiste()">Speichern</button>
@@ -1734,17 +1731,19 @@
 <div id="kistenCheckModal" class="modal" onclick="if (event.target === this) schliesseKistenCheckModal()">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="schliesseKistenCheckModal()" title="Schließen" aria-label="Schließen">✕</button>
-        <h2 id="kisten-check-titel">📋 Prüfen</h2>
+        <h2 id="kisten-check-titel">📦 Inhalt / Prüfen</h2>
         <p style="font-family:monospace; color:#7f8c8d; margin-top:-8px;" id="kisten-check-code"></p>
-        <p style="font-size:0.85em; color:#666;">Zählbare Artikel: Ist-Menge anpassen. Verbrauchsmaterial: Füllstand-Ampel antippen.</p>
+        <p style="font-size:0.85em; color:#666;">Das ist der ganz normale Bestand dieser Kiste als Lagerort. Genau zählen, "∞" für unbegrenzt, oder "-" für Ampel-Status (grün = genug da, rot + Haken = Nachfüllen nötig → landet automatisch auf der Einkaufsliste).</p>
 
-        <div id="kisten-check-liste" style="max-height: 50vh; overflow-y: auto;"></div>
+        <div id="kisten-check-liste" style="max-height: 45vh; overflow-y: auto;"></div>
+
+        <div style="display:flex; gap:8px; margin-top:10px;">
+            <input type="text" id="kisten-check-artikel-input" list="kategorie-artikel-liste" placeholder="Artikelname eingeben..." style="flex:1; padding:10px; border-radius:6px; border:1px solid #ccc;">
+            <button type="button" class="btn" style="background:#3498db; width:auto;" onclick="kistenCheckArtikelHinzufuegen()">➕ Hinzufügen</button>
+        </div>
 
         <div class="flex-buttons" style="margin-top: 15px;">
-            <button class="btn" style="background:#27ae60;" onclick="kistenCheckAllesOk()">✔️ Alles vollständig</button>
-        </div>
-        <div class="flex-buttons" style="margin-top: 10px;">
-            <button class="btn btn-save" onclick="speichereKistenCheck()">Check speichern</button>
+            <button class="btn btn-save" onclick="speichereKistenCheck()">Speichern &amp; als geprüft markieren</button>
             <button class="btn btn-cancel" onclick="schliesseKistenCheckModal()">Abbrechen</button>
         </div>
     </div>
@@ -1754,7 +1753,7 @@
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="schliesseKistenKameraModal()" title="Schließen" aria-label="Schließen">✕</button>
         <h2>📷 Kiste scannen</h2>
-        <p style="font-size: 0.85em; color: #666;">NFC-Tag/QR-Code der Kiste vor die Kamera halten. Die Soll/Ist-Checkliste öffnet sich automatisch.</p>
+        <p style="font-size: 0.85em; color: #666;">NFC-Tag/QR-Code der Kiste vor die Kamera halten. Der Inhalt der Kiste öffnet sich automatisch.</p>
         <div id="kisten-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
         <p id="kisten-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
         <div class="flex-buttons">
