@@ -57,10 +57,10 @@ const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 let aktuelleDaten = [];
 let packlisten = [];
 let packlistenPositionen = [];
-// --- Behälter / Prüf-Workflow (Typ A = Kisten mit NFC-Tag, Soll/Ist-Check) ---
-let kisten = [];                 // Zeilen aus 'behaelter'
-let kistenCheckAktuelleId = '';  // Behälter-ID, dessen Inhalt-Editor/Check-Modal gerade offen ist
-let kistenScanAktion = 'check';  // 'check' (Soll/Ist-Checkliste öffnen) | 'zuweisen' (Kiste einem Event zuordnen)
+// --- NFC-fähige Lagerorte ("Kisten"). Es gibt keine eigene Entität mehr -
+// jeder Lagerort kann optional einen nfc_code bekommen (siehe alleLagerorte).
+let kistenCheckAktuelleId = '';  // Lagerort-ID, deren Inhalt-Editor/Check-Modal gerade offen ist
+let kistenScanAktion = 'check';  // 'check' (Inhalt öffnen) | 'zuweisen' (Lagerort einem Event zuordnen)
 let alleArtikelInfos = []; 
 let alleLagerorte = []; 
 let isEditMode = false;
@@ -2546,6 +2546,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         ladeAlles(); 
         pruefeUndZeigeOnboarding(); 
         pruefeUndVerarbeiteRueckgabeLink();
+        pruefeUndVerarbeiteKistencheckLink();
     } else { 
         document.getElementById('login-overlay').style.display = 'flex'; 
     }
@@ -2659,6 +2660,7 @@ async function handleLogin() {
         ladeAlles();
         pruefeUndZeigeOnboarding();
         pruefeUndVerarbeiteRueckgabeLink();
+        pruefeUndVerarbeiteKistencheckLink();
     }
 }
 
@@ -2778,25 +2780,11 @@ async function ladeAlles() {
 
     await ladeBestand();
     await ladeAktuelleEntnahmeVerbraeuche();
-    await ladeKisten();
     wendeFilterAn();
     if(aktuellerModus === 'event') await ladeEventDaten();
     if(aktuellerModus === 'kisten') renderKistenListe();
 }
 
-/**
- * Lädt alle Behälter (Typ A / Kisten mit NFC-Tag). Muss NACH ladeLagerorte()
- * und ladeBestand() aufgerufen werden, da der Kisten-Inhalt darüber (virtueller
- * Kisten-Lagerort in alleLagerorte + zugehörige Zeilen in aktuelleDaten) ermittelt wird.
- */
-async function ladeKisten() {
-    const { data: kistenData, error: kistenErr } = await dbClient.from('behaelter').select('*').order('name');
-    if (kistenErr) { console.error('Fehler beim Laden der Behälter:', kistenErr); kisten = []; }
-    else kisten = kistenData || [];
-    // Der Inhalt einer Kiste ist ganz normaler Bestand am zugehörigen virtuellen
-    // Lagerort (siehe gibKistenLagerort/gibKistenBestand) - kommt schon über
-    // ladeLagerorte()/ladeBestand() mit, eine eigene Abfrage ist nicht mehr nötig.
-}
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
     if (data) {
@@ -3572,21 +3560,22 @@ async function speichereNeuenOrt() {
     }
 }
 
-function openOrteVerwalten() {
+/**
+ * Öffnet "Lagerorte verwalten". Optional kann ein Lagerort direkt
+ * vorausgewählt werden (z.B. Klick auf "⚙️ Verwalten" in der Kisten-/NFC-
+ * Orte-Übersicht), um z.B. direkt einen NFC-Tag dafür zu beschreiben.
+ */
+function openOrteVerwalten(preselectId = null) {
     const sel = document.getElementById('manage-ort-select');
     sel.innerHTML = '';
 
-    // Virtuelle Kisten-Lagerorte (z.B. "Kiste: Ausschank (Regal B)") werden
-    // automatisch über die Kisten-Verwaltung gepflegt und tauchen hier
-    // deshalb nicht auf - sonst laufen manuelle Umbenennung und Auto-Sync
-    // gegeneinander.
-    const echteOrte = alleLagerorte.filter(o => !o.behaelter_id);
-    if (echteOrte.length === 0) {
-        showToast("Keine (nicht-automatischen) Lagerorte vorhanden.", "warning");
+    if (alleLagerorte.length === 0) {
+        showToast("Keine Lagerorte vorhanden.", "warning");
         return;
     }
 
-    echteOrte.forEach(o => sel.add(new Option(o.name, o.id)));
+    alleLagerorte.forEach(o => sel.add(new Option(o.name, o.id)));
+    if (preselectId) sel.value = preselectId;
     ortSelectChanged();
     document.getElementById('orteModal').style.display = 'block';
 }
@@ -3597,6 +3586,15 @@ function ortSelectChanged() {
     if(ort) {
         document.getElementById('manage-ort-name').value = ort.name;
     }
+
+    const statusEl = document.getElementById('manage-ort-nfc-status');
+    const entfernenBtn = document.getElementById('manage-ort-nfc-entfernen-btn');
+    if (statusEl) {
+        statusEl.textContent = ort?.nfc_code
+            ? `Aktueller Code: ${ort.nfc_code}`
+            : 'Noch kein NFC-Tag mit diesem Lagerort verknüpft.';
+    }
+    if (entfernenBtn) entfernenBtn.style.display = ort?.nfc_code ? 'block' : 'none';
 }
 
 async function speichereOrt() {
@@ -3631,6 +3629,96 @@ async function loescheOrt() {
             showToast("Lagerort gelöscht!");
             ladeAlles();
         }
+    }
+}
+
+/** Entfernt nur die NFC-Verknüpfung eines Lagerorts (Ort selbst + Bestand bleiben erhalten). */
+async function entferneNfcVonOrt() {
+    const oId = document.getElementById('manage-ort-select').value;
+    if (!oId) return;
+    if (!confirm('NFC-Tag-Zuordnung für diesen Lagerort wirklich entfernen? Der physische Tag funktioniert danach nicht mehr.')) return;
+
+    const { error } = await dbClient.from('lagerorte').update({ nfc_code: null, zugewiesene_packliste_id: null, zugewiesen_am: null }).eq('id', oId);
+    if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
+    showToast('NFC-Zuordnung entfernt.');
+    await ladeAlles();
+    const sel = document.getElementById('manage-ort-select');
+    if (sel) sel.value = oId;
+    ortSelectChanged();
+    renderKistenListe();
+}
+
+/** Baut den Link, der auf einen NFC-Tag/QR-Code für einen Lagerort geschrieben wird. */
+function gibOrtCheckLink(code) {
+    const url = new URL('https://trilager.pius-s.de');
+    url.searchParams.set('kistencheck', code);
+    return url.toString();
+}
+
+/**
+ * Schreibt einen NFC-Tag für den aktuell in "Orte verwalten" ausgewählten
+ * Lagerort. Legt bei Bedarf automatisch einen eindeutigen nfc_code an - der
+ * Lagerort selbst existiert schon, hier wird nur die NFC-Verknüpfung ergänzt.
+ * Das ist das zentrale Werkzeug, um aus JEDEM Lagerort (neu oder schon
+ * jahrelang im Einsatz wie "Kiste Banner (Regal C)") eine per NFC scanbare
+ * Kiste zu machen - es gibt keine separate "Kisten"-Verwaltung mehr.
+ */
+async function schreibeNfcTagFuerOrt() {
+    const oId = document.getElementById('manage-ort-select').value;
+    const ort = alleLagerorte.find(o => String(o.id) === String(oId));
+    if (!ort) { showToast('Bitte zuerst einen Lagerort auswählen.', 'warning'); return; }
+
+    let code = ort.nfc_code;
+    if (!code) {
+        const slug = String(ort.name || 'ort')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 40);
+        code = `${slug || 'ort'}-${ort.id}`;
+        const { error } = await dbClient.from('lagerorte').update({ nfc_code: code }).eq('id', ort.id);
+        if (error) { showToast('Fehler beim Anlegen des NFC-Codes: ' + error.message, 'error'); return; }
+        await ladeAlles();
+        ortSelectChanged();
+    }
+
+    const link = gibOrtCheckLink(code);
+    const ortName = ort.name;
+
+    if (typeof window.nfc !== 'undefined') {
+        showToast('📶 App: NFC-Tag jetzt an das Handy halten…', 'success');
+
+        const schreibeAktion = () => {
+            const record = window.ndef.uriRecord(link);
+            window.nfc.write([record], () => {
+                if (navigator.vibrate) navigator.vibrate(200);
+                showToast('✅ NFC-Tag für "' + ortName + '" beschrieben!', 'success');
+                window.nfc.removeNdefListener();
+                window.nfc.removeNdefFormatableListener();
+            }, (err) => {
+                showToast('Schreiben fehlgeschlagen: ' + err, 'error');
+                window.nfc.removeNdefListener();
+                window.nfc.removeNdefFormatableListener();
+            });
+        };
+
+        window.nfc.addNdefListener(schreibeAktion, () => {}, (err) => { console.log(err); });
+        window.nfc.addNdefFormatableListener(schreibeAktion, () => {}, (err) => { console.log(err); });
+        return;
+    }
+
+    if (!('NDEFReader' in window)) {
+        showToast('NFC-Beschreiben wird von diesem Browser nicht unterstützt.', 'error');
+        return;
+    }
+    try {
+        const writer = new NDEFReader();
+        showToast('📶 Web-NFC: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
+        await writer.write({ records: [{ recordType: 'url', data: link }] });
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast('✅ NFC-Tag für "' + ortName + '" beschrieben!', 'success');
+    } catch (err) {
+        showToast('Schreiben fehlgeschlagen: ' + err, 'error');
     }
 }
 
@@ -4957,6 +5045,27 @@ function pruefeUndVerarbeiteRueckgabeLink() {
     verarbeiteRueckgabeScan('artikel:' + artikelId);
 }
 
+/**
+ * Prüft beim Laden der Seite, ob ein ?kistencheck=CODE-Parameter in der URL
+ * steckt (z.B. weil ein iPhone einen NFC-Tag mit der System-Kamera/NFC
+ * geöffnet hat, ohne dass die App gerade im aktiven Scan-Modus war) und
+ * öffnet direkt den Inhalt-Editor/Check-Bildschirm des passenden Lagerorts.
+ * Wartet auf ladeAlles(), damit alleLagerorte/aktuelleDaten schon da sind.
+ */
+async function pruefeUndVerarbeiteKistencheckLink() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('kistencheck');
+    if (!code) return;
+
+    params.delete('kistencheck');
+    const restQuery = params.toString();
+    const neueUrl = window.location.pathname + (restQuery ? '?' + restQuery : '') + window.location.hash;
+    window.history.replaceState({}, '', neueUrl);
+
+    await ladeAlles();
+    verarbeiteOrtScan(code);
+}
+
 // =========================================================================
 // ARTIKEL-ETIKETTEN (QR-Code & NFC-Tag pro Artikel erzeugen/beschreiben)
 // Aufrufbar über index.html?etiketten=1
@@ -5370,7 +5479,7 @@ window.onNativeNfcRead = function(payload, action) {
     } else if (action === 'ausbuchen') {
         verarbeiteAusbuchenScan(payload);
     } else if (action === 'kisten') {
-        verarbeiteKistenScan(payload);
+        verarbeiteOrtScan(payload);
     }
 };
 
@@ -5385,62 +5494,27 @@ window.onNativeNfcWriteResult = function(success, message) {
     }
 };
 // =========================================================================
-// BEHÄLTER / PRÜF-WORKFLOW (Typ A = Kisten mit physischem NFC-Tag)
+// KISTEN = LAGERORTE MIT NFC-TAG
 //
-// Konzept: NFC-Tags kleben wir nur außen an feste Kisten/Behälter, nicht an
-// jeden Einzelartikel. Jede Kiste hat eine Soll-Liste:
-//   - Typ B "zaehlbar" (z.B. Scheren) -> Soll-Stückzahl, beim Check als
-//     Ist-Menge erfasst.
-//   - Typ C "verbrauch" (z.B. Kabelbinder, Klebeband) -> kein Stückzählen,
-//     sondern Ampel-Füllstand (voll/halb/leer) je Kiste.
-// Scan-Format (QR-Code UND NFC-Tag identisch): "behaelter:<code>"
+// Es gibt keine eigene "Kisten"-Entität mehr. Jeder Lagerort (egal ob neu
+// angelegt oder schon länger im Einsatz, z.B. "Kiste Banner (Regal C)") kann
+// über "Lagerorte verwalten" optional einen NFC-Code bekommen (Spalte
+// lagerorte.nfc_code). Der Inhalt ist ganz normaler Bestand an diesem
+// Lagerort - Lagerort und Kiste sind ein und dasselbe System.
+// Scan-Format (QR-Code UND NFC-Tag identisch): "ort:<code>"
 // =========================================================================
 
-/**
- * Kisten werden als "virtueller" Lagerort im normalen lagerorte/bestand-System
- * geführt (Name z.B. "Kiste: Ausschank (Regal B)"). Dadurch tauchen sie
- * automatisch überall dort auf, wo auch ein normaler Lagerort wählbar ist
- * (Artikel-Bearbeiten → Lagerorte & Mengen, Sortier-/Filter-Dropdown, Regal-
- * Gruppierung) - Lagerort und Kiste werden nicht getrennt behandelt.
- */
-function gibKistenLagerort(behaelterId) {
-    return alleLagerorte.find(o => String(o.behaelter_id) === String(behaelterId)) || null;
+/** Alle Lagerorte, die per NFC-Tag/QR-Code scanbar sind ("Kisten"). */
+function gibNfcOrte() {
+    return alleLagerorte.filter(o => o.nfc_code);
 }
 
-/** Aktuelle Bestand-Zeilen (Artikel + Menge) am virtuellen Lagerort dieser Kiste. */
-function gibKistenBestand(behaelterId) {
-    const ort = gibKistenLagerort(behaelterId);
-    if (!ort) return [];
+/** Aktuelle Bestand-Zeilen (Artikel + Menge) an diesem Lagerort. */
+function gibKistenBestand(lagerortId) {
     return aktuelleDaten
-        .filter(z => String(z.lagerort_id) === String(ort.id))
+        .filter(z => String(z.lagerort_id) === String(lagerortId))
         .slice()
         .sort((a, b) => String(a.artikel?.name || '').localeCompare(String(b.artikel?.name || ''), 'de'));
-}
-
-/** Berechnet den einheitlichen Lagerort-Namen einer Kiste, z.B. "Kiste: Ausschank (Regal B)". */
-function ermittleKistenLagerortName(kiste) {
-    const physischerOrt = kiste?.lagerort_id
-        ? alleLagerorte.find(o => String(o.id) === String(kiste.lagerort_id) && !o.behaelter_id)
-        : null;
-    const regalName = physischerOrt ? extrahiereRegalName(physischerOrt.name) : '';
-    return regalName ? `Kiste: ${kiste.name} (${regalName})` : `Kiste: ${kiste.name}`;
-}
-
-/** Legt den virtuellen Lagerort einer Kiste an bzw. hält seinen Namen synchron (Name/Regal geändert). */
-async function synchronisiereKistenLagerort(kiste) {
-    const zielName = ermittleKistenLagerortName(kiste);
-    const bestehend = gibKistenLagerort(kiste.id);
-
-    if (bestehend) {
-        if (bestehend.name !== zielName) {
-            const { error } = await dbClient.from('lagerorte').update({ name: zielName }).eq('id', bestehend.id);
-            if (error) console.error('Fehler beim Aktualisieren des Kisten-Lagerorts:', error);
-        }
-    } else {
-        const { error } = await dbClient.from('lagerorte').insert([{ name: zielName, behaelter_id: kiste.id }]);
-        if (error) console.error('Fehler beim Anlegen des Kisten-Lagerorts:', error);
-    }
-    await ladeLagerorte();
 }
 
 /** Aktualisiert die Artikel-Datalist, die im Kisten-Inhalt-Editor zum Hinzufügen genutzt wird. */
@@ -5453,28 +5527,30 @@ function aktualisiereKistenArtikelDatalist() {
         .map(a => `<option value="${escapeHtml(a.name)}">`).join('');
 }
 
-/** Rendert die Kisten-Übersicht im "📦 Kisten"-Modus. */
+/** Rendert die Übersicht im "🧰 Kisten"-Modus: alle Lagerorte mit NFC-Tag. */
 function renderKistenListe() {
     const ziel = document.getElementById('kisten-tabelle');
     if (!ziel) return;
 
-    if (!Array.isArray(kisten) || kisten.length === 0) {
-        ziel.innerHTML = `<tr><td colspan="5" style="padding:20px; text-align:center; color:#7f8c8d;">
-            Noch keine Kisten angelegt. Lege über "+ Neue Kiste" die erste Kiste an
-            und klebe anschließend den NFC-Tag mit dem hinterlegten Code außen auf die Box.
+    const nfcOrte = gibNfcOrte();
+
+    if (nfcOrte.length === 0) {
+        ziel.innerHTML = `<tr><td colspan="4" style="padding:20px; text-align:center; color:#7f8c8d;">
+            Noch keine Lagerorte mit NFC-Tag. Öffne "⚙️ Lagerorte verwalten", wähle einen (neuen oder
+            bestehenden) Lagerort aus und klicke auf "📶 NFC-Tag beschreiben".
         </td></tr>`;
         return;
     }
 
     const filterText = (document.getElementById('kisten-such-filter')?.value || '').toLowerCase().trim();
 
-    const zeilen = kisten
-        .filter(k => !filterText || k.name.toLowerCase().includes(filterText) || String(k.code).toLowerCase().includes(filterText))
-        .map(k => {
-            const bestandZeilen = gibKistenBestand(k.id);
-            const ortName = alleLagerorte.find(o => String(o.id) === String(k.lagerort_id) && !o.behaelter_id)?.name || '-';
-            const zugewiesenesEvent = k.zugewiesene_packliste_id
-                ? packlisten.find(pl => String(pl.id) === String(k.zugewiesene_packliste_id))
+    const zeilen = nfcOrte
+        .filter(o => !filterText || o.name.toLowerCase().includes(filterText) || String(o.nfc_code).toLowerCase().includes(filterText))
+        .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+        .map(o => {
+            const bestandZeilen = gibKistenBestand(o.id);
+            const zugewiesenesEvent = o.zugewiesene_packliste_id
+                ? packlisten.find(pl => String(pl.id) === String(o.zugewiesene_packliste_id))
                 : null;
             const eventBadge = zugewiesenesEvent
                 ? `<br><span style="color:#8e44ad;">📦 Event: ${escapeHtml(zugewiesenesEvent.name)}</span>`
@@ -5498,130 +5574,33 @@ function renderKistenListe() {
             }
 
             return `<tr>
-                <td><strong>${escapeHtml(k.name)}</strong><br><span style="font-family:monospace; color:#7f8c8d; font-size:0.85em;">${escapeHtml(k.code)}</span></td>
-                <td>${escapeHtml(ortName)}${eventBadge}</td>
+                <td><strong>${escapeHtml(o.name)}</strong><br><span style="font-family:monospace; color:#7f8c8d; font-size:0.85em;">${escapeHtml(o.nfc_code)}</span>${eventBadge}</td>
                 <td>${bestandZeilen.length} Position(en)</td>
                 <td>${statusBadge}</td>
                 <td style="white-space:nowrap;">
-                    <button class="btn" style="background:#16a085; padding:8px 10px; width:auto;" onclick="oeffneKistenCheck(${k.id})" title="Inhalt ansehen/bearbeiten und prüfen">📦 Inhalt / Prüfen</button>
-                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto;" onclick="oeffneKistenModal(${k.id})" title="Bearbeiten">✏️</button>
-                    <button class="btn" style="background:#c0392b; padding:8px 10px; width:auto;" onclick="loescheKiste(${k.id})" title="Löschen">🗑️</button>
+                    <button class="btn" style="background:#16a085; padding:8px 10px; width:auto;" onclick="oeffneKistenCheck(${o.id})" title="Inhalt ansehen/bearbeiten und prüfen">📦 Inhalt / Prüfen</button>
+                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto;" onclick="openOrteVerwalten(${o.id})" title="Umbenennen, löschen oder NFC-Tag verwalten">⚙️ Verwalten</button>
                 </td>
             </tr>`;
         }).join('');
 
-    ziel.innerHTML = zeilen || `<tr><td colspan="5" style="padding:20px; text-align:center; color:#7f8c8d;">Keine Kiste passt zum Filter.</td></tr>`;
+    ziel.innerHTML = zeilen || `<tr><td colspan="4" style="padding:20px; text-align:center; color:#7f8c8d;">Kein Lagerort passt zum Filter.</td></tr>`;
 }
 
-// --- Kiste anlegen / bearbeiten -----------------------------------------
-
-/** Öffnet das Kisten-Modal. Ohne ID = neue Kiste, mit ID = bestehende Kiste bearbeiten. */
-function oeffneKistenModal(behaelterId = null) {
-    const modal = document.getElementById('kistenModal');
-    document.getElementById('kisten-modal-id').value = behaelterId || '';
-    document.getElementById('kisten-modal-titel').innerText = behaelterId ? 'Kiste bearbeiten' : 'Neue Kiste anlegen';
-
-    // Nur "echte" (nicht-virtuelle) Lagerorte dürfen als physischer Standort einer
-    // Kiste gewählt werden - eine Kiste kann nicht "in" einer anderen Kiste stehen.
-    const ortSelect = document.getElementById('kisten-modal-ort');
-    ortSelect.innerHTML = '<option value="">-- kein fester Lagerort --</option>' +
-        alleLagerorte.filter(o => !o.behaelter_id).map(o => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('');
-
-    const kiste = behaelterId ? kisten.find(k => String(k.id) === String(behaelterId)) : null;
-    document.getElementById('kisten-modal-name').value = kiste?.name || '';
-    document.getElementById('kisten-modal-code').value = kiste?.code || '';
-    document.getElementById('kisten-modal-kommentar').value = kiste?.kommentar || '';
-    if (kiste?.lagerort_id) ortSelect.value = kiste.lagerort_id;
-
-    const inhaltHinweis = document.getElementById('kisten-modal-inhalt-hinweis');
-    const inhaltBtn = document.getElementById('kisten-modal-inhalt-btn');
-    if (inhaltHinweis && inhaltBtn) {
-        if (behaelterId) {
-            inhaltHinweis.innerText = `Lagerort für diese Kiste: ${ermittleKistenLagerortName(kiste)}`;
-            inhaltBtn.style.display = 'inline-block';
-            inhaltBtn.onclick = () => { schliesseKistenModal(); oeffneKistenCheck(behaelterId); };
-        } else {
-            inhaltHinweis.innerText = 'Speichere die Kiste zuerst, um Artikel-Inhalt zu erfassen.';
-            inhaltBtn.style.display = 'none';
-        }
-    }
-
-    document.getElementById('kisten-loeschen-btn').style.display = behaelterId ? 'inline-block' : 'none';
-    modal.style.display = 'block';
-}
-
-function schliesseKistenModal() {
-    document.getElementById('kistenModal').style.display = 'none';
-}
-
-/** Speichert Name/Code/Lagerort/Kommentar der Kiste und hält den virtuellen Kisten-Lagerort synchron. */
-async function speichereKiste() {
-    const id = document.getElementById('kisten-modal-id').value;
-    const name = document.getElementById('kisten-modal-name').value.trim();
-    const code = document.getElementById('kisten-modal-code').value.trim();
-    const ortId = document.getElementById('kisten-modal-ort').value || null;
-    const kommentar = document.getElementById('kisten-modal-kommentar').value.trim();
-
-    if (!name) { showToast('Bitte einen Namen für die Kiste eingeben.', 'warning'); return; }
-    if (!code) { showToast('Bitte einen NFC-/QR-Code für die Kiste vergeben (z.B. AUSSCHANK-01).', 'warning'); return; }
-
-    const doppelt = kisten.find(k => k.code.toLowerCase() === code.toLowerCase() && String(k.id) !== String(id));
-    if (doppelt) { showToast(`Der Code "${code}" wird schon von Kiste "${doppelt.name}" verwendet.`, 'error'); return; }
-
-    const dbObj = { name, code, lagerort_id: ortId, kommentar };
-
-    if (id) {
-        const { error } = await dbClient.from('behaelter').update(dbObj).eq('id', id);
-        if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-        await synchronisiereKistenLagerort({ id: Number(id), name, lagerort_id: ortId });
-        showToast('Kiste aktualisiert!');
-        await ladeAlles();
-        renderKistenListe();
-        schliesseKistenModal();
-    } else {
-        const { data, error } = await dbClient.from('behaelter').insert([dbObj]).select();
-        if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-        const neueKiste = data?.[0];
-        if (neueKiste) await synchronisiereKistenLagerort(neueKiste);
-        showToast('Kiste angelegt! Jetzt Inhalt erfassen und NFC-Tag mit dem Code beschreiben.');
-        await ladeAlles();
-        renderKistenListe();
-        schliesseKistenModal();
-        if (neueKiste) oeffneKistenCheck(neueKiste.id);
-    }
-}
-
-async function loescheKiste(behaelterId) {
-    const kiste = kisten.find(k => String(k.id) === String(behaelterId));
-    if (!confirm(`Kiste "${kiste?.name || behaelterId}" wirklich komplett löschen (inkl. Bestand am zugehörigen Kisten-Lagerort)?`)) return;
-
-    const virtOrt = gibKistenLagerort(behaelterId);
-    if (virtOrt) {
-        await dbClient.from('bestand').delete().eq('lagerort_id', virtOrt.id);
-        await dbClient.from('lagerorte').delete().eq('id', virtOrt.id);
-    }
-
-    const { error } = await dbClient.from('behaelter').delete().eq('id', behaelterId);
-    if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-    showToast('Kiste gelöscht.');
-    schliesseKistenModal();
-    await ladeAlles();
-    renderKistenListe();
-}
-
-// --- Prüf-Workflow: Soll/Ist-Checkliste beim Kistenscan -----------------
+// --- Prüf-Workflow: Inhalt ansehen/bearbeiten beim Scannen ---------------
 
 /**
- * Extrahiert den Behälter-Code aus einem gescannten Code. Unterstützt:
- * 1. Einfacher Text "behaelter:CODE" (klassischer QR-/NFC-Text)
- * 2. URL-Parameter ?kistencheck=CODE (funktioniert auch mit normaler
+ * Extrahiert den NFC-Code aus einem gescannten Code. Unterstützt:
+ * 1. Einfacher Text "ort:CODE" (aktuelles Format, klassischer QR-/NFC-Text)
+ * 2. Legacy-Format "behaelter:CODE" (alte, schon physisch beschriebene Tags)
+ * 3. URL-Parameter ?kistencheck=CODE (funktioniert auch mit normaler
  *    Handy-Kamera-App / NFC-Hintergrund-Lesen, ganz ohne Web-NFC-API)
  */
-function extrahiereBehaelterCodeAusScan(rawText) {
+function extrahiereOrtCodeAusScan(rawText) {
     const text = String(rawText || '').trim();
     if (!text) return null;
 
-    const einfacherMatch = /^behaelter:(.+)$/i.exec(text);
+    const einfacherMatch = /^(?:ort|behaelter):(.+)$/i.exec(text);
     if (einfacherMatch) return einfacherMatch[1].trim();
 
     const urlMatch = /kistencheck=([^&\s]+)/i.exec(text);
@@ -5630,18 +5609,18 @@ function extrahiereBehaelterCodeAusScan(rawText) {
     return null;
 }
 
-/** Zentrale Verarbeitung eines gescannten Kisten-Codes: öffnet den Soll/Ist-Check. */
-async function verarbeiteKistenScan(rawCode) {
+/** Zentrale Verarbeitung eines gescannten Lagerort-Codes: öffnet Inhalt-Check bzw. Event-Zuweisung. */
+async function verarbeiteOrtScan(rawCode) {
     if (kistenScanSperre) return;
     kistenScanSperre = true;
     setTimeout(() => { kistenScanSperre = false; }, 1500);
 
-    const code = extrahiereBehaelterCodeAusScan(rawCode) || String(rawCode || '').trim();
-    const kiste = kisten.find(k => k.code.toLowerCase() === code.toLowerCase());
+    const code = extrahiereOrtCodeAusScan(rawCode) || String(rawCode || '').trim();
+    const ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === code.toLowerCase());
 
-    if (!kiste) {
+    if (!ort) {
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast(`Keine Kiste mit dem Code "${code}" gefunden.`, 'error');
+        showToast(`Kein Lagerort mit dem NFC-Code "${code}" gefunden.`, 'error');
         return;
     }
 
@@ -5649,35 +5628,31 @@ async function verarbeiteKistenScan(rawCode) {
     schliesseKistenKameraModal();
 
     if (kistenScanAktion === 'zuweisen') {
-        await weiseKisteAktuellemEventZu(kiste.id);
+        await weiseKisteAktuellemEventZu(ort.id);
     } else {
-        oeffneKistenCheck(kiste.id);
+        oeffneKistenCheck(ort.id);
     }
 }
 
 /**
- * Öffnet den Inhalt-Editor/Prüf-Bildschirm einer Kiste. Zeigt den echten
- * Bestand am virtuellen Kisten-Lagerort - exakt dieselben Mengen-/Ampel-
- * Bedienelemente wie im normalen "Artikel bearbeiten → Lagerorte & Mengen".
+ * Öffnet den Inhalt-Editor/Prüf-Bildschirm eines Lagerorts. Zeigt den echten
+ * Bestand dort - exakt dieselben Mengen-/Ampel-Bedienelemente wie im
+ * normalen "Artikel bearbeiten → Lagerorte & Mengen".
  */
-function oeffneKistenCheck(behaelterId) {
-    const kiste = kisten.find(k => String(k.id) === String(behaelterId));
-    if (!kiste) { showToast('Kiste nicht gefunden.', 'error'); return; }
-    if (!gibKistenLagerort(behaelterId)) {
-        showToast('Für diese Kiste wurde noch kein Lagerort angelegt - bitte die Kiste einmal speichern.', 'error');
-        return;
-    }
+function oeffneKistenCheck(lagerortId) {
+    const ort = alleLagerorte.find(o => String(o.id) === String(lagerortId));
+    if (!ort) { showToast('Lagerort nicht gefunden.', 'error'); return; }
 
-    kistenCheckAktuelleId = behaelterId;
-    document.getElementById('kisten-check-titel').innerText = `📦 Inhalt / Prüfen: ${kiste.name}`;
-    document.getElementById('kisten-check-code').innerText = ermittleKistenLagerortName(kiste);
+    kistenCheckAktuelleId = lagerortId;
+    document.getElementById('kisten-check-titel').innerText = `📦 Inhalt / Prüfen: ${ort.name}`;
+    document.getElementById('kisten-check-code').innerText = ort.nfc_code ? `NFC-Code: ${ort.nfc_code}` : '';
     aktualisiereKistenArtikelDatalist();
 
     const wrapper = document.getElementById('kisten-check-liste');
     wrapper.innerHTML = '';
-    const bestand = gibKistenBestand(behaelterId);
+    const bestand = gibKistenBestand(lagerortId);
     if (bestand.length === 0) {
-        wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel in dieser Kiste. Über das Feld unten hinzufügen.</p>';
+        wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel an diesem Lagerort. Über das Feld unten hinzufügen.</p>';
     } else {
         bestand.forEach(z => fuegeKistenBestandZeileHinzu(z));
     }
@@ -5730,13 +5705,13 @@ function fuegeKistenBestandZeileHinzu(data = null) {
                 <span>Auf Nachkaufen setzen (🔴 Nachfüllen nötig)</span>
             </label>
         </div>
-        <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="entferneKistenBestandZeile(this)" title="Aus Kiste entfernen">🗑️</button>
+        <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="entferneKistenBestandZeile(this)" title="Aus diesem Lagerort entfernen">🗑️</button>
     `;
     setzeBestandStatus(div, statusValue, statusValue === 'strich-warn');
     wrapper.appendChild(div);
 }
 
-/** Fügt über das Freitext-/Datalist-Feld einen neuen Artikel zur Kiste hinzu (lokal, wird erst beim Speichern angelegt). */
+/** Fügt über das Freitext-/Datalist-Feld einen neuen Artikel hinzu (lokal, wird erst beim Speichern angelegt). */
 function kistenCheckArtikelHinzufuegen() {
     const input = document.getElementById('kisten-check-artikel-input');
     const name = (input.value || '').trim();
@@ -5746,7 +5721,7 @@ function kistenCheckArtikelHinzufuegen() {
     if (!artikel) { showToast(`Artikel "${name}" nicht gefunden.`, 'error'); return; }
 
     const bereitsDrin = document.querySelector(`#kisten-check-liste .edit-ort-row[data-artikel-id="${artikel.id}"]`);
-    if (bereitsDrin) { showToast('Dieser Artikel ist bereits in der Kiste.', 'warning'); return; }
+    if (bereitsDrin) { showToast('Dieser Artikel ist bereits an diesem Lagerort.', 'warning'); return; }
 
     fuegeKistenBestandZeileHinzu({ artikel_id: artikel.id, artikel: { name: artikel.name } });
     input.value = '';
@@ -5762,19 +5737,18 @@ async function entferneKistenBestandZeile(btn) {
     }
     row.remove();
     if (!document.querySelector('#kisten-check-liste .edit-ort-row')) {
-        document.getElementById('kisten-check-liste').innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel in dieser Kiste. Über das Feld unten hinzufügen.</p>';
+        document.getElementById('kisten-check-liste').innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel an diesem Lagerort. Über das Feld unten hinzufügen.</p>';
     }
 }
 
 /**
- * Speichert alle Zeilen des Inhalt-Editors als Bestand am virtuellen Kisten-
- * Lagerort und stempelt "zuletzt geprüft". Da Kisten-Bestand ganz normaler
- * Bestand ist, greift die bestehende Einkaufsliste (Nachkauf-Markierung)
- * automatisch mit - ohne Sonderfall-Code.
+ * Speichert alle Zeilen des Inhalt-Editors als Bestand an diesem Lagerort
+ * und stempelt "zuletzt geprüft". Da das ganz normaler Bestand ist, greift
+ * die bestehende Einkaufsliste (Nachkauf-Markierung) automatisch mit.
  */
 async function speichereKistenCheck() {
-    const ort = gibKistenLagerort(kistenCheckAktuelleId);
-    if (!ort) { schliesseKistenCheckModal(); return; }
+    const lagerortId = kistenCheckAktuelleId;
+    if (!lagerortId) { schliesseKistenCheckModal(); return; }
 
     const jetzt = new Date().toISOString();
     const geprueftVon = holeLokaleSession()?.username || 'Unbekannt';
@@ -5789,12 +5763,12 @@ async function speichereKistenCheck() {
         const dbObj = { menge, alte_menge: alteMenge, geprueft_am: jetzt, geprueft_von: geprueftVon };
 
         if (bestandId) return dbClient.from('bestand').update(dbObj).eq('id', bestandId);
-        return dbClient.from('bestand').insert([{ artikel_id: Number(artikelId), lagerort_id: ort.id, ...dbObj }]);
+        return dbClient.from('bestand').insert([{ artikel_id: Number(artikelId), lagerort_id: Number(lagerortId), ...dbObj }]);
     });
 
     try {
         await Promise.all(aufgaben);
-        showToast('✅ Kisten-Inhalt gespeichert!');
+        showToast('✅ Inhalt gespeichert!');
         schliesseKistenCheckModal();
         await ladeAlles();
         renderKistenListe();
@@ -5804,32 +5778,11 @@ async function speichereKistenCheck() {
     }
 }
 
-// --- Scannen: Kamera (QR) und NFC für den Kisten-Check -------------------
+// --- Scannen: Kamera (QR) und NFC ----------------------------------------
 
 function oeffneKistenKameraModal() {
     kistenScanAktion = 'check';
-    const modal = document.getElementById('kistenKameraModal');
-    const statusEl = document.getElementById('kisten-scanner-status');
-    modal.style.display = 'block';
-    kistenScanSperre = false;
-    if (statusEl) statusEl.innerText = 'Kamera wird gestartet…';
-
-    kistenQrScanner = new Html5Qrcode('kisten-qr-reader');
-    kistenQrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-            if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
-            verarbeiteKistenScan(decodedText);
-        },
-        () => { /* pro Frame kein Treffer - normal, ignorieren */ }
-    ).then(() => {
-        if (statusEl) statusEl.innerText = 'Bereit – NFC-Etikett der Kiste vor die Kamera halten.';
-    }).catch(err => {
-        console.error(err);
-        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
-        schliesseKistenKameraModal();
-    });
+    oeffneKistenKameraModalOhneReset();
 }
 
 function schliesseKistenKameraModal() {
@@ -5843,12 +5796,12 @@ function schliesseKistenKameraModal() {
     if (modal) modal.style.display = 'none';
 }
 
-/** Startet/stoppt den NFC-Scan-Modus für den Kisten-Check (analog zu starteRueckgabeNfc). */
+/** Startet/stoppt den NFC-Scan-Modus (analog zu starteRueckgabeNfc). */
 async function starteKistenNfc(aktion = 'check') {
     kistenScanAktion = aktion;
     if (aktiverNfcModus === 'kisten') {
         deaktiviereNfcModus('kisten');
-        showToast('📶 NFC-Kisten-Scan gestoppt.', 'success');
+        showToast('📶 NFC-Scan gestoppt.', 'success');
         return;
     }
 
@@ -5860,7 +5813,7 @@ async function starteKistenNfc(aktion = 'check') {
 
     if (typeof window.nfc !== 'undefined') {
         kistenScanSperre = false;
-        showToast('📶 App-NFC aktiv – Kiste vor das Handy halten.', 'success');
+        showToast('📶 App-NFC aktiv – Tag vor das Handy halten.', 'success');
 
         window.nfc.addNdefListener((nfcEvent) => {
             try {
@@ -5877,7 +5830,7 @@ async function starteKistenNfc(aktion = 'check') {
                     payloadText = window.nfc.bytesToString(record.payload);
                 }
 
-                verarbeiteKistenScan(payloadText);
+                verarbeiteOrtScan(payloadText);
             } catch (e) {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
@@ -5896,14 +5849,14 @@ async function starteKistenNfc(aktion = 'check') {
         kistenNfcAbortController = new AbortController();
         kistenNfcReader = new NDEFReader();
         await kistenNfcReader.scan({ signal: kistenNfcAbortController.signal });
-        showToast('📶 Web-NFC aktiv – Kiste vor das Handy halten.', 'success');
+        showToast('📶 Web-NFC aktiv – Tag vor das Handy halten.', 'success');
 
         kistenNfcReader.onreading = (event) => {
             if (aktiverNfcModus !== 'kisten') return;
             try {
                 const record = event.message.records[0];
                 const decoder = new TextDecoder(record.encoding || 'utf-8');
-                verarbeiteKistenScan(decoder.decode(record.data));
+                verarbeiteOrtScan(decoder.decode(record.data));
             } catch (e) {
                 showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
             }
@@ -5917,14 +5870,14 @@ async function starteKistenNfc(aktion = 'check') {
 }
 
 // =========================================================================
-// FLEXIBLE EVENT-ZUORDNUNG VON KISTEN (Ausbaustufe 2)
+// FLEXIBLE EVENT-ZUORDNUNG VON LAGERORTEN/KISTEN
 //
-// Eine Kiste kann statt fest im Regal auch einem Event (= einer bestehenden
-// "packlisten"-Zeile) zugewiesen sein - entweder durch Scannen des NFC-Tags
-// direkt am Regal ("welches Event bekommt diese Kiste?") oder manuell über
-// ein Dropdown im Event-Modus (praktisch für die Vorab-Planung, wenn man
-// gerade keinen Tag zur Hand hat). Eine Kiste gehört immer nur zu einem
-// Event gleichzeitig; "Lösen" gibt sie wieder frei (= zurück im Lager).
+// Ein Lagerort mit NFC-Tag kann statt fest im Regal auch einem Event (= einer
+// bestehenden "packlisten"-Zeile) zugewiesen sein - entweder durch Scannen
+// des NFC-Tags direkt ("welches Event bekommt diese Kiste?") oder manuell
+// über ein Dropdown im Event-Modus (praktisch für die Vorab-Planung, wenn
+// man gerade keinen Tag zur Hand hat). Ein Lagerort gehört immer nur zu
+// einem Event gleichzeitig; "Lösen" gibt ihn wieder frei (= zurück im Lager).
 // =========================================================================
 
 /** Öffnet den Kamera-Scanner im "Event-Zuweisen"-Modus statt im "Check"-Modus. */
@@ -5935,7 +5888,7 @@ function starteEventKistenZuweisungScan() {
     oeffneKistenKameraModalOhneReset();
 }
 
-/** Wie oeffneKistenKameraModal(), aber ohne kistenScanAktion zurückzusetzen (Aufruf aus dem Event-Modus). */
+/** Startet den Kamera-Scanner, ohne kistenScanAktion zurückzusetzen (wird von beiden Aufrufern oben genutzt). */
 function oeffneKistenKameraModalOhneReset() {
     const modal = document.getElementById('kistenKameraModal');
     const statusEl = document.getElementById('kisten-scanner-status');
@@ -5949,11 +5902,13 @@ function oeffneKistenKameraModalOhneReset() {
         { fps: 10, qrbox: { width: 240, height: 240 } },
         (decodedText) => {
             if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
-            verarbeiteKistenScan(decodedText);
+            verarbeiteOrtScan(decodedText);
         },
         () => { /* pro Frame kein Treffer - normal, ignorieren */ }
     ).then(() => {
-        if (statusEl) statusEl.innerText = 'Bereit – Kiste diesem Event zuweisen: NFC-Etikett vor die Kamera halten.';
+        if (statusEl) statusEl.innerText = kistenScanAktion === 'zuweisen'
+            ? 'Bereit – Kiste diesem Event zuweisen: NFC-Etikett vor die Kamera halten.'
+            : 'Bereit – NFC-Etikett der Kiste vor die Kamera halten.';
     }).catch(err => {
         console.error(err);
         showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
@@ -5961,42 +5916,42 @@ function oeffneKistenKameraModalOhneReset() {
     });
 }
 
-/** Weist die gescannte Kiste dem aktuell im Event-Modus ausgewählten Event zu. */
-async function weiseKisteAktuellemEventZu(behaelterId) {
+/** Weist den gescannten/gewählten Lagerort dem aktuell im Event-Modus ausgewählten Event zu. */
+async function weiseKisteAktuellemEventZu(lagerortId) {
     const listId = document.getElementById('packlisten-auswahl')?.value;
     if (!listId) { showToast('Kein Event ausgewählt.', 'error'); return; }
-    await weiseKisteEventZu(behaelterId, listId);
+    await weiseKisteEventZu(lagerortId, listId);
 }
 
 /** Kernfunktion: schreibt die Zuweisung in die DB und aktualisiert Ansichten. */
-async function weiseKisteEventZu(behaelterId, packlisteId) {
-    const kiste = kisten.find(k => String(k.id) === String(behaelterId));
+async function weiseKisteEventZu(lagerortId, packlisteId) {
+    const ort = alleLagerorte.find(o => String(o.id) === String(lagerortId));
     const event = packlisten.find(pl => String(pl.id) === String(packlisteId));
-    if (!kiste || !event) { showToast('Kiste oder Event nicht gefunden.', 'error'); return; }
+    if (!ort || !event) { showToast('Lagerort oder Event nicht gefunden.', 'error'); return; }
 
-    const { error } = await dbClient.from('behaelter')
+    const { error } = await dbClient.from('lagerorte')
         .update({ zugewiesene_packliste_id: Number(packlisteId), zugewiesen_am: new Date().toISOString() })
-        .eq('id', behaelterId);
+        .eq('id', lagerortId);
 
     if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
 
     if (navigator.vibrate) navigator.vibrate(120);
-    showToast(`📦 "${kiste.name}" ist jetzt Event "${event.name}" zugeordnet.`);
-    await ladeKisten();
+    showToast(`📦 "${ort.name}" ist jetzt Event "${event.name}" zugeordnet.`);
+    await ladeAlles();
     renderKistenListe();
     renderEventKistenListe();
 }
 
-/** Löst die Event-Zuordnung einer Kiste (Kiste gilt wieder als "im Lager"). */
-async function entferneKisteVonEvent(behaelterId) {
-    const kiste = kisten.find(k => String(k.id) === String(behaelterId));
-    const { error } = await dbClient.from('behaelter')
+/** Löst die Event-Zuordnung eines Lagerorts (gilt wieder als "im Lager"). */
+async function entferneKisteVonEvent(lagerortId) {
+    const ort = alleLagerorte.find(o => String(o.id) === String(lagerortId));
+    const { error } = await dbClient.from('lagerorte')
         .update({ zugewiesene_packliste_id: null, zugewiesen_am: null })
-        .eq('id', behaelterId);
+        .eq('id', lagerortId);
 
     if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-    showToast(`"${kiste?.name || 'Kiste'}" wieder freigegeben (kein Event mehr zugeordnet).`);
-    await ladeKisten();
+    showToast(`"${ort?.name || 'Lagerort'}" wieder freigegeben (kein Event mehr zugeordnet).`);
+    await ladeAlles();
     renderKistenListe();
     renderEventKistenListe();
 }
@@ -6005,16 +5960,16 @@ async function entferneKisteVonEvent(behaelterId) {
 function eventKisteManuellZuweisen() {
     const listId = document.getElementById('packlisten-auswahl').value;
     const select = document.getElementById('event-kiste-manuell-auswahl');
-    const behaelterId = select?.value;
-    if (!listId || !behaelterId) return;
-    weiseKisteEventZu(behaelterId, listId);
+    const lagerortId = select?.value;
+    if (!listId || !lagerortId) return;
+    weiseKisteEventZu(lagerortId, listId);
     select.value = '';
 }
 
 /**
  * Rendert im Event-Modus zwei Dinge:
- * 1. Die Kisten, die dem aktuell ausgewählten Event bereits zugeordnet sind.
- * 2. Ein Dropdown mit allen noch freien (nicht zugeordneten) Kisten zur
+ * 1. Die Lagerorte/Kisten, die dem aktuell ausgewählten Event bereits zugeordnet sind.
+ * 2. Ein Dropdown mit allen noch freien (nicht zugeordneten) NFC-Lagerorten zur
  *    manuellen Zuweisung.
  */
 function renderEventKistenListe() {
@@ -6025,32 +5980,33 @@ function renderEventKistenListe() {
     const currentId = document.getElementById('packlisten-auswahl')?.value;
     if (!currentId) { ziel.innerHTML = ''; if (auswahl) auswahl.innerHTML = ''; return; }
 
-    const zugeordnet = kisten.filter(k => String(k.zugewiesene_packliste_id) === String(currentId));
+    const nfcOrte = gibNfcOrte();
+    const zugeordnet = nfcOrte.filter(o => String(o.zugewiesene_packliste_id) === String(currentId));
 
     if (zugeordnet.length === 0) {
         ziel.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Diesem Event ist noch keine Kiste zugeordnet.</p>';
     } else {
-        ziel.innerHTML = zugeordnet.map(k => {
-            const bestandZeilen = gibKistenBestand(k.id);
+        ziel.innerHTML = zugeordnet.map(o => {
+            const bestandZeilen = gibKistenBestand(o.id);
             const nieGeprueft = bestandZeilen.filter(z => !z.geprueft_am).length;
             return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #eee; border-radius:8px; margin-bottom:6px;">
                 <div>
-                    <strong>${escapeHtml(k.name)}</strong>
-                    <span style="color:#7f8c8d; font-size:0.85em;"> (${escapeHtml(k.code)}) – ${bestandZeilen.length} Position(en)${nieGeprueft ? `, ${nieGeprueft} noch nie geprüft` : ''}</span>
+                    <strong>${escapeHtml(o.name)}</strong>
+                    <span style="color:#7f8c8d; font-size:0.85em;"> (${escapeHtml(o.nfc_code)}) – ${bestandZeilen.length} Position(en)${nieGeprueft ? `, ${nieGeprueft} noch nie geprüft` : ''}</span>
                 </div>
                 <div style="display:flex; gap:6px;">
-                    <button class="btn" style="background:#16a085; padding:6px 10px; width:auto;" onclick="oeffneKistenCheck(${k.id})">📦 Inhalt / Prüfen</button>
-                    <button class="btn" style="background:#c0392b; padding:6px 10px; width:auto;" onclick="entferneKisteVonEvent(${k.id})">Lösen</button>
+                    <button class="btn" style="background:#16a085; padding:6px 10px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
+                    <button class="btn" style="background:#c0392b; padding:6px 10px; width:auto;" onclick="entferneKisteVonEvent(${o.id})">Lösen</button>
                 </div>
             </div>`;
         }).join('');
     }
 
     if (auswahl) {
-        const freieKisten = kisten.filter(k => !k.zugewiesene_packliste_id || String(k.zugewiesene_packliste_id) === String(currentId));
+        const freieOrte = nfcOrte.filter(o => !o.zugewiesene_packliste_id || String(o.zugewiesene_packliste_id) === String(currentId));
         auswahl.innerHTML = '<option value="">-- Kiste manuell zuweisen --</option>' +
-            freieKisten
-                .filter(k => String(k.zugewiesene_packliste_id) !== String(currentId))
-                .map(k => `<option value="${k.id}">${escapeHtml(k.name)} (${escapeHtml(k.code)})</option>`).join('');
+            freieOrte
+                .filter(o => String(o.zugewiesene_packliste_id) !== String(currentId))
+                .map(o => `<option value="${o.id}">${escapeHtml(o.name)} (${escapeHtml(o.nfc_code)})</option>`).join('');
     }
 }
