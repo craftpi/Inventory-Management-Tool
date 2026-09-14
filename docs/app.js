@@ -1,148 +1,234 @@
-//const SUPABASE_URL = 'https://frrfjpnrewwlgfqtgjqg.supabase.co';
-
+// =========================================================================
+// 1. KONFIGURATION & GLOBALE ZUSTÄNDE
+// =========================================================================
 const SUPABASE_URL = 'https://trilager-api.pius-s.de';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRyaWxhZ2VyIiwiaWF0IjoxNzg1ODA3MzI1LCJleHAiOjIxMDExNjczMjV9.COsEZ-KOGycjE2S1eALGohmmjosW8CZs038jezg6lSU';
 
-const { NFC, Ndef } = window.nfc || {};
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const FORMULAR_MODUS = URL_PARAMS.get('formular') === '1';
+const QRGEN_MODUS = URL_PARAMS.get('qrgen') === '1';
+const ENTNAHME_MODUS = URL_PARAMS.get('entnahme') === '1';
+const ETIKETTEN_MODUS = URL_PARAMS.get('etiketten') === '1';
+const INITIAL_REGAL_FILTER = URL_PARAMS.get('regal') || '';
 
-function storageAvailable(type) {
-    try {
-        var storage = window[type];
-        var x = '__storage_test__';
-        storage.setItem(x, x);
-        storage.removeItem(x);
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
+const STORAGE_KEYS = {
+    SESSION: 'trilager_local_session_v2',
+    ATTEMPTS: 'trilager_login_attempts_v1',
+    LOCK: 'trilager_login_lock_until_v1',
+    ENTNAHME_DRAFT: 'inventory-management-tool.entnahmeDraft.v2',
+    ONBOARDING: 'lager_onboarding_v1_gesehen'
+};
 
-const _persistSession = storageAvailable('localStorage');
-console.log('localStorage available for session persistence:', _persistSession);
+const TABLES = {
+    FORMULAR: 'formular_antworten',
+    ENTNAHME: 'lager_entnahmen',
+    BENUTZER_VORLAGEN: 'lager_entnahme_benutzer_vorlagen',
+    SAMMEL_VORLAGEN: 'lager_entnahme_sammelvorlagen',
+    AUDIT: 'lager_entnahme_audit'
+};
 
-let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false
-    }
-});
-
-function setzeAuthToken(token) {
-    if (token) {
-        dbClient.rest.headers.set('Authorization', `Bearer ${token}`);
-    } else {
-        dbClient.rest.headers.delete('Authorization');
-    }
-}
-
-const FORMULAR_TABLE = 'formular_antworten';
-const ENTNAHME_PROTOKOLL_TABLE = 'lager_entnahmen';
-const ENTNAHME_BENUTZER_TABLE = 'lager_entnahme_benutzer_vorlagen';
-const ENTNAHME_SAMMEL_TABLE = 'lager_entnahme_sammelvorlagen';
-// append-only audit table for immutable entnahme records
-const ENTNAHME_AUDIT_TABLE = 'lager_entnahme_audit';
-const FORMULAR_MODUS = new URLSearchParams(window.location.search).get('formular') === '1';
-const QRGEN_MODUS = new URLSearchParams(window.location.search).get('qrgen') === '1';
-const ENTNAHME_MODUS = new URLSearchParams(window.location.search).get('entnahme') === '1';
-const ETIKETTEN_MODUS = new URLSearchParams(window.location.search).get('etiketten') === '1';
-const INITIAL_REGAL_FILTER = new URLSearchParams(window.location.search).get('regal') || '';
-const LOCAL_SESSION_STORAGE_KEY = 'trilager_local_session_v2';
-const LOGIN_ATTEMPTS_STORAGE_KEY = 'trilager_login_attempts_v1';
-const LOGIN_LOCK_STORAGE_KEY = 'trilager_login_lock_until_v1';
+const BESTAND_STRICH_AUSREICHEND = -2;
+const BESTAND_STRICH_NACHKAUF = -3;
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCK_DURATION_MS = 5 * 60 * 1000;
 const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
-let aktuelleDaten = [];
-let packlisten = [];
-let packlistenPositionen = [];
-// --- NFC-fähige Lagerorte ("Kisten"). Es gibt keine eigene Entität mehr -
-// jeder Lagerort kann optional einen nfc_code bekommen (siehe alleLagerorte).
-let kistenCheckAktuelleId = '';  // Lagerort-ID, deren Inhalt-Editor/Check-Modal gerade offen ist
-let kistenScanAktion = 'check';  // 'check' (Inhalt öffnen) | 'zuweisen' (Lagerort einem Event zuordnen)
-let alleArtikelInfos = []; 
-let alleLagerorte = []; 
-let isEditMode = false;
-let isEventEditMode = false;
-let aktuellerModus = 'lager'; 
-let einkaufslisteArray = []; 
+let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+});
 
-let offeneGruppen = new Set();
-let isAllOpen = false;
-let sortAscending = true;
-let autoFehlbestandListe = [];
-let eigeneVorschlaegeListe = [];
-let manuelleEintraegeListe = [];
-let artikelIgnorieren = new Set();
-let zeigeAlleArtikel = false;
+// App-Datenzustände
+let aktuelleDaten = [], packlisten = [], packlistenPositionen = [], alleArtikelInfos = [], alleLagerorte = [];
+let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
+let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
 let aktiverRegalFilter = extrahiereRegalName(INITIAL_REGAL_FILTER);
-let entnahmeBenutzerVorlagen = [];
-let entnahmeSammelvorlagen = [];
-let entnahmeMaterialien = [];
-let entnahmeHistorie = [];
-let entnahmeVorlagenBearbeiten = false;
-let entnahmeHistorieGeoeffnet = new Set();
-let entnahmeAuswahlBenutzerId = '';
-let entnahmeAuswahlSammelId = '';
-let entnahmeBenutzerNeuAktiv = false;
-let entnahmeSammelNeuAktiv = false;
-let entnahmeVerbrauchProArtikel = {};
-const ENTNAHME_DRAFT_STORAGE_KEY = 'inventory-management-tool.entnahmeDraft.v2';
-let entnahmeWizardStep = 1;
-let entnahmeActiveDraftId = '';
-let entnahmeAutoSaveTimer = null;
-let entnahmeAutoSaveInFlight = false;
-let entnahmeAutoSaveQueued = false;
-let entnahmeWizardAutoAdvanceAktiv = true;
-let entnahmeSammelAutoSaveTimer = null;
-let entnahmeSammelVorlageBestaetigtFuerId = '';
-let entnahmeSammelAutoSaveInFlight = false;
-let entnahmeSammelAutoSaveNachholen = false;
+let einkaufslisteArray = [], autoFehlbestandListe = [], eigeneVorschlaegeListe = [], manuelleEintraegeListe = [], artikelIgnorieren = new Set();
 
-// --- Schnell-Rückgabe (Pool-Ausgleich) = EINBUCHEN per Scan ---
-let rueckgabeQrScanner = null;      // aktive html5-qrcode Instanz
-let rueckgabeScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
-let rueckgabeNfcReader = null;      // aktiver NDEFReader
-let rueckgabeNfcAbortController = null; // zum sauberen Stoppen des Web-NFC-Scans
+// Entnahme- & Wizard-Zustände
+let entnahmeBenutzerVorlagen = [], entnahmeSammelvorlagen = [], entnahmeMaterialien = [], entnahmeHistorie = [];
+let entnahmeVorlagenBearbeiten = false, entnahmeHistorieGeoeffnet = new Set();
+let entnahmeAuswahlBenutzerId = '', entnahmeAuswahlSammelId = '', entnahmeBenutzerNeuAktiv = false, entnahmeSammelNeuAktiv = false;
+let entnahmeVerbrauchProArtikel = {}, entnahmeWizardStep = 1, entnahmeActiveDraftId = '', entnahmeWizardAutoAdvanceAktiv = true;
+let entnahmeAutoSaveTimer = null, entnahmeAutoSaveInFlight = false, entnahmeMarkiereTimer = null;
+let entnahmeSammelAutoSaveTimer = null, entnahmeSammelVorlageBestaetigtFuerId = '', entnahmeSammelAutoSaveInFlight = false, entnahmeSammelAutoSaveNachholen = false;
+let entnahmeLogEintraege = [], entnahmeLogGeladen = false;
 
-// --- Schnell-Ausbuchen (Entnahme-Wizard Schritt 3) = AUSBUCHEN per Scan ---
-let ausbuchenQrScanner = null;      // aktive html5-qrcode Instanz
-let ausbuchenScanSperre = false;    // verhindert Mehrfachbuchung direkt nach einem Treffer
-let ausbuchenNfcReader = null;      // aktiver NDEFReader
-let ausbuchenNfcAbortController = null; // zum sauberen Stoppen des Web-NFC-Scans
+// Kisten- & Scan-Zustände
+let kistenCheckAktuelleId = '', kistenScanAktion = 'check';
+let scanSperre = { rueckgabe: false, ausbuchen: false, kisten: false };
+let aktiverQrScanner = null;
+let aktiverNfcModus = null;
+let nfcAbortController = null;
+let etikettenAuswahlIds = new Set();
+let _bestaetigungResolve = null;
 
-// --- NFC-Modus-Switch: es kann immer nur EIN NFC-Modus gleichzeitig aktiv
-// sein (entweder Rückgabe oder Ausbuchen). Aktivieren des einen Modus
-// deaktiviert automatisch den anderen. Der Modus bleibt aktiv (auch über
-// mehrere Scans hinweg) bis er manuell gewechselt oder das Entnahmeprotokoll
-// verlassen wird (Seiten-Reload räumt ohnehin alles auf).
-let aktiverNfcModus = null; // null | 'rueckgabe' | 'ausbuchen' | 'kisten'
+// =========================================================================
+// 2. ALLGEMEINE HILFSFUNKTIONEN (DOM, FORMATIERUNG, MATH, TOAST)
+// =========================================================================
+const $ = (id) => document.getElementById(id);
 
-// --- Kisten-Check per Scan (Prüf-Workflow: Soll/Ist-Checkliste öffnen) ---
-let kistenQrScanner = null;         // aktive html5-qrcode Instanz
-let kistenScanSperre = false;       // verhindert Mehrfach-Öffnen direkt nach einem Treffer
-let kistenNfcReader = null;         // aktiver NDEFReader
-let kistenNfcAbortController = null; // zum sauberen Stoppen des Web-NFC-Scans
+function escapeHtml(str) {
+    return String(str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]);
+}
+
+function showToast(message, type = 'success') {
+    const container = $('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerText = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.classList.add('show'), 10);
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function closeModal(id) { const el = $(id); if (el) el.style.display = 'none'; }
+function openModalById(id) { const el = $(id); if (el) el.style.display = 'block'; }
+
+function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', defaultOption = null, selectedValue = null, formatLabel = null } = {}) {
+    if (!selectEl) return;
+    const current = selectedValue !== null ? selectedValue : selectEl.value;
+    selectEl.innerHTML = defaultOption ? `<option value="">${defaultOption}</option>` : '';
+    items.forEach(item => {
+        const val = typeof item === 'object' ? item[valueKey] : item;
+        const text = formatLabel ? formatLabel(item) : (typeof item === 'object' ? item[labelKey] : item);
+        selectEl.add(new Option(text, val));
+    });
+    if (current && Array.from(selectEl.options).some(o => o.value === String(current))) {
+        selectEl.value = current;
+    }
+}
+
+// Sicherer Mini-Parser für Mengenberechnungen (z.B. "3+2" oder "(4-1)*2")
+function berechneMengenAusdruck(ausdruck) {
+    let pos = 0;
+    const err = () => { throw new Error('Ungültiger Ausdruck'); };
+    const parseZahl = () => {
+        let start = pos;
+        while (pos < ausdruck.length && /[0-9.]/.test(ausdruck[pos])) pos++;
+        if (pos === start) err();
+        const val = parseFloat(ausdruck.slice(start, pos));
+        if (Number.isNaN(val)) err();
+        return val;
+    };
+    const parseFactor = () => {
+        if (ausdruck[pos] === '(') {
+            pos++; const val = parseExpr();
+            if (ausdruck[pos] !== ')') err();
+            pos++; return val;
+        }
+        if (ausdruck[pos] === '-') { pos++; return -parseFactor(); }
+        if (ausdruck[pos] === '+') { pos++; return parseFactor(); }
+        return parseZahl();
+    };
+    const parseTerm = () => {
+        let val = parseFactor();
+        while (ausdruck[pos] === '*' || ausdruck[pos] === '/') {
+            const op = ausdruck[pos++];
+            const rhs = parseFactor();
+            val = op === '*' ? val * rhs : val / rhs;
+        }
+        return val;
+    };
+    const parseExpr = () => {
+        let val = parseTerm();
+        while (ausdruck[pos] === '+' || ausdruck[pos] === '-') {
+            const op = ausdruck[pos++];
+            const rhs = parseTerm();
+            val = op === '+' ? val + rhs : val - rhs;
+        }
+        return val;
+    };
+    const res = parseExpr();
+    if (pos !== ausdruck.length) err();
+    return res;
+}
+
+function werteMengeAus(eingabe) {
+    if (eingabe === undefined || eingabe === null) return 0;
+    const clean = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
+    if (!clean) return 0;
+    try {
+        const res = berechneMengenAusdruck(clean);
+        return Number.isFinite(res) ? Math.round(res) : 0;
+    } catch { return 0; }
+}
+
+function extrahiereRegalName(text) {
+    const raw = String(text || '').trim();
+    const m = raw.match(/\(([^)]+)\)\s*$/);
+    return m ? m[1].trim() : raw;
+}
+
+function normalisiereRegalText(text) {
+    return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function vergleicheRegalNamen(a, b, sortFactor = 1) {
+    const aN = extrahiereRegalName(a), bN = extrahiereRegalName(b);
+    return aN.localeCompare(bN, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
+}
+
+function textEnthaeltRegal(text, regalName) {
+    const nReg = normalisiereRegalText(regalName), nTxt = normalisiereRegalText(text);
+    if (!nReg || !nTxt) return false;
+    if (nTxt.includes(`(${nReg})`)) return true;
+    const match = [...String(text).matchAll(/\(([^)]+)\)/g)].some(m => normalisiereRegalText(m[1]) === nReg);
+    if (match) return true;
+    return new RegExp(`(^|[^a-z0-9])${nReg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(nTxt) || (nReg.length > 3 && nTxt.includes(nReg));
+}
+
+function ermittleRegalSchluessel(bestaende) {
+    const r = (bestaende || []).map(b => extrahiereRegalName(b.lagerorte?.name || '')).filter(Boolean).sort((a, b) => vergleicheRegalNamen(a, b));
+    return r[0] || '';
+}
+
+function formatArtikelId(id) {
+    if (id === null || id === undefined || id === '') return '–';
+    const n = Number(id);
+    return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id);
+}
+
+// Dialog-Promise für modale Bestätigungen
+function zeigeBestaetigungsDialog({ titel = 'Bist du sicher?', text = '', okText = 'OK', okFarbe = '#e74c3c', icon = '⚠️' } = {}) {
+    return new Promise(resolve => {
+        const modal = $('bestaetigungModal');
+        if (!modal) return resolve(window.confirm(text || titel));
+        $('bestaetigung-titel').textContent = titel;
+        $('bestaetigung-text').textContent = text;
+        $('bestaetigung-icon').textContent = icon;
+        const okBtn = $('bestaetigung-ok-btn');
+        okBtn.textContent = okText;
+        okBtn.style.background = okFarbe;
+        _bestaetigungResolve = resolve;
+        modal.style.display = 'block';
+    });
+}
+function bestaetigungBestaetigen() { closeModal('bestaetigungModal'); if (_bestaetigungResolve) { _bestaetigungResolve(true); _bestaetigungResolve = null; } }
+function bestaetigungAbbrechen() { closeModal('bestaetigungModal'); if (_bestaetigungResolve) { _bestaetigungResolve(false); _bestaetigungResolve = null; } }
+
+// =========================================================================
+// 3. AUTH & SESSION VERWALTUNG
+// =========================================================================
+function setzeAuthToken(token) {
+    if (token) dbClient.rest.headers.set('Authorization', `Bearer ${token}`);
+    else dbClient.rest.headers.delete('Authorization');
+}
 
 function holeLokaleSession() {
     try {
-        const raw = window.localStorage.getItem(LOCAL_SESSION_STORAGE_KEY);
+        const raw = window.localStorage.getItem(STORAGE_KEYS.SESSION);
         if (!raw) return null;
-
         const session = JSON.parse(raw);
-        if (!session || typeof session !== 'object') return null;
-
-        const expiresAt = Number(session.expiresAt) || 0;
-        if (!expiresAt || expiresAt <= Date.now()) {
-            window.localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
+        if (!session || (Number(session.expiresAt) || 0) <= Date.now()) {
+            window.localStorage.removeItem(STORAGE_KEYS.SESSION);
             return null;
         }
-
         return session;
-    } catch (e) {
-        return null;
-    }
+    } catch { return null; }
 }
 
 function speichereLokaleSession(user) {
@@ -153,2510 +239,60 @@ function speichereLokaleSession(user) {
         issuedAt: Date.now(),
         expiresAt: Date.now() + LOCAL_SESSION_TTL_MS
     };
-
-    window.localStorage.setItem(LOCAL_SESSION_STORAGE_KEY, JSON.stringify(session));
+    window.localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
     setzeAuthToken(session.token);
 }
 
-function loescheLokaleSession() {
-    window.localStorage.removeItem(LOCAL_SESSION_STORAGE_KEY);
-}
-
-function holeLoginSperreBis() {
-    try {
-        return Number(window.localStorage.getItem(LOGIN_LOCK_STORAGE_KEY) || '0') || 0;
-    } catch (e) {
-        return 0;
-    }
-}
+function loescheLokaleSession() { window.localStorage.removeItem(STORAGE_KEYS.SESSION); }
+function holeLoginSperreBis() { try { return Number(window.localStorage.getItem(STORAGE_KEYS.LOCK) || '0') || 0; } catch { return 0; } }
 
 function fuegeLoginFehlversuchHinzu() {
-    const now = Date.now();
-    const lockUntil = holeLoginSperreBis();
-    if (lockUntil > now) return lockUntil;
-
-    let attempts = 0;
-    try {
-        attempts = Number(window.localStorage.getItem(LOGIN_ATTEMPTS_STORAGE_KEY) || '0') || 0;
-    } catch (e) {
-        attempts = 0;
+    const now = Date.now(), lock = holeLoginSperreBis();
+    if (lock > now) return lock;
+    const att = (Number(window.localStorage.getItem(STORAGE_KEYS.ATTEMPTS) || '0') || 0) + 1;
+    window.localStorage.setItem(STORAGE_KEYS.ATTEMPTS, String(att));
+    if (att >= LOGIN_MAX_ATTEMPTS) {
+        const gesperrt = now + LOGIN_LOCK_DURATION_MS;
+        window.localStorage.setItem(STORAGE_KEYS.LOCK, String(gesperrt));
+        window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
+        return gesperrt;
     }
-
-    attempts += 1;
-    window.localStorage.setItem(LOGIN_ATTEMPTS_STORAGE_KEY, String(attempts));
-
-    if (attempts >= LOGIN_MAX_ATTEMPTS) {
-        const gesperrtBis = now + LOGIN_LOCK_DURATION_MS;
-        window.localStorage.setItem(LOGIN_LOCK_STORAGE_KEY, String(gesperrtBis));
-        window.localStorage.removeItem(LOGIN_ATTEMPTS_STORAGE_KEY);
-        return gesperrtBis;
-    }
-
     return 0;
 }
 
 function setzeLoginFehlversucheZurueck() {
-    window.localStorage.removeItem(LOGIN_ATTEMPTS_STORAGE_KEY);
-    window.localStorage.removeItem(LOGIN_LOCK_STORAGE_KEY);
-}
-
-function entnahmeGetFormState() {
-    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
-    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
-    const nameFeld = document.getElementById('entnahme-name');
-    const kontaktFeld = document.getElementById('entnahme-kontakt');
-
-    return {
-        step: entnahmeWizardStep,
-        activeDraftId: entnahmeActiveDraftId,
-        benutzerVorlageId: entnahmeAuswahlBenutzerId || benutzerSelect?.value || '',
-        sammelVorlageId: entnahmeAuswahlSammelId || sammelSelect?.value || '',
-        benutzerNeuAktiv: entnahmeBenutzerNeuAktiv,
-        sammelNeuAktiv: entnahmeSammelNeuAktiv,
-        name: nameFeld?.value.trim() || '',
-        kontakt: kontaktFeld?.value.trim() || '',
-        materialien: entnahmeMaterialien.map(item => ({ ...item }))
-    };
-}
-
-function entnahmeSetzeFormState(state = {}) {
-    entnahmeWizardStep = Math.min(3, Math.max(1, Number(state.step) || 1));
-    entnahmeActiveDraftId = state.activeDraftId || '';
-    entnahmeAuswahlBenutzerId = state.benutzerVorlageId || '';
-    entnahmeAuswahlSammelId = state.sammelVorlageId || '';
-    entnahmeBenutzerNeuAktiv = Boolean(state.benutzerNeuAktiv);
-    entnahmeSammelNeuAktiv = Boolean(state.sammelNeuAktiv);
-
-    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
-    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
-    const nameFeld = document.getElementById('entnahme-name');
-    const kontaktFeld = document.getElementById('entnahme-kontakt');
-
-    if (benutzerSelect) benutzerSelect.value = entnahmeAuswahlBenutzerId || '';
-    if (sammelSelect) sammelSelect.value = entnahmeAuswahlSammelId || '';
-    if (nameFeld) nameFeld.value = typeof state.name === 'string' ? state.name : '';
-    if (kontaktFeld) kontaktFeld.value = typeof state.kontakt === 'string' ? state.kontakt : '';
-
-    entnahmeMaterialien = Array.isArray(state.materialien)
-        ? state.materialien.map(item => ({
-            artikel_id: item.artikel_id || null,
-            label: item.label || item.name || '',
-            kategorie: item.kategorie || '',
-            einheit: item.einheit || 'Stück',
-            menge: Number(item.menge) || 0
-        }))
-        : [];
-
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-    entnahmeWizardAktualisieren();
-    renderEntnahmeMaterialien();
-}
-
-function entnahmeLadeDraftLokal() {
-    try {
-        const raw = window.localStorage.getItem(ENTNAHME_DRAFT_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (e) {
-        console.warn('Lokaler Entnahme-Entwurf konnte nicht geladen werden.', e);
-        return null;
-    }
-}
-
-function entnahmeSpeichereDraftLokal() {
-    try {
-        const state = entnahmeGetFormState();
-        window.localStorage.setItem(ENTNAHME_DRAFT_STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-        console.warn('Lokaler Entnahme-Entwurf konnte nicht gespeichert werden.', e);
-    }
-}
-
-function entnahmeLoescheDraftLokal() {
-    try {
-        window.localStorage.removeItem(ENTNAHME_DRAFT_STORAGE_KEY);
-    } catch (e) {
-        console.warn('Lokaler Entnahme-Entwurf konnte nicht gelöscht werden.', e);
-    }
-}
-
-function entnahmeHatSpeicherbarenInhalt() {
-    const state = entnahmeGetFormState();
-    return Boolean(state.name) && Array.isArray(state.materialien) && state.materialien.length > 0;
-}
-
-function entnahmeAktualisiereStepIndicators() {
-    const stepButtons = document.querySelectorAll('[data-entnahme-step-indicator]');
-    stepButtons.forEach(button => {
-        const step = Number(button.getAttribute('data-entnahme-step-indicator'));
-        button.classList.toggle('active', step === entnahmeWizardStep);
-        button.classList.toggle('complete', step < entnahmeWizardStep);
-    });
-}
-
-function entnahmeWizardAktualisieren() {
-    const stepPanels = document.querySelectorAll('[data-entnahme-step-panel]');
-    stepPanels.forEach(panel => {
-        const step = Number(panel.getAttribute('data-entnahme-step-panel'));
-        panel.style.display = step === entnahmeWizardStep ? 'block' : 'none';
-    });
-
-    const navPrev = document.getElementById('entnahme-wizard-prev');
-    const navNext = document.getElementById('entnahme-wizard-next');
-    const navStatus = document.getElementById('entnahme-wizard-status');
-
-    if (navPrev) navPrev.disabled = entnahmeWizardStep <= 1;
-    if (navNext) {
-        navNext.style.display = entnahmeWizardStep < 3 ? 'inline-flex' : 'none';
-        navNext.textContent = entnahmeWizardStep === 1 ? 'Weiter zu Vorlage' : 'Weiter zu Materialien';
-    }
-
-    if (navStatus) {
-        navStatus.textContent = entnahmeAutoSaveInFlight
-            ? 'Speichert...'
-            : entnahmeHatSpeicherbarenInhalt()
-                ? 'Automatisch gespeichert'
-                : 'Entwurf wird lokal zwischengespeichert';
-    }
-
-    const currentStepLabel = document.getElementById('entnahme-current-step-label');
-    if (currentStepLabel) {
-        currentStepLabel.textContent = entnahmeWizardStep === 1
-            ? 'Schritt 1 von 3'
-            : entnahmeWizardStep === 2
-                ? 'Schritt 2 von 3'
-                : 'Schritt 3 von 3';
-    }
-
-    entnahmeAktualisiereStepIndicators();
-    entnahmeAktualisiereZusammenfassung();
-}
-
-function entnahmeAktualisiereZusammenfassung() {
-    const benutzerInfo = document.getElementById('entnahme-summary-benutzer');
-    const sammelInfo = document.getElementById('entnahme-summary-sammel');
-    const materialInfo = document.getElementById('entnahme-summary-materialien');
-    const stateInfo = document.getElementById('entnahme-summary-status');
-
-    const benutzer = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(entnahmeAuswahlBenutzerId));
-    const sammel = entnahmeSammelvorlagen.find(item => String(item.id) === String(entnahmeAuswahlSammelId));
-    const materialCount = entnahmeMaterialien.reduce((sum, item) => sum + (Number(item.menge) || 0), 0);
-
-    if (benutzerInfo) benutzerInfo.textContent = benutzer?.name || document.getElementById('entnahme-name')?.value.trim() || 'Noch kein Benutzer';
-    if (sammelInfo) sammelInfo.textContent = sammel?.name || document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || 'Noch keine Sammel-Vorlage';
-    if (materialInfo) materialInfo.textContent = entnahmeMaterialien.length > 0 ? `${entnahmeMaterialien.length} Position${entnahmeMaterialien.length === 1 ? '' : 'en'}, ${materialCount} Gesamtmenge` : 'Noch keine Materialien';
-    if (stateInfo) stateInfo.textContent = entnahmeAutoSaveInFlight ? 'Speichert...' : 'Automatische Sicherung aktiv';
-}
-
-function entnahmeWizardZuSchritt(step) {
-    entnahmeWizardStep = Math.min(3, Math.max(1, Number(step) || 1));
-    entnahmeSpeichereDraftLokal();
-    entnahmeWizardAktualisieren();
-}
-
-function entnahmeWizardZurueck() {
-    entnahmeWizardZuSchritt(entnahmeWizardStep - 1);
-}
-
-function entnahmeWizardWeiter() {
-    if (entnahmeWizardStep === 1) {
-        const hatVorlageOderName = Boolean(
-            document.getElementById('entnahme-benutzer-vorlage')?.value ||
-            document.getElementById('entnahme-name')?.value.trim()
-        );
-
-        if (!hatVorlageOderName) {
-            entnahmeAuswahlBenutzerId = '';
-            entnahmeBenutzerNeuAktiv = true;
-            const nameFeld = document.getElementById('entnahme-name');
-            const kontaktFeld = document.getElementById('entnahme-kontakt');
-            if (nameFeld) nameFeld.placeholder = 'Vor- und Nachname';
-            if (kontaktFeld) kontaktFeld.placeholder = 'Telefon, E-Mail oder Hinweis';
-        }
-    }
-
-    if (entnahmeWizardStep === 2) {
-        const hatVorlageOderName = Boolean(
-            document.getElementById('entnahme-sammelvorlage')?.value ||
-            document.getElementById('entnahme-sammelvorlagenname')?.value.trim() ||
-            entnahmeMaterialien.length > 0
-        );
-
-        if (!hatVorlageOderName) {
-            entnahmeAuswahlSammelId = '';
-            entnahmeSammelNeuAktiv = true;
-        }
-    }
-
-    entnahmeWizardZuSchritt(Math.min(3, entnahmeWizardStep + 1));
-}
-
-function entnahmeWizardAutoAdvanceSetzen(aktiv) {
-    entnahmeWizardAutoAdvanceAktiv = Boolean(aktiv);
-}
-
-function entnahmeWizardAutoAdvanceErlaubt() {
-    return entnahmeWizardAutoAdvanceAktiv && !entnahmeVorlagenBearbeiten;
-}
-
-let entnahmeMarkiereTimer = null;
-
-function entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave = false } = {}) {
-    // entnahmeSpeichereDraftLokal() (localStorage-Schreibvorgang) und
-    // entnahmeWizardAktualisieren() (mehrere DOM-Abfragen/-Updates) sind bei
-    // jedem einzelnen Tastenanschlag spürbar träge. Deshalb werden sie kurz
-    // entprellt, statt bei jeder Eingabe sofort synchron zu laufen.
-    if (entnahmeMarkiereTimer) clearTimeout(entnahmeMarkiereTimer);
-    entnahmeMarkiereTimer = setTimeout(() => {
-        entnahmeMarkiereTimer = null;
-        entnahmeSpeichereDraftLokal();
-        entnahmeWizardAktualisieren();
-    }, 200);
-
-    if (sammelAutoSave) {
-        entnahmeSammelvorlageAutoSpeichernAnstossen();
-    }
-}
-
-// Zeigt einen im Website-Stil gestalteten Bestätigungsdialog (ersetzt das
-// native, browserabhängige confirm()) und gibt ein Promise<boolean> zurück.
-let _bestaetigungResolve = null;
-
-function zeigeBestaetigungsDialog({ titel = 'Bist du sicher?', text = '', okText = 'OK', okFarbe = '#e74c3c', icon = '⚠️' } = {}) {
-    return new Promise(resolve => {
-        const modal = document.getElementById('bestaetigungModal');
-        if (!modal) {
-            // Fallback, falls das Modal aus irgendeinem Grund fehlt.
-            resolve(window.confirm(text || titel));
-            return;
-        }
-
-        document.getElementById('bestaetigung-titel').textContent = titel;
-        document.getElementById('bestaetigung-text').textContent = text;
-        document.getElementById('bestaetigung-icon').textContent = icon;
-        const okBtn = document.getElementById('bestaetigung-ok-btn');
-        okBtn.textContent = okText;
-        okBtn.style.background = okFarbe;
-
-        _bestaetigungResolve = resolve;
-        modal.style.display = 'block';
-    });
-}
-
-function bestaetigungBestaetigen() {
-    const modal = document.getElementById('bestaetigungModal');
-    if (modal) modal.style.display = 'none';
-    if (_bestaetigungResolve) {
-        _bestaetigungResolve(true);
-        _bestaetigungResolve = null;
-    }
-}
-
-function bestaetigungAbbrechen() {
-    const modal = document.getElementById('bestaetigungModal');
-    if (modal) modal.style.display = 'none';
-    if (_bestaetigungResolve) {
-        _bestaetigungResolve(false);
-        _bestaetigungResolve = null;
-    }
-}
-
-function entnahmeSammelvorlageAutoSpeichernAnstossen() {
-    if (!entnahmeVorlagenBearbeiten) {
-        return;
-    }
-
-    if (entnahmeSammelAutoSaveTimer) clearTimeout(entnahmeSammelAutoSaveTimer);
-    entnahmeSammelAutoSaveTimer = setTimeout(() => {
-        entnahmeSammelAutoSaveTimer = null;
-        entnahmeSammelvorlageAutoSpeichern();
-    }, 550);
-}
-
-// manuell=true: wird über den "Speichern"-Button ausgelöst. Dann werden auch
-// Warnungen/Bestätigungs-Toasts angezeigt, auch wenn sich nichts geändert hat.
-// manuell=false: stiller Hintergrund-Autospeicher, der beim Bearbeiten von
-// Name/Materialien ausgelöst wird (kein Toast bei jedem Tastendruck).
-async function entnahmeSammelvorlageAutoSpeichern({ manuell = false } = {}) {
-    if (entnahmeSammelAutoSaveInFlight && !manuell) {
-        entnahmeSammelAutoSaveNachholen = true;
-        return null;
-    }
-
-    entnahmeSammelAutoSaveInFlight = true;
-
-    try {
-    const name = document.getElementById('entnahme-sammelvorlagenname')?.value.trim() || '';
-    const selectValue = document.getElementById('entnahme-sammelvorlage')?.value || document.getElementById('entnahme-sammelvorlage-bearbeiten')?.value || '';
-    const bestehendeId = entnahmeAuswahlSammelId || (selectValue && selectValue !== '__new__' ? selectValue : '');
-
-    if (!name) {
-        if (manuell) showToast('Bitte zuerst einen Namen für die Sammel-Vorlage eingeben.', 'warning');
-        return null;
-    }
-
-    if (entnahmeMaterialien.length === 0) {
-        if (manuell) showToast('Bitte mindestens ein Material hinzufügen.', 'warning');
-        return null;
-    }
-
-    if (String(bestehendeId).startsWith('pack:')) {
-        return null;
-    }
-
-    if (bestehendeId && entnahmeVorlagenBearbeiten && entnahmeSammelVorlageBestaetigtFuerId !== String(bestehendeId)) {
-        // Stilles Autosave darf ohne explizite Bestätigung keine bestehende
-        // Vorlage überschreiben. Die Rückfrage kommt nur bei manuellem Speichern.
-        if (!manuell) {
-            return null;
-        }
-
-        const ok = await zeigeBestaetigungsDialog({
-            titel: 'Sammel-Vorlage überschreiben?',
-            text: `Soll die ausgewählte Sammel-Vorlage "${name}" mit den aktuellen Materialien überschrieben werden?`,
-            okText: 'Überschreiben',
-            okFarbe: '#e3000f',
-            icon: '✏️'
-        });
-        if (!ok) return null;
-        entnahmeSammelVorlageBestaetigtFuerId = String(bestehendeId);
-    }
-
-    const payload = { name, materialien: entnahmeMaterialien.map(item => ({ ...item })) };
-    const result = bestehendeId
-        ? await dbClient.from(ENTNAHME_SAMMEL_TABLE).update(payload).eq('id', bestehendeId).select()
-        : await dbClient.from(ENTNAHME_SAMMEL_TABLE).insert([payload]).select();
-
-    if (result.error) {
-        console.error('Sammelforlage konnte nicht automatisch gespeichert werden.', result.error);
-        if (manuell) showToast('Sammel-Vorlage konnte nicht gespeichert werden.', 'error');
-        return null;
-    }
-
-    if (result.data && result.data[0]?.id) {
-        entnahmeAuswahlSammelId = String(result.data[0].id);
-        const selectElement = document.getElementById('entnahme-sammelvorlage');
-        if (selectElement) selectElement.value = entnahmeAuswahlSammelId;
-        entnahmeSammelVorlageBestaetigtFuerId = entnahmeAuswahlSammelId;
-    }
-
-    if (manuell) showToast('Sammel-Vorlage gespeichert.');
-
-    await ladeEntnahmeVorlagen();
-    return entnahmeAuswahlSammelId || bestehendeId || null;
-    } finally {
-        entnahmeSammelAutoSaveInFlight = false;
-        if (entnahmeSammelAutoSaveNachholen) {
-            entnahmeSammelAutoSaveNachholen = false;
-            entnahmeSammelvorlageAutoSpeichernAnstossen();
-        }
-    }
-}
-
-
-function showToast(message, type = 'success') {
-    const container = document.getElementById('toast-container');
-    if(!container) return;
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.innerText = message;
-    container.appendChild(toast);
-    
-    setTimeout(() => toast.classList.add('show'), 10);
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
-let hoverPressTimer = null;
-let hoverWasLongPress = false;
-let hoverHideTimer = null;
-
-window.handleMouseEnter = function(e) {
-    if (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return; 
-    clearTimeout(hoverHideTimer);
-    let el = e.currentTarget;
-    let type = el.getAttribute('data-hover-type');
-    let content = el.getAttribute('data-hover-content');
-    if (type === 'date') showDateHover(content);
-    if (type === 'res') showResHover(content);
-};
-
-window.handleMouseLeave = function(e) {
-    hideDateHover();
-    hideResHover();
-};
-
-window.handleTouchStart = function(e) {
-    let el = e.currentTarget;
-    let type = el.getAttribute('data-hover-type');
-    let content = el.getAttribute('data-hover-content');
-    
-    clearTimeout(hoverHideTimer);
-    hoverWasLongPress = false;
-    
-    hoverPressTimer = setTimeout(() => {
-        hoverWasLongPress = true;
-        if (type === 'date') showDateHover(content);
-        if (type === 'res') showResHover(content);
-        if (navigator.vibrate) navigator.vibrate(50);
-    }, 400);
-};
-
-window.handleTouchMove = function(e) {
-    clearTimeout(hoverPressTimer);
-};
-
-window.handleTouchEnd = function(e) {
-    clearTimeout(hoverPressTimer);
-    if (hoverWasLongPress) {
-        hoverHideTimer = setTimeout(() => {
-            hideDateHover();
-            hideResHover();
-        }, 3000);
-    } else {
-        hideDateHover();
-        hideResHover();
-    }
-    setTimeout(() => { hoverWasLongPress = false; }, 50);
-};
-
-function showDateHover(dateString) {
-    const box = document.getElementById('hover-date-info');
-    const text = document.getElementById('hover-date-text');
-    if (box && text) {
-        text.innerHTML = dateString;
-        box.style.display = 'block';
-    }
-}
-function hideDateHover() {
-    const box = document.getElementById('hover-date-info');
-    if (box) box.style.display = 'none';
-}
-function showResHover(content) {
-    const box = document.getElementById('hover-res-info');
-    const text = document.getElementById('hover-res-text');
-    if (box && text) { 
-        text.innerHTML = content; 
-        box.style.display = 'block'; 
-    }
-}
-function hideResHover() {
-    const box = document.getElementById('hover-res-info');
-    if (box) box.style.display = 'none';
-}
-
-// Sicherer Mini-Parser für einfache Mengen-Rechnungen wie "3+2" oder "(4-1)*2".
-// Bewertet NUR Zahlen und + - * / ( ), ohne new Function()/eval() – es kann also
-// niemals beliebiger JavaScript-Code ausgeführt werden, egal was eingegeben wird.
-function berechneMengenAusdruck(ausdruck) {
-    let pos = 0;
-
-    function fehler() { throw new Error('Ungültiger Ausdruck'); }
-
-    function parseZahl() {
-        let start = pos;
-        while (pos < ausdruck.length && /[0-9.]/.test(ausdruck[pos])) pos++;
-        if (pos === start) fehler();
-        const wert = parseFloat(ausdruck.slice(start, pos));
-        if (Number.isNaN(wert)) fehler();
-        return wert;
-    }
-
-    function parseKlammerOderZahl() {
-        if (ausdruck[pos] === '(') {
-            pos++;
-            const wert = parseAusdruck();
-            if (ausdruck[pos] !== ')') fehler();
-            pos++;
-            return wert;
-        }
-        if (ausdruck[pos] === '-') {
-            pos++;
-            return -parseKlammerOderZahl();
-        }
-        if (ausdruck[pos] === '+') {
-            pos++;
-            return parseKlammerOderZahl();
-        }
-        return parseZahl();
-    }
-
-    function parseTerm() {
-        let wert = parseKlammerOderZahl();
-        while (ausdruck[pos] === '*' || ausdruck[pos] === '/') {
-            const op = ausdruck[pos];
-            pos++;
-            const rechts = parseKlammerOderZahl();
-            wert = op === '*' ? wert * rechts : wert / rechts;
-        }
-        return wert;
-    }
-
-    function parseAusdruck() {
-        let wert = parseTerm();
-        while (ausdruck[pos] === '+' || ausdruck[pos] === '-') {
-            const op = ausdruck[pos];
-            pos++;
-            const rechts = parseTerm();
-            wert = op === '+' ? wert + rechts : wert - rechts;
-        }
-        return wert;
-    }
-
-    const ergebnis = parseAusdruck();
-    if (pos !== ausdruck.length) fehler();
-    return ergebnis;
-}
-
-function werteMengeAus(eingabe) {
-    if (eingabe === undefined || eingabe === null) return 0;
-    const saubererString = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
-    if (saubererString === '') return 0;
-    try {
-        const ergebnis = berechneMengenAusdruck(saubererString);
-        if (!Number.isFinite(ergebnis)) return 0;
-        return Math.round(ergebnis);
-    } catch (e) { return 0; }
-}
-
-const BESTAND_STRICH_AUSREICHEND = -2;
-const BESTAND_STRICH_NACHKAUF = -3;
-
-function aktualisiereMengeEingabeFarbe(feld) {
-    if (!feld) return;
-
-    const wert = String(feld.value ?? '').trim();
-    feld.classList.remove('bestand-menge-ok', 'bestand-menge-low');
-
-    if (!wert || wert === '-' || wert === '∞') {
-        return;
-    }
-
-    const menge = werteMengeAus(wert);
-    if (!Number.isFinite(menge)) return;
-
-    feld.classList.add(menge > 0 ? 'bestand-menge-ok' : 'bestand-menge-low');
-}
-
-function bestandEingabeGeaendert(feld) {
-    const row = feld?.closest('.lagerort-row, .edit-ort-row');
-    if (!row || !feld) return;
-
-    const wert = String(feld.value ?? '').trim();
-    const infBtn = row.querySelector('.bestand-btn-inf');
-    const minusBtn = row.querySelector('.bestand-btn-minus');
-    const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
-    const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
-
-    if (wert === '∞') {
-        row.dataset.stockMode = 'inf';
-        row.dataset.nachkauf = 'false';
-        if (nachkaufCheckbox) nachkaufCheckbox.checked = false;
-        if (nachkaufWrap) nachkaufWrap.style.display = 'none';
-    } else if (wert === '-') {
-        row.dataset.stockMode = nachkaufCheckbox?.checked ? 'strich-warn' : 'strich-ok';
-        if (nachkaufWrap) nachkaufWrap.style.display = 'flex';
-    } else {
-        row.dataset.stockMode = 'zahl';
-        row.dataset.nachkauf = 'false';
-        if (nachkaufCheckbox) nachkaufCheckbox.checked = false;
-        if (nachkaufWrap) nachkaufWrap.style.display = 'none';
-    }
-
-    if (infBtn) {
-        infBtn.classList.toggle('active-inf', row.dataset.stockMode === 'inf');
-        infBtn.style.background = row.dataset.stockMode === 'inf' ? '#27ae60' : '#95a5a6';
-    }
-
-    if (minusBtn) {
-        const minusAktiv = row.dataset.stockMode === 'strich-ok';
-        const minusWarn = row.dataset.stockMode === 'strich-warn';
-        minusBtn.classList.toggle('active-minus-ok', minusAktiv);
-        minusBtn.classList.toggle('active-minus-warn', minusWarn);
-        minusBtn.style.background = minusWarn ? '#c0392b' : (minusAktiv ? '#27ae60' : '#95a5a6');
-    }
-
-    aktualisiereMengeEingabeFarbe(feld);
-}
-
-function leseBestandswertAusZeile(row) {
-    const input = row?.querySelector('input');
-    const status = row?.dataset?.stockMode || 'zahl';
-    const rawValue = String(input?.value ?? '').trim();
-
-    if (status === 'inf' || rawValue === '∞') return -1;
-    if (status === 'strich-warn') return BESTAND_STRICH_NACHKAUF;
-    if (status === 'strich-ok' || rawValue === '-') {
-        return BESTAND_STRICH_AUSREICHEND;
-    }
-
-    return werteMengeAus(rawValue);
-}
-
-function setzeBestandStatus(row, status = 'zahl', nachkauf = false) {
-    if (!row) return;
-
-    const input = row.querySelector('.new-menge, .edit-menge-input');
-    const infBtn = row.querySelector('.bestand-btn-inf');
-    const minusBtn = row.querySelector('.bestand-btn-minus');
-    const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
-    const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
-    const normStatus = ['zahl', 'inf', 'strich-ok', 'strich-warn'].includes(status) ? status : 'zahl';
-    const isStrich = normStatus === 'strich-ok' || normStatus === 'strich-warn';
-
-    row.dataset.stockMode = isStrich ? (normStatus === 'strich-warn' ? 'strich-warn' : 'strich-ok') : normStatus;
-    row.dataset.nachkauf = isStrich && nachkauf ? 'true' : 'false';
-
-    if (nachkaufCheckbox) nachkaufCheckbox.checked = Boolean(isStrich && nachkauf);
-    if (nachkaufWrap) nachkaufWrap.style.display = isStrich ? 'flex' : 'none';
-
-    if (input) {
-        if (normStatus === 'zahl') {
-            input.value = input.getAttribute('data-old-value') || (input.value === '∞' || input.value === '-' ? '0' : input.value || '0');
-        } else if (normStatus === 'inf') {
-            if (input.value !== '∞') input.setAttribute('data-old-value', input.value || '0');
-            input.value = '∞';
-        } else {
-            if (input.value !== '-') input.setAttribute('data-old-value', input.value || '0');
-            input.value = '-';
-        }
-        input.disabled = false;
-        aktualisiereMengeEingabeFarbe(input);
-    }
-
-    if (infBtn) {
-        infBtn.classList.toggle('active-inf', normStatus === 'inf');
-        infBtn.style.background = normStatus === 'inf' ? '#27ae60' : '#95a5a6';
-    }
-
-    if (minusBtn) {
-        minusBtn.classList.toggle('active-minus-ok', normStatus === 'strich-ok' && !nachkauf);
-        minusBtn.classList.toggle('active-minus-warn', normStatus === 'strich-warn' || (normStatus === 'strich-ok' && nachkauf));
-        minusBtn.style.background = (normStatus === 'strich-warn' || (normStatus === 'strich-ok' && nachkauf)) ? '#c0392b' : (normStatus === 'strich-ok' ? '#27ae60' : '#95a5a6');
-    }
-}
-
-function toggleBestandInf(btn) {
-    const row = btn?.closest('.lagerort-row, .edit-ort-row');
-    if (!row) return;
-
-    const current = row.dataset.stockMode || 'zahl';
-    setzeBestandStatus(row, current === 'inf' ? 'zahl' : 'inf', false);
-}
-
-function toggleBestandMinus(btn) {
-    const row = btn?.closest('.lagerort-row, .edit-ort-row');
-    if (!row) return;
-
-    const current = row.dataset.stockMode || 'zahl';
-    const nextStatus = current.startsWith('strich') ? 'zahl' : 'strich-ok';
-    setzeBestandStatus(row, nextStatus, row.dataset.nachkauf === 'true');
-}
-
-function toggleNachkaufCheckbox(checkbox) {
-    const row = checkbox?.closest('.lagerort-row, .edit-ort-row');
-    if (!row) return;
-
-    const current = row.dataset.stockMode || 'zahl';
-    if (!current.startsWith('strich')) {
-        checkbox.checked = false;
-        return;
-    }
-
-    setzeBestandStatus(row, checkbox.checked ? 'strich-warn' : 'strich-ok', checkbox.checked);
-}
-
-function gibFormularLink() {
-    const url = new URL('https://trilager.pius-s.de');
-    url.searchParams.set('formular', '1');
-    return url.toString();
-}
-
-function gibEntnahmeLink() {
-    const url = new URL('https://trilager.pius-s.de');
-    url.searchParams.set('entnahme', '1');
-    return url.toString();
-}
-
-function gibEntnahmeArtikelLabel(artikel) {
-    if (!artikel) return '';
-    return (artikel.kategorie ? artikel.kategorie + ' > ' : '') + artikel.name;
-}
-
-function normalisiereRegalText(text) {
-    return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-function extrahiereRegalName(text) {
-    const roherText = String(text || '').trim();
-    if (!roherText) return '';
-
-    const match = roherText.match(/\(([^)]+)\)\s*$/);
-    if (match && match[1]) {
-        return match[1].trim();
-    }
-
-    return roherText;
-}
-
-function vergleicheRegalNamen(a, b, sortFactor = 1) {
-    const aName = extrahiereRegalName(a) || String(a || '').trim();
-    const bName = extrahiereRegalName(b) || String(b || '').trim();
-    return aName.localeCompare(bName, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
-}
-
-function ermittleRegalSchluessel(bestaende) {
-    const regale = (bestaende || [])
-        .map(b => extrahiereRegalName(b.lagerorte?.name || ''))
-        .filter(Boolean)
-        .sort((a, b) => vergleicheRegalNamen(a, b));
-
-    return regale[0] || '';
-}
-
-function textEnthaeltRegal(text, regalName) {
-    const normRegal = normalisiereRegalText(regalName);
-    const roherText = String(text || '');
-    const normText = normalisiereRegalText(roherText);
-
-    if (!normRegal || !normText) return false;
-    if (normText.includes(`(${normRegal})`)) return true;
-
-    const parenTreffer = [...roherText.matchAll(/\(([^)]+)\)/g)].some(match => normalisiereRegalText(match[1]) === normRegal);
-    if (parenTreffer) return true;
-
-    const wortTreffer = new RegExp(`(^|[^a-z0-9])${normRegal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(normText);
-    if (wortTreffer) return true;
-
-    return normRegal.length > 3 && normText.includes(normRegal);
-}
-
-function gibRegalLink(regalText) {
-    const regalName = extrahiereRegalName(regalText);
-    const url = new URL('https://trilager.pius-s.de');
-    if (regalName) {
-        url.searchParams.set('regal', regalName);
-    }
-    return url.toString();
-}
-
-function setzeRegalFilter(regalText, syncUrl = true) {
-    aktiverRegalFilter = extrahiereRegalName(regalText);
-
-    if (syncUrl) {
-        const url = new URL(window.location.href);
-        if (aktiverRegalFilter) {
-            url.searchParams.set('regal', aktiverRegalFilter);
-        } else {
-            url.searchParams.delete('regal');
-        }
-        window.history.replaceState({}, '', url.toString());
-    }
-
-    const comboDropdown = document.getElementById('ort-filter-combo');
-    if (comboDropdown) {
-        comboDropdown.value = aktiverRegalFilter ? 'regal:' + aktiverRegalFilter : '';
-    }
-
-    const input = document.getElementById('regal-qr-input');
-    if (input && input.value !== regalText) {
-        input.value = regalText || '';
-    }
-
-    aktualisiereRegalQrVorschau();
-    wendeFilterAn();
-}
-
-function ortComboChanged() {
-    const val = document.getElementById('ort-filter-combo')?.value || '';
-    if (val.startsWith('regal:')) {
-        setzeRegalFilter(val.substring(6), true);
-    } else if (val.startsWith('ort:')) {
-        aktiverRegalFilter = '';
-        const url = new URL(window.location.href);
-        url.searchParams.delete('regal');
-        window.history.replaceState({}, '', url.toString());
-        wendeFilterAn();
-    } else {
-        aktiverRegalFilter = '';
-        const url = new URL(window.location.href);
-        url.searchParams.delete('regal');
-        window.history.replaceState({}, '', url.toString());
-        wendeFilterAn();
-    }
-}
-
-function aktualisiereRegalQrVorschau() {
-    const input = document.getElementById('regal-qr-input');
-    const preview = document.getElementById('regal-qr-preview');
-    const linkEl = document.getElementById('regal-qr-link');
-    const hinweis = document.getElementById('regal-qr-hinweis');
-
-    if (!input || !preview || !linkEl) return;
-
-    const eingabe = input.value.trim();
-    if (!eingabe) {
-        preview.innerHTML = '';
-        preview.style.display = 'none';
-        linkEl.innerText = '';
-        linkEl.href = '#';
-        if (hinweis) hinweis.innerText = 'QR-Text eingeben, zum Beispiel: Fach Briefumschläge (Regal A)';
-        return;
-    }
-
-    const regalName = extrahiereRegalName(eingabe);
-    const qrLink = gibRegalLink(regalName);
-
-    preview.innerHTML = '';
-    new QRCode(preview, {
-        text: qrLink,
-        width: 220,
-        height: 220,
-        colorDark: '#000000',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-    });
-    preview.dataset.qrLink = qrLink;
-    preview.style.display = 'flex';
-    linkEl.href = qrLink;
-    linkEl.innerText = qrLink;
-
-    if (hinweis) {
-        hinweis.innerText = `QR-Ziel: ${regalName}`;
-    }
-}
-
-function initRegalQrTool() {
-    const input = document.getElementById('regal-qr-input');
-    if (!input) return;
-
-    if (aktiverRegalFilter) {
-        input.value = aktiverRegalFilter;
-    }
-
-    aktualisiereRegalQrVorschau();
-}
-
-function downloadRegalQrDatei(format = 'png') {
-    const input = document.getElementById('regal-qr-input');
-    const preview = document.getElementById('regal-qr-preview');
-    if (!input || !preview) return;
-
-    const eingabe = input.value.trim();
-    if (!eingabe) {
-        showToast('Bitte zuerst einen Regalnamen eingeben.', 'warning');
-        return;
-    }
-
-    const canvas = preview.querySelector('canvas');
-    if (!canvas) {
-        showToast('QR-Code konnte nicht erzeugt werden.', 'error');
-        return;
-    }
-
-    const safeName = extrahiereRegalName(eingabe).replace(/[^a-z0-9-_]+/gi, '_') || 'qr-code';
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(canvas, 0, 0);
-
-    const mimeType = format === 'jpg' ? 'image/jpeg' : 'image/png';
-    const dataUrl = format === 'jpg'
-        ? exportCanvas.toDataURL(mimeType, 0.95)
-        : exportCanvas.toDataURL(mimeType);
-
-    const anchor = document.createElement('a');
-    anchor.href = dataUrl;
-    anchor.download = `${safeName}.${format === 'jpg' ? 'jpg' : 'png'}`;
-    anchor.click();
-}
-
-function initQrGenModus() {
-    const qrView = document.getElementById('qrgen-ansicht');
-    if (qrView) qrView.style.display = 'block';
-
-    const loginOverlay = document.getElementById('login-overlay');
-    if (loginOverlay) loginOverlay.style.display = 'none';
-
-    const appContainer = document.querySelector('.container');
-    if (appContainer) {
-        appContainer.style.background = 'transparent';
-        appContainer.style.boxShadow = 'none';
-        appContainer.style.maxWidth = '1000px';
-        appContainer.style.padding = '0';
-        Array.from(appContainer.children).forEach(child => {
-            if (child.id !== 'qrgen-ansicht') child.style.display = 'none';
-        });
-    }
-
-    const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = '';
-
-    const hoverDate = document.getElementById('hover-date-info');
-    const hoverRes = document.getElementById('hover-res-info');
-    if (hoverDate) hoverDate.style.display = 'none';
-    if (hoverRes) hoverRes.style.display = 'none';
-
-    document.title = 'QR-Code Generator';
-    initRegalQrTool();
-}
-
-function oeffneQrGeneratorFenster() {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set('qrgen', '1');
-    window.open(url.toString(), '_blank', 'noopener');
-}
-
-function initFormularLink() {
-    const linkEl = document.getElementById('formular-share-link');
-    if (!linkEl) return;
-    const formularLink = gibFormularLink();
-    linkEl.href = formularLink;
-    linkEl.innerText = formularLink;
-}
-
-function initEntnahmeLink() {
-    const linkEl = document.getElementById('entnahme-share-link');
-    if (!linkEl) return;
-    const entnahmeLink = gibEntnahmeLink();
-    linkEl.href = entnahmeLink;
-    linkEl.innerText = entnahmeLink;
-}
-
-/**
- * Bringt den Nutzer aus einer Unteransicht (Entnahme-Protokoll, QR-Generator,
- * Etiketten-Tool, Anforderungs-Formular) zurück zur Hauptseite.
- *
- * Diese Unteransichten werden über eigene URLs geöffnet (?entnahme=1,
- * ?qrgen=1, ?etiketten=1, ?formular=1) - entweder per window.location.href
- * (gleicher Tab) oder per window.open(..., '_blank') (neuer Tab/Fenster).
- * In der Android-App (WebView) gibt es dabei keine Browser-Zurück-Funktion,
- * daher navigieren wir hier aktiv zur Basis-URL ohne Query-Parameter zurück.
- */
-function zurueckZurHauptseite() {
-    deaktiviereAlleNfcModi();
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
-    window.location.href = url.toString();
-}
-
-function initFormularModus() {
-    const formularView = document.getElementById('formular-ansicht');
-    if (formularView) formularView.style.display = 'block';
-
-    const loginOverlay = document.getElementById('login-overlay');
-    if (loginOverlay) loginOverlay.style.display = 'none';
-
-    const appContainer = document.querySelector('.container');
-    if (appContainer) appContainer.style.display = 'none';
-
-    const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = '';
-
-    const hoverDate = document.getElementById('hover-date-info');
-    const hoverRes = document.getElementById('hover-res-info');
-    if (hoverDate) hoverDate.style.display = 'none';
-    if (hoverRes) hoverRes.style.display = 'none';
-}
-
-function setzeEntnahmeSicht(istGesperrt) {
-    const lock = document.getElementById('entnahme-lock');
-    const content = document.getElementById('entnahme-content');
-
-    if (lock) lock.style.display = istGesperrt ? 'block' : 'none';
-    if (content) content.style.display = istGesperrt ? 'none' : 'block';
-}
-
-function setzeHauptansichtZurueck() {
-    const appContainer = document.querySelector('.container');
-    if (appContainer) {
-        appContainer.style.background = '';
-        appContainer.style.boxShadow = '';
-        appContainer.style.maxWidth = '';
-        appContainer.style.padding = '';
-        Array.from(appContainer.children).forEach(child => {
-            child.style.display = '';
-        });
-    }
-
-    const specialViews = [
-        'entnahme-ansicht',
-        'qrgen-ansicht',
-        'formular-ansicht'
-    ];
-
-    specialViews.forEach(viewId => {
-        const view = document.getElementById(viewId);
-        if (view) view.style.display = 'none';
-    });
-
-    const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = '';
-
-    const hoverDate = document.getElementById('hover-date-info');
-    const hoverRes = document.getElementById('hover-res-info');
-    if (hoverDate) hoverDate.style.display = '';
-    if (hoverRes) hoverRes.style.display = '';
-}
-
-function aktualisiereEntnahmeMaterialDatalist() {
-    const datalist = document.getElementById('entnahme-artikel-datalist');
-    if (!datalist) return;
-
-    datalist.innerHTML = '';
-    [...alleArtikelInfos]
-        .sort((a, b) => {
-            const aLabel = gibEntnahmeArtikelLabel(a);
-            const bLabel = gibEntnahmeArtikelLabel(b);
-            return aLabel.localeCompare(bLabel, 'de', { numeric: true, sensitivity: 'base' });
-        })
-        .forEach(art => {
-            const option = document.createElement('option');
-            option.value = gibEntnahmeArtikelLabel(art);
-            datalist.appendChild(option);
-        });
-}
-
-function renderEntnahmeMaterialien() {
-    // Es gibt mehrere Materiallisten in der UI (Entnahme-Wizard Schritt 3 und
-    // das "Vorlagen verwalten"-Overlay für Sammel-Vorlagen). Beide zeigen
-    // denselben globalen Zustand (entnahmeMaterialien) und müssen daher
-    // synchron aktualisiert werden.
-    const tbodies = document.querySelectorAll('.entnahme-material-liste-target');
-    if (!tbodies.length) return;
-
-    if (entnahmeMaterialien.length === 0) {
-        const leerHtml = '<tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>';
-        tbodies.forEach(tbody => { tbody.innerHTML = leerHtml; });
-        return;
-    }
-
-    const rowsHtml = entnahmeMaterialien.map((item, index) => `
-        <tr>
-            <td><strong>${escapeHtml(item.label)}</strong><br><small style="color:#666;">${escapeHtml(item.einheit || 'Stück')}</small></td>
-            <td style="width:120px;"><input type="text" value="${escapeHtml(item.menge)}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; text-align:center;" onchange="entnahmeMaterialMengeAendern(${index}, this.value)"></td>
-            <td style="width:70px; text-align:right;"><button class="btn" style="background:#e74c3c; width:auto; padding:8px 10px;" onclick="entnahmeMaterialLoeschen(${index})">🗑️</button></td>
-        </tr>
-    `).join('');
-
-    tbodies.forEach(tbody => { tbody.innerHTML = rowsHtml; });
-}
-
-async function ladeAktuelleEntnahmeVerbraeuche() {
-    const result = await dbClient
-        .from(ENTNAHME_PROTOKOLL_TABLE)
-        .select('materialien');
-
-    if (result.error) {
-        console.warn('Aktuelle Entnahme-Verbräuche konnten nicht geladen werden.', result.error);
-        entnahmeVerbrauchProArtikel = {};
-        return;
-    }
-
-    const verbrauchMap = {};
-    (result.data || []).forEach(entnahme => {
-        const materialien = Array.isArray(entnahme.materialien) ? entnahme.materialien : [];
-        materialien.forEach(material => {
-            const artikelId = material?.artikel_id;
-            const menge = Number(material?.menge) || 0;
-            if (!artikelId || menge <= 0) return;
-            verbrauchMap[String(artikelId)] = (verbrauchMap[String(artikelId)] || 0) + menge;
-        });
-    });
-
-    entnahmeVerbrauchProArtikel = verbrauchMap;
-}
-
-function berechneArtikelVerfuegbarkeit(artId, bestaende = []) {
-    let gesamtBestand = 0;
-    let hatUnendlich = false;
-    let hatStrich = false;
-
-    bestaende.forEach(b => {
-        const menge = Number(b.menge);
-        if (menge === -1) hatUnendlich = true;
-        else if (menge === -2) hatStrich = true;
-        else if (menge >= 0) gesamtBestand += menge;
-    });
-
-    if (hatUnendlich) return '∞';
-    if (hatStrich && gesamtBestand === 0) return '-';
-
-    const entnommen = Number(entnahmeVerbrauchProArtikel[String(artId)] || 0);
-    return Math.max(0, gesamtBestand - entnommen);
-}
-
-function setzeEntnahmeVorlagenFormSichtbarkeit() {
-    const bodies = document.querySelectorAll('.entnahme-vorlagen-form');
-    const sammelAuswahl = document.getElementById('entnahme-sammelvorlage')?.value || '';
-    // Packlisten werden ausschließlich im Event-Modus verwaltet (angelegt,
-    // umbenannt, gelöscht, mit Positionen befüllt). Im Entnahme-Protokoll
-    // dürfen sie nur als Grundlage für eine Entnahme ausgewählt werden,
-    // nicht wie eine normale Sammel-Vorlage bearbeitet werden.
-    const istPacklisteAktiv = String(sammelAuswahl).startsWith('pack:');
-
-    bodies.forEach(body => {
-        const istBenutzerForm = Boolean(body.querySelector('#entnahme-name'));
-        const istSammelForm = Boolean(body.querySelector('#entnahme-sammelvorlagenname'));
-        const show = istBenutzerForm
-            ? (entnahmeVorlagenBearbeiten || entnahmeBenutzerNeuAktiv || !entnahmeAuswahlBenutzerId)
-            : istSammelForm
-                ? (!istPacklisteAktiv && (entnahmeVorlagenBearbeiten || entnahmeSammelNeuAktiv))
-                : Boolean(entnahmeVorlagenBearbeiten);
-
-        body.style.display = show ? 'block' : 'none';
-
-        const panel = body.closest('details.entnahme-accordion');
-        if (panel) panel.open = show;
-    });
-
-    // Hinweis-Kachel anzeigen, solange eine Packliste als Entnahme aktiv ist
-    // und das "Vorlagen verwalten"-Overlay geöffnet ist.
-    const packlisteHinweis = document.getElementById('entnahme-sammel-packliste-hinweis');
-    if (packlisteHinweis) {
-        packlisteHinweis.style.display = (istPacklisteAktiv && entnahmeVorlagenBearbeiten) ? 'block' : 'none';
-    }
-}
-
-function entnahmeBenutzerVorlageInFormenLaden(vorlagenId = '') {
-    const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(vorlagenId));
-    const mainSelect = document.getElementById('entnahme-benutzer-vorlage');
-    const editSelect = document.getElementById('entnahme-benutzer-vorlage-bearbeiten');
-    const nameFeld = document.getElementById('entnahme-name');
-    const kontaktFeld = document.getElementById('entnahme-kontakt');
-
-    entnahmeAuswahlBenutzerId = vorlage ? String(vorlage.id) : '';
-    entnahmeBenutzerNeuAktiv = !vorlage;
-
-    if (mainSelect && mainSelect.value !== entnahmeAuswahlBenutzerId) mainSelect.value = entnahmeAuswahlBenutzerId;
-    if (editSelect && editSelect.value !== entnahmeAuswahlBenutzerId) editSelect.value = entnahmeAuswahlBenutzerId;
-    if (nameFeld) nameFeld.value = vorlage?.name || '';
-    if (kontaktFeld) kontaktFeld.value = vorlage?.kontakt || '';
-
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-    aktualisiereEntnahmeVorlagenInfo();
-    entnahmeSpeichereDraftLokal();
-    entnahmeWizardAktualisieren();
-}
-
-function entnahmeSammelvorlageInFormenLaden(vorlagenId = '') {
-    const vorherigeSammelId = String(entnahmeAuswahlSammelId || '');
-    const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(vorlagenId));
-    const mainSelect = document.getElementById('entnahme-sammelvorlage');
-    const editSelect = document.getElementById('entnahme-sammelvorlage-bearbeiten');
-    const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
-
-    entnahmeAuswahlSammelId = vorlage ? String(vorlage.id) : '';
-    if (vorherigeSammelId !== String(entnahmeAuswahlSammelId || '')) {
-        entnahmeSammelVorlageBestaetigtFuerId = '';
-    }
-    entnahmeSammelNeuAktiv = !vorlage;
-
-    if (mainSelect && mainSelect.value !== entnahmeAuswahlSammelId) mainSelect.value = entnahmeAuswahlSammelId;
-    if (editSelect && editSelect.value !== entnahmeAuswahlSammelId) editSelect.value = entnahmeAuswahlSammelId;
-    if (nameFeld) nameFeld.value = vorlage?.name || '';
-
-    if (vorlage) {
-        const materialien = Array.isArray(vorlage.materialien)
-            ? vorlage.materialien
-            : (typeof vorlage.materialien === 'string' ? JSON.parse(vorlage.materialien || '[]') : []);
-
-        entnahmeMaterialien = materialien.map(item => ({
-            artikel_id: item.artikel_id || null,
-            label: item.label || item.name || '',
-            kategorie: item.kategorie || '',
-            einheit: item.einheit || 'Stück',
-            menge: Number(item.menge) || 0
-        }));
-    } else {
-        entnahmeMaterialien = [];
-    }
-
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-    aktualisiereEntnahmeVorlagenInfo();
-    renderEntnahmeMaterialien();
-    // Wichtig: Hier NICHT entnahmeMarkiereAutoSaveAlsErforderlich() aufrufen.
-    // Das reine Laden/Auswählen einer bestehenden Vorlage ist keine Änderung
-    // und darf keinen Autospeicher-/Überschreiben-Dialog auslösen. Nur der
-    // lokale Entwurf und die Wizard-Ansicht werden aktualisiert.
-    entnahmeSpeichereDraftLokal();
-    entnahmeWizardAktualisieren();
-}
-
-function entnahmeBenutzerVorlageZumBearbeitenAuswaehlen() {
-    entnahmeBenutzerVorlageInFormenLaden(document.getElementById('entnahme-benutzer-vorlage-bearbeiten')?.value || '');
-}
-
-function entnahmeSammelvorlageZumBearbeitenAuswaehlen() {
-    entnahmeSammelvorlageInFormenLaden(document.getElementById('entnahme-sammelvorlage-bearbeiten')?.value || '');
-}
-
-function entnahmeVorlageFormenAktualisieren() {
-    fillEntnahmeVorlagenDropdowns();
-    entnahmeBenutzerVorlageInFormenLaden(entnahmeAuswahlBenutzerId);
-    entnahmeSammelvorlageInFormenLaden(entnahmeAuswahlSammelId);
-}
-
-function oeffneVorlagenOverlay() {
-    entnahmeVorlagenBearbeiten = true;
-    fillEntnahmeVorlagenDropdowns();
-    if (entnahmeAuswahlBenutzerId) {
-        entnahmeBenutzerVorlageInFormenLaden(entnahmeAuswahlBenutzerId);
-    }
-    if (entnahmeAuswahlSammelId && entnahmeSammelvorlagen.some(item => String(item.id) === String(entnahmeAuswahlSammelId))) {
-        entnahmeSammelvorlageInFormenLaden(entnahmeAuswahlSammelId);
-    }
-    entnahmeWizardAutoAdvanceSetzen(false);
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-
-    const modal = document.getElementById('vorlagenModal');
-    if (modal) modal.style.display = 'block';
-}
-
-function schliesseVorlagenOverlay() {
-    const modal = document.getElementById('vorlagenModal');
-    if (modal) modal.style.display = 'none';
-
-    entnahmeVorlagenBearbeiten = false;
-    entnahmeBenutzerNeuAktiv = false;
-    entnahmeSammelNeuAktiv = false;
-    entnahmeWizardAutoAdvanceSetzen(true);
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-}
-
-function aktualisiereEntnahmeVorlagenInfo() {
-    const benutzerInfo = document.getElementById('entnahme-benutzer-info');
-    const sammelInfo = document.getElementById('entnahme-sammel-info');
-
-    const benutzer = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(entnahmeAuswahlBenutzerId));
-    const sammel = entnahmeSammelvorlagen.find(item => String(item.id) === String(entnahmeAuswahlSammelId));
-
-    if (benutzerInfo) {
-        benutzerInfo.innerHTML = benutzer
-            ? `<strong>Ausgewählt:</strong> ${escapeHtml(benutzer.name || '')}<br><small style="color:#56697c;">${escapeHtml(benutzer.kontakt || 'Kein Kontakt gespeichert')}</small>`
-            : 'Keine Benutzer-Vorlage ausgewählt.';
-    }
-
-    if (sammelInfo) {
-        const sammelSelectValue = document.getElementById('entnahme-sammelvorlage')?.value || '';
-        const materialAnzahl = Array.isArray(sammel?.materialien) ? sammel.materialien.length : 0;
-        if (sammel) {
-            sammelInfo.innerHTML = `<strong>Ausgewählt:</strong> ${escapeHtml(sammel.name || '')}<br><small style="color:#6a4a8e;">${materialAnzahl} Material${materialAnzahl === 1 ? '' : 'ien'} gespeichert</small>`;
-        } else if (sammelSelectValue === '__new__') {
-            sammelInfo.innerHTML = '<strong>Neue Vorlage:</strong> Neue Sammel-Vorlage wird angelegt.';
-        } else {
-            sammelInfo.innerHTML = '<strong>Standardvorlage aktiv:</strong> Keine Vorlage ausgewählt, es wird eine leere Vorlage verwendet.';
-        }
-    }
-}
-
-function entnahmeVorlagenBearbeitenUmschalten() {
-    oeffneVorlagenOverlay();
-}
-
-function entnahmeDatumAnzeigen(wert) {
-    if (!wert) return '';
-    try {
-        return new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(wert));
-    } catch (e) {
-        return String(wert);
-    }
-}
-
-function entnahmeHistorieMaterialLabel(material) {
-    const menge = Number(material?.menge) || 0;
-    const einheit = material?.einheit || 'Stück';
-    return `${menge} ${einheit} ${material?.label || material?.name || 'Material'}`;
-}
-
-function entnahmeRueckgabeMengeAuslesen(row) {
-    if (!row) return 0;
-    const maxMenge = Math.max(0, werteMengeAus(row.getAttribute('data-max-qty')) || 0);
-    const input = row.querySelector('[data-role="return-qty"]');
-    const menge = werteMengeAus(input?.value);
-    return Math.min(Math.max(menge, 0), maxMenge);
-}
-
-function entnahmeRueckgabeMengeSetzen(entnahmeId, index, neueMenge) {
-    const safeId = String(entnahmeId).replace(/"/g, '');
-    const row = document.querySelector(`[data-entnahme-id="${safeId}"] .entnahme-return-row[data-index="${index}"]`);
-    if (!row) return;
-
-    const input = row.querySelector('[data-role="return-qty"]');
-    if (!input) return;
-
-    const maxMenge = Math.max(0, werteMengeAus(row.getAttribute('data-max-qty')) || 0);
-    const clamped = Math.min(Math.max(werteMengeAus(neueMenge) || 0, 0), maxMenge);
-    input.value = String(clamped);
-
-    const minusBtn = row.querySelector('.entnahme-return-stepper button[aria-label="Restmenge verringern"]');
-    const plusBtn = row.querySelector('.entnahme-return-stepper button[aria-label="Restmenge erhöhen"]');
-    if (minusBtn) minusBtn.disabled = clamped <= 0;
-    if (plusBtn) plusBtn.disabled = clamped >= maxMenge;
-}
-
-function entnahmeRueckgabeMengeAendern(entnahmeId, index, delta) {
-    const safeId = String(entnahmeId).replace(/"/g, '');
-    const row = document.querySelector(`[data-entnahme-id="${safeId}"] .entnahme-return-row[data-index="${index}"]`);
-    if (!row) return;
-
-    const input = row.querySelector('[data-role="return-qty"]');
-    if (!input) return;
-
-    const aktuelleMenge = entnahmeRueckgabeMengeAuslesen(row);
-    entnahmeRueckgabeMengeSetzen(entnahmeId, index, aktuelleMenge + delta);
-}
-
-function entnahmeRueckgabeMengeDirektAendern(entnahmeId, index) {
-    const safeId = String(entnahmeId).replace(/"/g, '');
-    const row = document.querySelector(`[data-entnahme-id="${safeId}"] .entnahme-return-row[data-index="${index}"]`);
-    if (!row) return;
-
-    entnahmeRueckgabeMengeSetzen(entnahmeId, index, entnahmeRueckgabeMengeAuslesen(row));
-}
-
-function renderEntnahmeHistorie() {
-    const container = document.getElementById('entnahme-historie-liste');
-    if (!container) return;
-
-    if (!entnahmeHistorie.length) {
-        container.innerHTML = '<p style="color:#666; margin:0;">Noch keine gespeicherten Entnahmen vorhanden.</p>';
-        return;
-    }
-
-    container.innerHTML = '';
-    entnahmeHistorie.forEach(entnahme => {
-        const materialien = Array.isArray(entnahme.materialien) ? entnahme.materialien : [];
-        const details = document.createElement('details');
-        details.className = 'entnahme-history-item';
-        details.open = entnahmeHistorieGeoeffnet.has(String(entnahme.id));
-        details.dataset.entnahmeId = String(entnahme.id);
-
-        const summary = document.createElement('summary');
-        summary.innerHTML = `
-            <div style="display:flex; flex-direction:column; gap:4px; text-align:left;">
-                <span>${escapeHtml(entnahme.name || 'Ohne Namen')}</span>
-                <small style="color:#5f6b77; font-weight:normal;">${escapeHtml(entnahmeDatumAnzeigen(entnahme.created_at))} · ${materialien.length} Position${materialien.length === 1 ? '' : 'en'}</small>
-            </div>
-        `;
-        details.appendChild(summary);
-
-        const body = document.createElement('div');
-        body.className = 'entnahme-history-materials';
-        body.innerHTML = `
-            <div style="color:#5f6b77; line-height:1.45; margin-bottom:10px;">${escapeHtml(entnahme.kontakt || 'Kein Kontakt angegeben')}</div>
-            <div>
-                ${materialien.map((material, materialIndex) => {
-                    const label = escapeHtml(entnahmeHistorieMaterialLabel(material));
-                    const rowId = `entnahme-history-${String(entnahme.id).replace(/"/g, '')}-${materialIndex}`;
-                    const menge = Math.max(0, Number(material.menge) || 0);
-                    return `
-                        <div class="entnahme-return-row" data-index="${materialIndex}" data-max-qty="${menge}">
-                            <label style="margin:0; font-weight:normal; cursor:pointer; display:flex; align-items:center; gap:8px;"><span aria-hidden="true" style="color:#7f8c8d; font-size:1.2em; line-height:1;">•</span><span>${label}</span></label>
-                            <div class="entnahme-return-stepper" title="Aktuelle Restmenge">
-                                <button type="button" aria-label="Restmenge verringern" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, -1)">−</button>
-                                <input type="text" data-role="return-qty" value="${menge}" inputmode="numeric" aria-label="Restmenge" onchange="entnahmeRueckgabeMengeDirektAendern('${String(entnahme.id)}', ${materialIndex})">
-                                <button type="button" aria-label="Restmenge erhöhen" onclick="entnahmeRueckgabeMengeAendern('${String(entnahme.id)}', ${materialIndex}, 1)">+</button>
-                            </div>
-                        </div>
-                    `;
-                }).join('')}
-            </div>
-            <div class="entnahme-history-actions">
-                <button class="btn" style="background:#1f5f8b; width:auto;" onclick="entnahmeHistorieLaden('${String(entnahme.id)}')">Laden</button>
-                <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeTeilRueckgabeSpeichern('${String(entnahme.id)}')">Teilrückgabe speichern</button>
-                <button class="btn" style="background:#c0392b; width:auto;" onclick="entnahmeKomplettZurueckgeben('${String(entnahme.id)}')">Komplett zurückgeben</button>
-            </div>
-        `;
-
-        details.appendChild(body);
-        details.addEventListener('toggle', () => {
-            if (details.open) entnahmeHistorieGeoeffnet.add(String(entnahme.id));
-            else entnahmeHistorieGeoeffnet.delete(String(entnahme.id));
-        });
-        container.appendChild(details);
-    });
-}
-
-async function ladeEntnahmeHistorie() {
-    const result = await dbClient
-        .from(ENTNAHME_PROTOKOLL_TABLE)
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-    if (result.error) {
-        console.warn('Entnahme-Historie konnte nicht geladen werden.', result.error);
-        return;
-    }
-
-    entnahmeHistorie = result.data || [];
-    renderEntnahmeHistorie();
-}
-
-function fillEntnahmeVorlagenDropdowns() {
-    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
-    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
-    const benutzerEditSelect = document.getElementById('entnahme-benutzer-vorlage-bearbeiten');
-    const sammelEditSelect = document.getElementById('entnahme-sammelvorlage-bearbeiten');
-
-    if (benutzerSelect) {
-        const current = benutzerSelect.value;
-        benutzerSelect.innerHTML = '<option value="">-- Benutzer auswählen --</option>';
-        entnahmeBenutzerVorlagen
-            .slice()
-            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
-            .forEach(vorlage => {
-                benutzerSelect.add(new Option(vorlage.name, vorlage.id));
-            });
-        if (Array.from(benutzerSelect.options).some(opt => opt.value === current)) {
-            benutzerSelect.value = current;
-        }
-    }
-
-    if (benutzerEditSelect) {
-        const current = benutzerEditSelect.value;
-        benutzerEditSelect.innerHTML = '<option value="">-- Neuer Benutzer --</option>';
-        entnahmeBenutzerVorlagen
-            .slice()
-            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
-            .forEach(vorlage => {
-                benutzerEditSelect.add(new Option(vorlage.name, vorlage.id));
-            });
-        if (Array.from(benutzerEditSelect.options).some(opt => opt.value === current)) {
-            benutzerEditSelect.value = current;
-        }
-    }
-
-    if (sammelSelect) {
-        const current = sammelSelect.value;
-        sammelSelect.innerHTML = '<option value="">-- Keine Vorlage --</option>';
-
-        // add stored Sammel-Vorlagen
-        entnahmeSammelvorlagen
-            .slice()
-            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
-            .forEach(vorlage => sammelSelect.add(new Option(vorlage.name, vorlage.id)));
-
-        // add Packlisten as additional selectable options
-        if (Array.isArray(packlisten) && packlisten.length) {
-            // separator-like option (disabled)
-            sammelSelect.add(new Option('──────── Packlisten ────────', '', undefined, undefined));
-            packlisten.slice().sort((a,b) => String(a.name||'').localeCompare(String(b.name||''), 'de', { numeric:true })).forEach(pl => {
-                // prefix value with pack: to distinguish from normal sammelvorlagen
-                sammelSelect.add(new Option(`Packliste: ${pl.name}`, `pack:${pl.id}`));
-            });
-        }
-
-        if (Array.from(sammelSelect.options).some(opt => opt.value === current)) {
-            sammelSelect.value = current;
-        }
-    }
-
-    if (sammelEditSelect) {
-        const current = sammelEditSelect.value;
-        sammelEditSelect.innerHTML = '<option value="">-- Vorlage bearbeiten --</option>';
-
-        entnahmeSammelvorlagen
-            .slice()
-            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' }))
-            .forEach(vorlage => {
-                sammelEditSelect.add(new Option(vorlage.name, vorlage.id));
-            });
-
-        if (Array.from(sammelEditSelect.options).some(opt => opt.value === current)) {
-            sammelEditSelect.value = current;
-        }
-    }
-
-    aktualisiereEntnahmeVorlagenInfo();
-}
-
-async function ladeEntnahmeVorlagen() {
-    const [benutzerRes, sammelRes] = await Promise.all([
-        dbClient.from(ENTNAHME_BENUTZER_TABLE).select('*').order('name'),
-        dbClient.from(ENTNAHME_SAMMEL_TABLE).select('*').order('name')
-    ]);
-
-    if (benutzerRes.error) {
-        console.warn('Benutzer-Vorlagen konnten nicht geladen werden.', benutzerRes.error);
-    }
-    if (sammelRes.error) {
-        console.warn('Sammelvorlagen konnten nicht geladen werden.', sammelRes.error);
-    }
-
-    entnahmeBenutzerVorlagen = benutzerRes.data || [];
-    entnahmeSammelvorlagen = sammelRes.data || [];
-    fillEntnahmeVorlagenDropdowns();
-}
-
-async function initEntnahmeModus() {
-    const entnahmeView = document.getElementById('entnahme-ansicht');
-    if (entnahmeView) entnahmeView.style.display = 'block';
-
-    const appContainer = document.querySelector('.container');
-    if (appContainer) {
-        appContainer.style.background = 'transparent';
-        appContainer.style.boxShadow = 'none';
-        appContainer.style.maxWidth = '1000px';
-        appContainer.style.padding = '0';
-        Array.from(appContainer.children).forEach(child => {
-            if (child.id === 'entnahme-ansicht') child.style.display = 'block';
-            else child.style.display = 'none';
-        });
-    }
-
-    const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = '';
-
-    const hoverDate = document.getElementById('hover-date-info');
-    const hoverRes = document.getElementById('hover-res-info');
-    if (hoverDate) hoverDate.style.display = 'none';
-    if (hoverRes) hoverRes.style.display = 'none';
-
-    document.title = 'Lager-Entnahmeprotokoll';
-
-    const localSession = holeLokaleSession();
-    if (!localSession) {
-        const loginOverlay = document.getElementById('login-overlay');
-        if (loginOverlay) loginOverlay.style.display = 'flex';
-        setzeEntnahmeSicht(true);
-        return;
-    }
-
-    setzeAuthToken(localSession.token);
-
-    const loginOverlay = document.getElementById('login-overlay');
-    if (loginOverlay) loginOverlay.style.display = 'none';
-
-    setzeEntnahmeSicht(false);
-    await ladeAlles();
-    aktualisiereEntnahmeMaterialDatalist();
-    renderEntnahmeMaterialien();
-    await ladeEntnahmeVorlagen();
-    await ladeEntnahmeHistorie();
-    entnahmeSetzeFormState(entnahmeLadeDraftLokal() || {});
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-}
-
-/*
-async function oeffneEntnahmeFenster() {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set('entnahme', '1');
-
-    // URL anpassen ohne Neuladen, damit in-memory Session erhalten bleibt
-    window.history.replaceState({}, '', url.toString());
-    await initEntnahmeModus();
-}
-*/
-
-function entnahmeBenutzerVorlageAuswaehlen() {
-    const selectElement = document.getElementById('entnahme-benutzer-vorlage');
-    const vorlagenId = selectElement?.value || '';
-    entnahmeBenutzerVorlageInFormenLaden(vorlagenId);
-
-    if (entnahmeWizardAutoAdvanceErlaubt() && vorlagenId) {
-        setTimeout(() => entnahmeWizardZuSchritt(2), 180);
-    }
-}
-
-function entnahmeSammelvorlageAuswaehlen() {
-    const selectElement = document.getElementById('entnahme-sammelvorlage');
-    const vorlagenId = selectElement?.value || '';
-    entnahmeSammelVorlageBestaetigtFuerId = '';
-
-    if (!vorlagenId) {
-        entnahmeSammelvorlageInFormenLaden('');
-        return;
-    }
-
-    const nameFeld = document.getElementById('entnahme-sammelvorlagenname');
-    // support selecting a packliste (value prefixed with 'pack:')
-    if (vorlagenId && vorlagenId.startsWith('pack:')) {
-        const packId = String(vorlagenId).split(':')[1];
-        const pl = packlisten.find(p => String(p.id) === String(packId));
-        if (nameFeld) nameFeld.value = pl?.name || '';
-
-        const positionen = packlistenPositionen.filter(p => String(p.packliste_id) === String(packId));
-        entnahmeMaterialien = positionen.map(p => {
-            const art = p.artikel || {};
-            return {
-                artikel_id: p.artikel_id || art.id || null,
-                label: art.name || p.name || '',
-                kategorie: art.kategorie || '',
-                einheit: art.einheit || p.einheit || 'Stück',
-                menge: Number(p.menge) || 0
-            };
-        });
-        renderEntnahmeMaterialien();
-        setzeEntnahmeVorlagenFormSichtbarkeit();
-        entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
-        entnahmeWizardAktualisieren();
-        return;
-    }
-
-    entnahmeSammelvorlageInFormenLaden(vorlagenId);
-
-    if (entnahmeWizardAutoAdvanceErlaubt() && (vorlagenId || nameFeld?.value.trim())) {
-        setTimeout(() => entnahmeWizardZuSchritt(3), 180);
-    }
-}
-
-function entnahmeBenutzerVorlageNeu() {
-    oeffneVorlagenOverlay();
-    entnahmeBenutzerVorlageInFormenLaden('');
-}
-
-function entnahmeSammelvorlageNeu() {
-    oeffneVorlagenOverlay();
-    entnahmeSammelvorlageInFormenLaden('');
-}
-
-// --- NEUE HILFSFUNKTION FÜR STRIKTE BESTANDSKONTROLLE ---
-function holeVerbleibendeMenge(artikelId, ignoriereWizardIndex = -1) {
-    const bestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
-    const maxVerfuegbar = berechneArtikelVerfuegbarkeit(artikelId, bestaende);
-
-    // Sonderartikel (Unendlich oder rein auf Nachkauf/Verfügbarkeit geprüft) durchwinken
-    if (maxVerfuegbar === '∞') return '∞';
-    if (maxVerfuegbar === '-') return '-';
-
-    let wizardMenge = 0;
-    // Berücksichtigen, was gerade schon im Wizard in der Liste liegt
-    entnahmeMaterialien.forEach((item, idx) => {
-        if (String(item.artikel_id) === String(artikelId) && idx !== ignoriereWizardIndex) {
-            wizardMenge += (Number(item.menge) || 0);
-        }
-    });
-
-    return Math.max(0, Number(maxVerfuegbar) - wizardMenge);
-}
-
-function entnahmeMaterialHinzufuegen(inputId = 'entnahme-artikel-input', mengeId = 'entnahme-artikel-menge') {
-    const input = document.getElementById(inputId);
-    const mengeInput = document.getElementById(mengeId);
-    if (!input || !mengeInput) return;
-
-    const label = input.value.trim();
-    if (!label) {
-        showToast('Bitte zuerst ein Material auswählen.', 'warning');
-        return;
-    }
-
-    const artikel = alleArtikelInfos.find(item => gibEntnahmeArtikelLabel(item) === label);
-    if (!artikel) {
-        showToast('Bitte einen Artikel aus der Vorschlagsliste auswählen.', 'warning');
-        return;
-    }
-
-    const menge = werteMengeAus(mengeInput.value);
-    if (menge <= 0) {
-        showToast('Bitte eine Menge größer 0 eingeben.', 'warning');
-        return;
-    }
-
-    // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
-    const verbleibend = holeVerbleibendeMenge(artikel.id);
-    if (verbleibend !== '∞' && verbleibend !== '-') {
-        if (menge > verbleibend) {
-            showToast(`Fehler: Es sind nur noch ${verbleibend} verfügbar!`, 'error');
-            return; // Blockiert das Hinzufügen komplett
-        }
-    }
-
-    const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
-    if (vorhandenerEintrag) {
-        vorhandenerEintrag.menge += menge;
-    } else {
-        entnahmeMaterialien.push({
-            artikel_id: artikel.id,
-            label: label,
-            kategorie: artikel.kategorie || '',
-            einheit: artikel.einheit || 'Stück',
-            menge: menge
-        });
-    }
-
-    input.value = '';
-    mengeInput.value = '1';
-    renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
-    entnahmeWizardAktualisieren();
-}
-
-// Wrapper für die Materialauswahl im "Vorlagen verwalten"-Overlay (Sammel-Vorlage).
-function entnahmeModalMaterialHinzufuegen() {
-    entnahmeMaterialHinzufuegen('entnahme-modal-artikel-input', 'entnahme-modal-artikel-menge');
-}
-
-function entnahmeMaterialMengeAendern(index, neueMenge) {
-    if (!entnahmeMaterialien[index]) return;
-
-    const artikelId = entnahmeMaterialien[index].artikel_id;
-    let menge = werteMengeAus(neueMenge);
-
-    if (menge <= 0) {
-        entnahmeMaterialien.splice(index, 1);
-    } else {
-        // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
-        const verbleibend = holeVerbleibendeMenge(artikelId, index); // Eigene Zeile bei der Prüfung abziehen
-        if (verbleibend !== '∞' && verbleibend !== '-') {
-            if (menge > verbleibend) {
-                showToast(`Maximal ${verbleibend} verfügbar! Menge wurde automatisch angepasst.`, 'warning');
-                menge = verbleibend; // Kappt die Menge auf das Maximum
-            }
-        }
-        entnahmeMaterialien[index].menge = menge;
-    }
-
-    renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
-    entnahmeWizardAktualisieren();
-}
-
-function entnahmeMaterialLoeschen(index) {
-    if (!entnahmeMaterialien[index]) return;
-    entnahmeMaterialien.splice(index, 1);
-    renderEntnahmeMaterialien();
-    entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
-    entnahmeWizardAktualisieren();
-}
-
-function entnahmeFormularZuruecksetzen() {
-    const nameFeld = document.getElementById('entnahme-name');
-    const kontaktFeld = document.getElementById('entnahme-kontakt');
-    const benutzerVorlage = document.getElementById('entnahme-benutzer-vorlage');
-    const sammelVorlage = document.getElementById('entnahme-sammelvorlage');
-    const sammelName = document.getElementById('entnahme-sammelvorlagenname');
-    const artikelInput = document.getElementById('entnahme-artikel-input');
-    const mengeInput = document.getElementById('entnahme-artikel-menge');
-
-    if (entnahmeAutoSaveTimer) {
-        clearTimeout(entnahmeAutoSaveTimer);
-        entnahmeAutoSaveTimer = null;
-    }
-
-    if (nameFeld) nameFeld.value = '';
-    if (kontaktFeld) kontaktFeld.value = '';
-    if (benutzerVorlage) benutzerVorlage.value = '';
-    if (sammelVorlage) sammelVorlage.value = '';
-    if (sammelName) sammelName.value = '';
-    if (artikelInput) artikelInput.value = '';
-    if (mengeInput) mengeInput.value = '1';
-
-    entnahmeMaterialien = [];
-    entnahmeActiveDraftId = '';
-    entnahmeAuswahlBenutzerId = '';
-    entnahmeAuswahlSammelId = '';
-    entnahmeBenutzerNeuAktiv = false;
-    entnahmeSammelNeuAktiv = false;
-    entnahmeWizardZuSchritt(1);
-    entnahmeLoescheDraftLokal();
-    renderEntnahmeMaterialien();
-}
-
-async function entnahmeBenutzerVorlageSpeichern() {
-    const name = document.getElementById('entnahme-name')?.value.trim() || '';
-    const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
-    const bestehendeId = entnahmeAuswahlBenutzerId || document.getElementById('entnahme-benutzer-vorlage-bearbeiten')?.value || document.getElementById('entnahme-benutzer-vorlage')?.value || '';
-    const normName = name.toLowerCase();
-
-    console.log('entnahmeBenutzerVorlageSpeichern called', { name, kontakt, bestehendeId });
-    showToast('Speichere Benutzer-Vorlage...', 'success');
-
-    if (!name) {
-        if (!bestehendeId) {
-            showToast('Bitte zuerst einen Namen eingeben.', 'warning');
-            return;
-        }
-
-        if (!(await zeigeBestaetigungsDialog({
-            titel: 'Vorlage löschen?',
-            text: 'Der Name der Benutzer-Vorlage ist leer. Soll diese Vorlage gelöscht werden?',
-            okText: 'Löschen',
-            okFarbe: '#e74c3c',
-            icon: '🗑️'
-        }))) {
-            return;
-        }
-
-        const loeschRes = await dbClient.from(ENTNAHME_BENUTZER_TABLE).delete().eq('id', bestehendeId);
-        if (loeschRes.error) {
-            showToast('Benutzer-Vorlage konnte nicht gelöscht werden.', 'error');
-            console.error('Supabase error deleting benutzer vorlage:', loeschRes.error);
-            return;
-        }
-
-        entnahmeAuswahlBenutzerId = '';
-        entnahmeBenutzerNeuAktiv = false;
-        const selectElement = document.getElementById('entnahme-benutzer-vorlage');
-        if (selectElement) selectElement.value = '';
-        const editSelect = document.getElementById('entnahme-benutzer-vorlage-bearbeiten');
-        if (editSelect) editSelect.value = '';
-        const nameFeld = document.getElementById('entnahme-name');
-        const kontaktFeld = document.getElementById('entnahme-kontakt');
-        if (nameFeld) nameFeld.value = '';
-        if (kontaktFeld) kontaktFeld.value = '';
-
-        showToast('Benutzer-Vorlage gelöscht.');
-        await ladeEntnahmeVorlagen();
-        setzeEntnahmeVorlagenFormSichtbarkeit();
-        return;
-    }
-
-    const doppelteVorlage = entnahmeBenutzerVorlagen.find(vorlage =>
-        String(vorlage.id) !== String(bestehendeId) &&
-        String(vorlage.name || '').trim().toLowerCase() === normName
-    );
-
-    if (doppelteVorlage) {
-        showToast('Benutzer-Vorlage mit diesem Namen existiert bereits und konnte nicht angelegt werden.', 'error');
-        return;
-    }
-
-    try {
-        const payload = { name, kontakt };
-        const res = bestehendeId
-            ? await dbClient.from(ENTNAHME_BENUTZER_TABLE).update(payload).eq('id', bestehendeId).select()
-            : await dbClient.from(ENTNAHME_BENUTZER_TABLE).insert([payload]).select();
-
-        if (res.error) {
-            showToast('Benutzer-Vorlage konnte nicht gespeichert werden.', 'error');
-            console.error('Supabase error saving benutzer vorlage:', res.error);
-            return;
-        }
-
-        if (res.data && res.data[0]?.id) {
-            entnahmeAuswahlBenutzerId = String(res.data[0].id);
-            const selectElement = document.getElementById('entnahme-benutzer-vorlage');
-            if (selectElement) selectElement.value = entnahmeAuswahlBenutzerId;
-            const editSelect = document.getElementById('entnahme-benutzer-vorlage-bearbeiten');
-            if (editSelect) editSelect.value = entnahmeAuswahlBenutzerId;
-        }
-
-        showToast('Benutzer-Vorlage gespeichert.');
-        await ladeEntnahmeVorlagen();
-        entnahmeBenutzerVorlageInFormenLaden(entnahmeAuswahlBenutzerId);
-    } catch (e) {
-        showToast('Fehler beim Speichern der Vorlage.', 'error');
-        console.error('Exception in entnahmeBenutzerVorlageSpeichern:', e);
-    }
-}
-
-async function entnahmeSammelvorlageSpeichern() {
-    if (entnahmeSammelAutoSaveTimer) {
-        clearTimeout(entnahmeSammelAutoSaveTimer);
-        entnahmeSammelAutoSaveTimer = null;
-    }
-    return entnahmeSammelvorlageAutoSpeichern({ manuell: true });
-}
-
-async function entnahmeBenutzerVorlageLoeschen() {
-    const id = entnahmeAuswahlBenutzerId || document.getElementById('entnahme-benutzer-vorlage-bearbeiten')?.value || '';
-    if (!id) {
-        showToast('Bitte zuerst eine Benutzer-Vorlage auswählen.', 'warning');
-        return;
-    }
-
-    const vorlage = entnahmeBenutzerVorlagen.find(item => String(item.id) === String(id));
-    const name = vorlage?.name || 'diese Vorlage';
-
-    if (!(await zeigeBestaetigungsDialog({
-        titel: 'Benutzer-Vorlage löschen?',
-        text: `Soll die Benutzer-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`,
-        okText: 'Löschen',
-        okFarbe: '#e74c3c',
-        icon: '🗑️'
-    }))) {
-        return;
-    }
-
-    const { error } = await dbClient.from(ENTNAHME_BENUTZER_TABLE).delete().eq('id', id);
-    if (error) {
-        showToast('Benutzer-Vorlage konnte nicht gelöscht werden.', 'error');
-        console.error('Supabase error deleting benutzer vorlage:', error);
-        return;
-    }
-
-    entnahmeAuswahlBenutzerId = '';
-    entnahmeBenutzerNeuAktiv = true;
-
-    showToast('Benutzer-Vorlage gelöscht.');
-    await ladeEntnahmeVorlagen();
-    entnahmeBenutzerVorlageInFormenLaden('');
-}
-
-async function entnahmeSammelvorlageLoeschen() {
-    const id = entnahmeAuswahlSammelId || document.getElementById('entnahme-sammelvorlage-bearbeiten')?.value || '';
-    if (!id) {
-        showToast('Bitte zuerst eine Sammel-Vorlage auswählen.', 'warning');
-        return;
-    }
-
-    const vorlage = entnahmeSammelvorlagen.find(item => String(item.id) === String(id));
-    const name = vorlage?.name || 'diese Vorlage';
-
-    if (!(await zeigeBestaetigungsDialog({
-        titel: 'Sammel-Vorlage löschen?',
-        text: `Soll die Sammel-Vorlage "${name}" wirklich gelöscht werden? Dies kann nicht rückgängig gemacht werden.`,
-        okText: 'Löschen',
-        okFarbe: '#e74c3c',
-        icon: '🗑️'
-    }))) {
-        return;
-    }
-
-    const { error } = await dbClient.from(ENTNAHME_SAMMEL_TABLE).delete().eq('id', id);
-    if (error) {
-        showToast('Sammel-Vorlage konnte nicht gelöscht werden.', 'error');
-        console.error('Supabase error deleting sammelvorlage:', error);
-        return;
-    }
-
-    entnahmeAuswahlSammelId = '';
-    entnahmeSammelNeuAktiv = true;
-    entnahmeSammelVorlageBestaetigtFuerId = '';
-
-    showToast('Sammel-Vorlage gelöscht.');
-    await ladeEntnahmeVorlagen();
-    entnahmeSammelvorlageInFormenLaden('');
-}
-
-async function entnahmeHistorieLaden(entnahmeId) {
-    const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
-    if (!entnahme) return;
-
-    const nameFeld = document.getElementById('entnahme-name');
-    const kontaktFeld = document.getElementById('entnahme-kontakt');
-    const benutzerSelect = document.getElementById('entnahme-benutzer-vorlage');
-    const sammelSelect = document.getElementById('entnahme-sammelvorlage');
-
-    if (nameFeld) nameFeld.value = entnahme.name || '';
-    if (kontaktFeld) kontaktFeld.value = entnahme.kontakt || '';
-    if (benutzerSelect) benutzerSelect.value = entnahme.benutzer_vorlage_id || '';
-    if (sammelSelect) sammelSelect.value = entnahme.sammelvorlage_id || '';
-    entnahmeActiveDraftId = String(entnahme.id);
-
-    entnahmeMaterialien = Array.isArray(entnahme.materialien)
-        ? entnahme.materialien.map(item => ({ ...item }))
-        : [];
-    renderEntnahmeMaterialien();
-    setzeEntnahmeVorlagenFormSichtbarkeit();
-    entnahmeWizardZuSchritt(3);
-    entnahmeMarkiereAutoSaveAlsErforderlich();
-    showToast('Entnahme in Formular geladen.');
-}
-
-function entnahmeRueckgabeMaterialienAuslesen(entnahmeId) {
-    const safeId = String(entnahmeId).replace(/"/g, '');
-    const details = document.querySelector(`[data-entnahme-id="${safeId}"]`);
-    if (!details) return [];
-
-    const rows = details.querySelectorAll('.entnahme-return-row');
-    const rueckgaenge = [];
-
-    rows.forEach(row => {
-        const index = Number(row.dataset.index);
-        const menge = entnahmeRueckgabeMengeAuslesen(row);
-        if (index >= 0 && menge >= 0) {
-            rueckgaenge.push({ index, menge });
-        }
-    });
-
-    return rueckgaenge;
-}
-
-/**
- * Schreibt einen Eintrag in das Append-Only-Rückgabe-Log (lager_entnahme_audit).
- * ereignis: 'entnahme' | 'teilrueckgabe' | 'rueckgabe'
- * Fehler beim Schreiben werden nur geloggt (nicht blockierend), damit eine
- * fehlgeschlagene Log-Buchung nie die eigentliche Rückgabe verhindert.
- */
-async function entnahmeAuditEintragSchreiben(auditPayload) {
-    try {
-        const { error } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
-        if (error) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', error);
-    } catch (e) {
-        console.error('Fehler beim Schreiben des Audit-Eintrags:', e);
-    }
-}
-
-async function entnahmeTeilRueckgabeSpeichern(entnahmeId) {
-    const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
-    if (!entnahme) return;
-
-    const rueckgaenge = entnahmeRueckgabeMaterialienAuslesen(entnahmeId);
-    if (rueckgaenge.length === 0) {
-        showToast('Bitte mindestens ein Material für die Rückgabe auswählen.', 'warning');
-        return;
-    }
-
-    const urspruenglicheMaterialien = Array.isArray(entnahme.materialien)
-        ? entnahme.materialien.map(item => ({ ...item }))
-        : [];
-    const neueMaterialien = urspruenglicheMaterialien.map(item => ({ ...item }));
-
-    // Für das Rückgabe-Log: pro Position die tatsächlich zurückgegebene Menge
-    // (= bisherige Menge minus neu gesetzte Restmenge) sammeln.
-    const zurueckgegebenePositionen = [];
-
-    rueckgaenge.sort((a, b) => b.index - a.index).forEach(({ index, menge }) => {
-        const material = neueMaterialien[index];
-        if (!material) return;
-
-        const bisherigeMenge = Math.max(0, Number(material.menge) || 0);
-        const neueRestmenge = Math.max(0, Number(menge) || 0);
-        const zurueckgegebeneMenge = bisherigeMenge - neueRestmenge;
-
-        if (zurueckgegebeneMenge > 0) {
-            zurueckgegebenePositionen.unshift({
-                artikel_id: material.artikel_id,
-                label: material.label,
-                kategorie: material.kategorie,
-                einheit: material.einheit,
-                menge: zurueckgegebeneMenge
-            });
-        }
-
-        material.menge = neueRestmenge;
-
-        if (material.menge <= 0) {
-            neueMaterialien.splice(index, 1);
-        }
-    });
-
-    const auditBasis = {
-        entnahme_id: String(entnahmeId),
-        name: entnahme.name || '',
-        kontakt: entnahme.kontakt || '',
-        benutzer_vorlage_id: entnahme.benutzer_vorlage_id || null,
-        sammelvorlage_id: entnahme.sammelvorlage_id || null
-    };
-
-    if (neueMaterialien.length === 0) {
-        const loeschRes = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).delete().eq('id', entnahmeId);
-        if (loeschRes.error) {
-            showToast('Rückgabe konnte nicht gespeichert werden.', 'error');
-            console.error(loeschRes.error);
-            return;
-        }
-
-        // Vollständig zurückgegeben -> die komplette (ursprüngliche) Materialliste
-        // wandert als "rueckgabe"-Ereignis ins Log.
-        await entnahmeAuditEintragSchreiben({
-            ...auditBasis,
-            materialien: urspruenglicheMaterialien,
-            ereignis: 'rueckgabe'
-        });
-
-        showToast('Entnahme vollständig zurückgegeben und entfernt.');
-    } else {
-        const { error } = await dbClient
-            .from(ENTNAHME_PROTOKOLL_TABLE)
-            .update({ materialien: neueMaterialien })
-            .eq('id', entnahmeId);
-
-        if (error) {
-            showToast('Rückgabe konnte nicht gespeichert werden.', 'error');
-            console.error(error);
-            return;
-        }
-
-        if (zurueckgegebenePositionen.length > 0) {
-            await entnahmeAuditEintragSchreiben({
-                ...auditBasis,
-                materialien: zurueckgegebenePositionen,
-                ereignis: 'teilrueckgabe'
-            });
-        }
-
-        showToast('Teilrückgabe gespeichert.');
-    }
-
-    await ladeEntnahmeHistorie();
-}
-
-async function entnahmeKomplettZurueckgeben(entnahmeId) {
-    const entnahme = entnahmeHistorie.find(item => String(item.id) === String(entnahmeId));
-    if (!entnahme) return;
-
-    if (!confirm(`Die Entnahme "${entnahme.name || 'ohne Namen'}" wirklich komplett zurückgeben und entfernen?`)) return;
-
-    const { error } = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).delete().eq('id', entnahmeId);
-    if (error) {
-        showToast('Entnahme konnte nicht entfernt werden.', 'error');
-        console.error(error);
-        return;
-    }
-
-    await entnahmeAuditEintragSchreiben({
-        entnahme_id: String(entnahmeId),
-        name: entnahme.name || '',
-        kontakt: entnahme.kontakt || '',
-        materialien: Array.isArray(entnahme.materialien) ? entnahme.materialien.map(item => ({ ...item })) : [],
-        benutzer_vorlage_id: entnahme.benutzer_vorlage_id || null,
-        sammelvorlage_id: entnahme.sammelvorlage_id || null,
-        ereignis: 'rueckgabe'
-    });
-
-    showToast('Entnahme entfernt.');
-    await ladeEntnahmeHistorie();
-}
-
-// =========================================================================
-// RÜCKGABE-LOG (Admin-Ansicht)
-// Zeigt alle "rueckgabe"/"teilrueckgabe"-Ereignisse aus dem Append-Only-
-// Audit-Log (lager_entnahme_audit). Bewusst nicht prominent auf der Seite
-// platziert - nur über einen kleinen Link erreichbar, da rein administrativ.
-// =========================================================================
-
-let entnahmeLogEintraege = [];
-let entnahmeLogGeladen = false;
-
-function entnahmeLogEreignisLabel(ereignis) {
-    if (ereignis === 'rueckgabe') return '✅ Vollständig zurückgegeben';
-    if (ereignis === 'teilrueckgabe') return '↩️ Teilrückgabe';
-    return ereignis || '';
-}
-
-function entnahmeLogMaterialLabel(material) {
-    const menge = material?.menge != null ? material.menge : '';
-    const einheit = material?.einheit ? ` ${material.einheit}` : '';
-    const label = material?.label || material?.artikel_id || 'Unbekanntes Material';
-    return `${menge}${einheit} × ${label}`.trim();
-}
-
-function renderEntnahmeLog() {
-    const container = document.getElementById('entnahme-log-liste');
-    if (!container) return;
-
-    if (!entnahmeLogEintraege.length) {
-        container.innerHTML = '<p style="color:#666; margin:0;">Noch keine zurückgegebenen Entnahmen im Log.</p>';
-        return;
-    }
-
-    container.innerHTML = entnahmeLogEintraege.map(eintrag => {
-        const materialien = Array.isArray(eintrag.materialien) ? eintrag.materialien : [];
-        return `
-            <div class="entnahme-log-eintrag" style="border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:10px;">
-                <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px; align-items:baseline;">
-                    <strong>${escapeHtml(eintrag.name || 'Ohne Namen')}</strong>
-                    <small style="color:#5f6b77;">${escapeHtml(entnahmeDatumAnzeigen(eintrag.created_at))}</small>
-                </div>
-                <div style="font-size:0.85em; color:#8a97a3; margin:2px 0 6px;">${escapeHtml(entnahmeLogEreignisLabel(eintrag.ereignis))}${eintrag.kontakt ? ' · ' + escapeHtml(eintrag.kontakt) : ''}</div>
-                <ul style="margin:0; padding-left:18px; color:#3a4652;">
-                    ${materialien.map(m => `<li>${escapeHtml(entnahmeLogMaterialLabel(m))}</li>`).join('') || '<li>Keine Materialien erfasst</li>'}
-                </ul>
-            </div>
-        `;
-    }).join('');
-}
-
-async function ladeEntnahmeLog() {
-    const container = document.getElementById('entnahme-log-liste');
-    if (container) container.innerHTML = '<p style="color:#666; margin:0;">Lade Log…</p>';
-
-    const { data, error } = await dbClient
-        .from(ENTNAHME_AUDIT_TABLE)
-        .select('*')
-        .in('ereignis', ['rueckgabe', 'teilrueckgabe'])
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-    if (error) {
-        console.error(error);
-        if (container) container.innerHTML = '<p style="color:#c0392b; margin:0;">Log konnte nicht geladen werden.</p>';
-        return;
-    }
-
-    entnahmeLogEintraege = data || [];
-    entnahmeLogGeladen = true;
-    renderEntnahmeLog();
-}
-
-async function oeffneEntnahmeLog() {
-    const modal = document.getElementById('entnahmeLogModal');
-    if (!modal) return;
-    modal.style.display = 'block';
-    await ladeEntnahmeLog();
-}
-
-function schliesseEntnahmeLog() {
-    const modal = document.getElementById('entnahmeLogModal');
-    if (modal) modal.style.display = 'none';
-}
-
-async function entnahmeProtokollSpeichern(options = {}) {
-    const { silent = false, finalize = true } = options;
-
-    if (!finalize) {
-        entnahmeSpeichereDraftLokal();
-        return null;
-    }
-
-    const name = document.getElementById('entnahme-name')?.value.trim() || '';
-    const kontakt = document.getElementById('entnahme-kontakt')?.value.trim() || '';
-    const benutzerVorlageId = document.getElementById('entnahme-benutzer-vorlage')?.value || null;
-    let sammelvorlageId = document.getElementById('entnahme-sammelvorlage')?.value || null;
-
-    if (sammelvorlageId && String(sammelvorlageId).startsWith('pack:')) {
-        sammelvorlageId = null;
-    }
-
-    if (!name || entnahmeMaterialien.length === 0) {
-        if (!silent) {
-            if (!name) showToast('Bitte einen Namen eingeben.', 'warning');
-            else showToast('Bitte mindestens ein Material auswählen.', 'warning');
-        }
-        return null;
-    }
-
-    const payload = {
-        name,
-        kontakt,
-        materialien: entnahmeMaterialien.map(item => ({ ...item })),
-        benutzer_vorlage_id: benutzerVorlageId,
-        sammelvorlage_id: sammelvorlageId
-    };
-
-    let savedId = entnahmeActiveDraftId ? String(entnahmeActiveDraftId) : '';
-
-    try {
-        let result;
-        if (savedId) {
-            result = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).update(payload).eq('id', savedId).select();
-            if (result.error) {
-                console.warn('Bestehender Entnahme-Entwurf konnte nicht aktualisiert werden, versuche Neu-Anlage.', result.error);
-                savedId = '';
-            }
-        }
-
-        if (!savedId) {
-            result = await dbClient.from(ENTNAHME_PROTOKOLL_TABLE).insert([payload]).select();
-            if (result.error) {
-                throw result.error;
-            }
-            savedId = result.data && result.data[0] ? String(result.data[0].id) : '';
-        }
-
-        entnahmeActiveDraftId = savedId;
-
-        try {
-            const auditPayload = {
-                entnahme_id: savedId || null,
-                name,
-                kontakt,
-                materialien: payload.materialien,
-                benutzer_vorlage_id: benutzerVorlageId,
-                sammelvorlage_id: sammelvorlageId,
-                ereignis: 'entnahme'
-            };
-            const { error: auditError } = await dbClient.from(ENTNAHME_AUDIT_TABLE).insert([auditPayload]);
-            if (auditError) console.warn('Audit-Eintrag konnte nicht gespeichert werden:', auditError);
-        } catch (e) {
-            console.error('Fehler beim Schreiben des Audit-Eintrags:', e);
-        }
-
-        if (!silent) {
-            showToast('Entnahme abgeschlossen.');
-        }
-
-        entnahmeLoescheDraftLokal();
-        if (entnahmeAutoSaveTimer) {
-            clearTimeout(entnahmeAutoSaveTimer);
-            entnahmeAutoSaveTimer = null;
-        }
-
-        entnahmeFormularZuruecksetzen();
-        return savedId;
-    } catch (error) {
-        if (!silent) {
-            showToast('Entnahme konnte nicht gespeichert werden.', 'error');
-        }
-        console.error(error);
-        return null;
-    }
-}
-
-async function entnahmeAbschliessen() {
-    return entnahmeProtokollSpeichern({ finalize: true });
-}
-
-async function zurHauptseiteZurueck(nachSpeichern = false) {
-    deaktiviereAlleNfcModi();
-    const url = new URL(window.location.href);
-    url.searchParams.delete('entnahme');
-    if (/\/index\.html?$/i.test(url.pathname)) {
-        url.pathname = url.pathname.replace(/\/index\.html?$/i, '/');
-    }
-
-    // Einen echten Neustart des Hauptbereichs erzwingen, damit die Seite exakt
-    // so initialisiert wird wie bei einem frischen Aufruf.
-    window.location.replace(url.toString());
-}
-
-function escapeHtml(input) {
-    return String(input || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
-
-document.addEventListener('DOMContentLoaded', async () => {
-    initFormularLink();
-    initEntnahmeLink();
-
-    if (QRGEN_MODUS) {
-        initQrGenModus();
-        return;
-    }
-
-    if (ENTNAHME_MODUS) {
-        await initEntnahmeModus();
-        return;
-    }
-
-    if (ETIKETTEN_MODUS) {
-        await initEtikettenModus();
-        return;
-    }
-
-    initRegalQrTool();
-
-    if (FORMULAR_MODUS) {
-        initFormularModus();
-        return;
-    }
-
-    const localSession = holeLokaleSession();
-    if (localSession) { 
-        setzeAuthToken(localSession.token);
-        document.getElementById('login-overlay').style.display = 'none'; 
-        ladeAlles(); 
-        pruefeUndZeigeOnboarding(); 
-        pruefeUndVerarbeiteRueckgabeLink();
-        pruefeUndVerarbeiteKistencheckLink();
-    } else { 
-        document.getElementById('login-overlay').style.display = 'flex'; 
-    }
-});
-
-/*
-dbClient.auth.onAuthStateChange(async (event, session) => {
-    if (FORMULAR_MODUS || QRGEN_MODUS) return;
-    const overlay = document.getElementById('login-overlay');
-    if (ENTNAHME_MODUS) {
-        await initEntnahmeModus();
-        return;
-    }
-    if (event === 'SIGNED_IN') { overlay.style.display = 'none'; showToast('Erfolgreich angemeldet!'); ladeAlles(); pruefeUndZeigeOnboarding(); } 
-    else if (event === 'SIGNED_OUT') {
-        overlay.style.display = 'flex';
-        document.getElementById('lager-tabelle').innerHTML = ''; 
-    }
-});
-*/
-
-const ONBOARDING_STORAGE_KEY = 'lager_onboarding_v1_gesehen';
-
-// Beobachtet automatisch alle Modal-Fenster und ergänzt/entfernt die Klasse
-// 'modal-visible', sobald sie ein-/ausgeblendet werden. Dadurch bekommen ALLE
-// Modals im Projekt eine sanfte Fade-/Scale-Animation, ohne dass jede einzelne
-// öffnende/schließende Funktion im Code angepasst werden muss.
-function initModalUebergaenge() {
-    document.querySelectorAll('.modal').forEach(modal => {
-        const beobachter = new MutationObserver(() => {
-            const sichtbar = getComputedStyle(modal).display !== 'none';
-            if (sichtbar) {
-                requestAnimationFrame(() => requestAnimationFrame(() => modal.classList.add('modal-visible')));
-            } else {
-                modal.classList.remove('modal-visible');
-            }
-        });
-        beobachter.observe(modal, { attributes: true, attributeFilter: ['style'] });
-    });
-}
-document.addEventListener('DOMContentLoaded', initModalUebergaenge);
-
-function pruefeUndZeigeOnboarding() {
-    try {
-        if (window.localStorage.getItem(ONBOARDING_STORAGE_KEY)) return;
-    } catch (e) { /* localStorage evtl. nicht verfügbar, dann einfach anzeigen */ }
-    oeffneOnboarding();
-}
-
-function oeffneOnboarding() {
-    const modal = document.getElementById('onboardingModal');
-    if (modal) modal.style.display = 'block';
-}
-
-function schliesseOnboarding() {
-    const modal = document.getElementById('onboardingModal');
-    if (modal) modal.style.display = 'none';
-    try { window.localStorage.setItem(ONBOARDING_STORAGE_KEY, '1'); } catch (e) { /* ignorieren */ }
+    window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
+    window.localStorage.removeItem(STORAGE_KEYS.LOCK);
 }
 
 async function handleLogin() {
-    const p = document.getElementById('login-password').value;
-    const now = Date.now();
+    const p = $('login-password').value;
     const lockUntil = holeLoginSperreBis();
+    const errEl = $('login-error');
 
-    if (lockUntil > now) {
-        const remainingSeconds = Math.ceil((lockUntil - now) / 1000);
-        const loginError = document.getElementById('login-error');
-        if (loginError) {
-            loginError.innerText = `Zu viele Fehlversuche. Bitte in ${remainingSeconds} Sekunden erneut versuchen.`;
-            loginError.style.display = 'block';
-        }
+    if (lockUntil > Date.now()) {
+        const sec = Math.ceil((lockUntil - Date.now()) / 1000);
+        if (errEl) { errEl.innerText = `Zu viele Fehlversuche. Bitte in ${sec}s erneut versuchen.`; errEl.style.display = 'block'; }
         return;
     }
 
     const { data, error } = await dbClient.rpc('login_user', { p_password: p });
-
     if (error || !data || data.length === 0) {
-        const gesperrtBis = fuegeLoginFehlversuchHinzu();
-        const loginError = document.getElementById('login-error');
-        if (loginError) {
-            loginError.style.display = 'block';
-            if (gesperrtBis > Date.now()) {
-                const remainingSeconds = Math.ceil((gesperrtBis - Date.now()) / 1000);
-                loginError.innerText = `Zu viele Fehlversuche. Bitte in ${remainingSeconds} Sekunden erneut versuchen.`;
-            } else {
-                loginError.innerText = 'Falsches Passwort!';
-            }
+        const lock = fuegeLoginFehlversuchHinzu();
+        if (errEl) {
+            errEl.style.display = 'block';
+            errEl.innerText = lock > Date.now() ? `Gesperrt für ${Math.ceil((lock - Date.now()) / 1000)}s.` : 'Falsches Passwort!';
         }
     } else {
-        const loginError = document.getElementById('login-error');
-        if (loginError) loginError.style.display = 'none';
-        document.getElementById('login-password').value = '';
-        document.getElementById('login-overlay').style.display = 'none';
-        
+        if (errEl) errEl.style.display = 'none';
+        $('login-password').value = '';
+        $('login-overlay').style.display = 'none';
         setzeLoginFehlversucheZurueck();
         speichereLokaleSession({ username: data.username, token: data.token });
-        
         showToast('Erfolgreich angemeldet!');
 
-        if (ENTNAHME_MODUS) {
-            await initEntnahmeModus();
-            return;
-        }
-
-        if (ETIKETTEN_MODUS) {
-            await initEtikettenModus();
-            return;
-        }
-
+        if (ENTNAHME_MODUS) return initEntnahmeModus();
+        if (ETIKETTEN_MODUS) return initEtikettenModus();
         ladeAlles();
         pruefeUndZeigeOnboarding();
         pruefeUndVerarbeiteRueckgabeLink();
@@ -2668,3345 +304,2016 @@ async function handleLogout() {
     loescheLokaleSession();
     setzeAuthToken(null);
     setzeLoginFehlversucheZurueck();
-    document.getElementById('login-overlay').style.display = 'flex';
-    document.getElementById('lager-tabelle').innerHTML = '';
+    $('login-overlay').style.display = 'flex';
+    $('lager-tabelle').innerHTML = '';
     showToast('Abgemeldet.');
 }
 
-function openRechtliches(event, modalId) {
-    event.preventDefault();
-    document.getElementById(modalId).style.display = 'block';
+// =========================================================================
+// 4. HARDWARE I/O: ZENTRALES SCANNING (KAMERA & NFC)
+// =========================================================================
+
+// --- Universeller Kamera-Scanner (Html5Qrcode) ---
+async function starteKameraScanner({ modalId, readerId, statusId, onDecode, readyMsg }) {
+    openModalById(modalId);
+    const status = $(statusId);
+    if (status) status.innerText = 'Kamera wird gestartet…';
+
+    if (aktiverQrScanner) {
+        try { await aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {}
+    }
+
+    aktiverQrScanner = new Html5Qrcode(readerId);
+    try {
+        await aktiverQrScanner.start(
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            (decoded) => {
+                if (status) status.innerText = 'Erkannt: ' + decoded;
+                onDecode(decoded);
+            },
+            () => {}
+        );
+        if (status) status.innerText = readyMsg || 'Bereit – Etikett vor die Kamera halten.';
+    } catch (err) {
+        console.error(err);
+        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
+        stoppeKameraScanner(modalId);
+    }
 }
 
-function wechsleModus(modus) {
-    aktuellerModus = modus;
-    const lagerAnsicht = document.getElementById('ansicht-lager');
-    const eventAnsicht = document.getElementById('ansicht-event');
-    const kistenAnsicht = document.getElementById('ansicht-kisten');
-
-    lagerAnsicht.style.display = modus === 'lager' ? 'block' : 'none';
-    eventAnsicht.style.display = modus === 'event' ? 'block' : 'none';
-    if (kistenAnsicht) kistenAnsicht.style.display = modus === 'kisten' ? 'block' : 'none';
-
-    const sichtbareAnsicht = modus === 'lager' ? lagerAnsicht : (modus === 'event' ? eventAnsicht : kistenAnsicht);
-    if (sichtbareAnsicht) {
-        sichtbareAnsicht.classList.remove('view-fade-in');
-        void sichtbareAnsicht.offsetWidth; // Reflow erzwingen, damit die Animation bei jedem Wechsel neu startet
-        sichtbareAnsicht.classList.add('view-fade-in');
+function stoppeKameraScanner(modalId) {
+    if (aktiverQrScanner) {
+        aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; });
     }
-
-    document.getElementById('tab-lager').className = modus === 'lager' ? 'btn btn-modus active' : 'btn btn-modus';
-    document.getElementById('tab-event').className = modus === 'event' ? 'btn btn-modus active' : 'btn btn-modus';
-    const tabKisten = document.getElementById('tab-kisten');
-    if (tabKisten) tabKisten.className = modus === 'kisten' ? 'btn btn-modus active' : 'btn btn-modus';
-
-    if (modus === 'event') ladeEventDaten();
-    if (modus === 'kisten') renderKistenListe();
-    else if (aktiverNfcModus === 'kisten') deaktiviereNfcModus('kisten');
+    closeModal(modalId);
 }
 
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+// Scanner-Wrapper für die HTML-Aufrufe
+function oeffneRueckgabeKameraModal() {
+    starteKameraScanner({ modalId: 'rueckgabeKameraModal', readerId: 'rueckgabe-qr-reader', statusId: 'rueckgabe-scanner-status', onDecode: verarbeiteRueckgabeScan });
+}
+function schliesseRueckgabeKameraModal() { stoppeKameraScanner('rueckgabeKameraModal'); }
+function oeffneAusbuchenKameraModal() {
+    starteKameraScanner({ modalId: 'ausbuchenKameraModal', readerId: 'ausbuchen-qr-reader', statusId: 'ausbuchen-scanner-status', onDecode: verarbeiteAusbuchenScan });
+}
+function schliesseAusbuchenKameraModal() { stoppeKameraScanner('ausbuchenKameraModal'); }
+function oeffneKistenKameraModal() { kistenScanAktion = 'check'; oeffneKistenKameraModalOhneReset(); }
+function starteEventKistenZuweisungScan() {
+    if (!$('packlisten-auswahl')?.value) return showToast('Bitte zuerst ein Event auswählen.', 'warning');
+    kistenScanAktion = 'zuweisen';
+    oeffneKistenKameraModalOhneReset();
+}
+function oeffneKistenKameraModalOhneReset() {
+    starteKameraScanner({
+        modalId: 'kistenKameraModal', readerId: 'kisten-qr-reader', statusId: 'kisten-scanner-status',
+        onDecode: verarbeiteOrtScan,
+        readyMsg: kistenScanAktion === 'zuweisen' ? 'Bereit – Kiste diesem Event zuweisen: Etikett vor die Kamera halten.' : 'Bereit – NFC-Etikett vor die Kamera halten.'
+    });
+}
+function schliesseKistenKameraModal() { stoppeKameraScanner('kistenKameraModal'); }
 
-function openModal() { 
-    document.getElementById('new-name').value = '';
-    document.getElementById('new-kategorie').value = '';
-    document.getElementById('new-einheit').value = 'Stück';
-    const newWichtig = document.getElementById('new-wichtig');
-    if (newWichtig) newWichtig.checked = false;
-    const newTyp = document.getElementById('new-typ');
-    if (newTyp) newTyp.value = 'zaehlbar';
-    
-    const container = document.getElementById('new-orte-wrapper');
-    const rows = container.querySelectorAll('.lagerort-row');
-    for(let i = 1; i < rows.length; i++) {
-        rows[i].remove();
+// --- Universelle NFC Engine ---
+function deaktiviereNfcModus(modus) {
+    if (typeof window.nfc !== 'undefined') {
+        try { window.nfc.removeNdefListener(); } catch {}
     }
-    
-    const firstRow = rows[0];
-    const firstInput = firstRow.querySelector('.new-menge');
-    firstInput.value = '0';
-    firstInput.disabled = false;
-    firstInput.removeAttribute('data-old-value'); 
-    aktualisiereMengeEingabeFarbe(firstInput);
-    setzeBestandStatus(firstRow, 'zahl');
+    if (nfcAbortController) {
+        nfcAbortController.abort();
+        nfcAbortController = null;
+    }
+    if (aktiverNfcModus === modus || !modus) aktiverNfcModus = null;
+    aktualisiereNfcModusUI();
+}
+function deaktiviereAlleNfcModi() { deaktiviereNfcModus(null); }
 
-    const firstSelect = firstRow.querySelector('.new-ort');
-    const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
-    if (defaultOrt && firstSelect) {
-        firstSelect.value = defaultOrt.id;
+function decodeNfcRecord(record) {
+    if (!record) return '';
+    if (typeof window.nfc !== 'undefined' && record.tnf !== undefined) {
+        if (record.tnf === 1 && record.type?.[0] === 85) return window.ndef.uriHelper.decodePayload(record.payload);
+        if (record.tnf === 1 && record.type?.[0] === 84) return window.ndef.textHelper.decodePayload(record.payload);
+        return window.nfc.bytesToString(record.payload);
     }
-    
-    document.getElementById('artikelModal').style.display = 'block'; 
+    if (record.recordType === 'url' || record.recordType === 'absolute-url') return new TextDecoder().decode(record.data);
+    if (record.recordType === 'text') return new TextDecoder(record.encoding || 'utf-8').decode(record.data);
+    return '';
 }
 
-function addOrtRow() {
-    const container = document.getElementById('new-orte-wrapper');
-    const firstRow = container.querySelector('.lagerort-row');
-    const newRow = firstRow.cloneNode(true); 
-
-    const input = newRow.querySelector('.new-menge');
-    input.value = '0';
-    input.disabled = false;
-    input.removeAttribute('data-old-value'); 
-    aktualisiereMengeEingabeFarbe(input);
-    setzeBestandStatus(newRow, 'zahl');
-
-    const newSelect = newRow.querySelector('.new-ort');
-    const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
-    if (defaultOrt && newSelect) {
-        newSelect.value = defaultOrt.id;
+async function starteNfcModus(modus, onScanFn) {
+    if (aktiverNfcModus === modus) {
+        deaktiviereNfcModus(modus);
+        return showToast(`📶 NFC-${modus}-Modus gestoppt.`, 'success');
     }
 
-    container.appendChild(newRow);
+    deaktiviereAlleNfcModi();
+    aktiverNfcModus = modus;
+    aktualisiereNfcModusUI();
+
+    // App (Capacitor/Phonegap)
+    if (typeof window.nfc !== 'undefined') {
+        showToast('📶 App-NFC aktiv – Tag ans Handy halten.', 'success');
+        window.nfc.addNdefListener(evt => {
+            if (aktiverNfcModus !== modus) return;
+            try {
+                const text = decodeNfcRecord(evt.tag?.ndefMessage?.[0]);
+                if (text) onScanFn(text);
+            } catch { showToast('NFC-Tag konnte nicht gelesen werden.', 'error'); }
+        }, () => {}, err => showToast('NFC-Fehler: ' + err, 'error'));
+        return;
+    }
+
+    // Web NFC (Chrome Android)
+    if (!('NDEFReader' in window)) {
+        showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
+        aktiverNfcModus = null;
+        return aktualisiereNfcModusUI();
+    }
+
+    try {
+        nfcAbortController = new AbortController();
+        const reader = new NDEFReader();
+        await reader.scan({ signal: nfcAbortController.signal });
+        showToast('📶 Web-NFC aktiv – Tag ans Handy halten.', 'success');
+        reader.onreading = (event) => {
+            if (aktiverNfcModus !== modus) return;
+            for (const rec of event.message.records) {
+                const text = decodeNfcRecord(rec);
+                if (text) { onScanFn(text); break; }
+            }
+        };
+        reader.onreadingerror = () => showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
+    } catch (err) {
+        if (err.name !== 'AbortError') showToast('NFC Fehler: ' + err, 'error');
+        aktiverNfcModus = null;
+        aktualisiereNfcModusUI();
+    }
 }
 
-function removeNewOrtRow(btn) {
-    const wrapper = document.getElementById('new-orte-wrapper');
-    if (wrapper.querySelectorAll('.lagerort-row').length > 1) {
-        btn.closest('.lagerort-row').remove();
-    } else {
-        showToast("Ein Artikel muss mindestens einen Lagerort haben!", "warning");
+function starteRueckgabeNfc() { starteNfcModus('rueckgabe', verarbeiteRueckgabeScan); }
+function starteAusbuchenNfc() { starteNfcModus('ausbuchen', verarbeiteAusbuchenScan); }
+function starteKistenNfc(aktion = 'check') { kistenScanAktion = aktion; starteNfcModus('kisten', verarbeiteOrtScan); }
+
+function aktualisiereNfcModusUI() {
+    const btns = { rueckgabe: $('rueckgabe-nfc-btn'), ausbuchen: $('ausbuchen-nfc-btn'), kisten: $('kisten-nfc-btn') };
+    Object.entries(btns).forEach(([m, b]) => {
+        if (!b) return;
+        const isActive = aktiverNfcModus === m;
+        b.classList.toggle('nfc-aktiv', isActive);
+        b.innerText = isActive ? '📶 NFC aktiv – antippen zum Stoppen' : '📶 NFC-Scan (Android)';
+    });
+}
+
+// Universelle NFC-Schreibroutine
+async function schreibeNfcUrlTag(url, label) {
+    if (typeof window.nfc !== 'undefined') {
+        showToast('📶 App: NFC-Tag jetzt an das Handy halten…', 'success');
+        const writeAction = () => {
+            window.nfc.write([window.ndef.uriRecord(url)], () => {
+                if (navigator.vibrate) navigator.vibrate(200);
+                showToast(`✅ NFC-Tag für "${label}" beschrieben!`, 'success');
+                window.nfc.removeNdefListener();
+                window.nfc.removeNdefFormatableListener();
+            }, err => {
+                showToast('Schreiben fehlgeschlagen: ' + err, 'error');
+                window.nfc.removeNdefListener();
+                window.nfc.removeNdefFormatableListener();
+            });
+        };
+        window.nfc.addNdefListener(writeAction, () => {}, () => {});
+        window.nfc.addNdefFormatableListener(writeAction, () => {}, () => {});
+        return;
     }
+
+    if (!('NDEFReader' in window)) return showToast('NFC-Beschreiben wird von diesem Browser nicht unterstützt.', 'error');
+
+    try {
+        const writer = new NDEFReader();
+        showToast('📶 Web-NFC: Leeren NFC-Tag ans Handy halten…', 'success');
+        await writer.write({ records: [{ recordType: 'url', data: url }] });
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast(`✅ NFC-Tag für "${label}" beschrieben!`, 'success');
+    } catch (err) { showToast('Schreiben fehlgeschlagen: ' + err, 'error'); }
+}
+
+// Native App Hooks
+window.onNativeNfcRead = (payload, action) => {
+    if (action === 'rueckgabe') verarbeiteRueckgabeScan(payload);
+    else if (action === 'ausbuchen') verarbeiteAusbuchenScan(payload);
+    else if (action === 'kisten') verarbeiteOrtScan(payload);
+};
+window.onNativeNfcWriteResult = (success, msg) => {
+    if (navigator.vibrate) navigator.vibrate(success ? 200 : [100, 60, 100]);
+    showToast(success ? '✅ NFC-Tag erfolgreich beschrieben!' : 'App-Schreiben Fehler: ' + msg, success ? 'success' : 'error');
+};
+
+// =========================================================================
+// 5. LAGER-MODUS (BESTAND, FILTER, RENDERING, EDITIEREN)
+// =========================================================================
+
+function extrahiereArtikelIdAusScan(rawText) {
+    const text = String(rawText || '').trim();
+    const matchSimple = /^artikel:(.+)$/i.exec(text);
+    if (matchSimple) return matchSimple[1].trim();
+    const matchUrl = /rueckgabe=([^&\s]+)/i.exec(text);
+    return matchUrl ? matchUrl[1].trim() : null;
+}
+
+function extrahiereOrtCodeAusScan(rawText) {
+    const text = String(rawText || '').trim();
+    const m1 = /^(?:ort|behaelter):(.+)$/i.exec(text);
+    if (m1) return m1[1].trim();
+    const m2 = /kistencheck=([^&\s]+)/i.exec(text);
+    return m2 ? decodeURIComponent(m2[1].trim()) : null;
 }
 
 async function ladeAlles() {
     await ladeLagerorte();
-    
     const { data: listData } = await dbClient.from('packlisten').select('*');
     packlisten = listData || [];
-
     const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
     packlistenPositionen = resPos.data || [];
-
     await ladeBestand();
     await ladeAktuelleEntnahmeVerbraeuche();
     wendeFilterAn();
-    if(aktuellerModus === 'event') await ladeEventDaten();
-    if(aktuellerModus === 'kisten') renderKistenListe();
+    if (aktuellerModus === 'event') await ladeEventDaten();
+    if (aktuellerModus === 'kisten') renderKistenListe();
 }
 
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
-    if (data) {
-        alleLagerorte = data; 
+    if (!data) return;
+    alleLagerorte = data;
 
-        const selectsNeu = document.querySelectorAll('.new-ort');
-        const selectEdit = document.getElementById('edit-ort');
-        
-        selectsNeu.forEach(sel => sel.innerHTML = ''); 
-        if(selectEdit) selectEdit.innerHTML = '';
+    const selectsNeu = document.querySelectorAll('.new-ort');
+    const selectEdit = $('edit-ort');
+    selectsNeu.forEach(sel => populateSelect(sel, data));
+    if (selectEdit) populateSelect(selectEdit, data);
 
-        data.forEach(o => {
-            selectsNeu.forEach(sel => sel.add(new Option(o.name, o.id)));
-            if(selectEdit) selectEdit.add(new Option(o.name, o.id));
-        });
-
-
-        const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
-        if (defaultOrt) {
-            selectsNeu.forEach(sel => sel.value = defaultOrt.id);
-        }
-    }
+    const def = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
+    if (def) selectsNeu.forEach(sel => sel.value = def.id);
 }
 
 async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
-    let { data, error } = await dbClient.from('bestand')
-        .select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit, kommentar), lagerorte (id, name)`).order('id');
-    
+
+    let { data, error } = await dbClient.from('bestand').select(`id, menge, alte_menge, created_at, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit, kommentar), lagerorte (id, name)`).order('id');
     if (error) {
-        console.warn("Spalte created_at fehlt in Supabase. Lade ohne Datum.");
-        const fallback = await dbClient.from('bestand')
-            .select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit, kommentar), lagerorte (id, name)`).order('id');
+        const fallback = await dbClient.from('bestand').select(`id, menge, alte_menge, artikel_id, lagerort_id, artikel (id, name, kategorie, einheit, kommentar), lagerorte (id, name)`).order('id');
         data = fallback.data;
-        if (fallback.error) { showToast("Datenbank-Fehler", "error"); return; }
     }
 
     const wichtigMap = new Map(alleArtikelInfos.map(art => [String(art.id), Boolean(art.wichtig)]));
-    aktuelleDaten = (data || []).map(zeile => ({
-        ...zeile,
-        artikel: zeile.artikel ? { ...zeile.artikel, wichtig: wichtigMap.get(String(zeile.artikel_id)) || Boolean(zeile.artikel.wichtig) } : zeile.artikel
-    })); 
-    aktualisiereFilterDropdown(aktuelleDaten); 
-    wendeFilterAn(); 
+    aktuelleDaten = (data || []).map(z => ({
+        ...z,
+        artikel: z.artikel ? { ...z.artikel, wichtig: wichtigMap.get(String(z.artikel_id)) || Boolean(z.artikel.wichtig) } : z.artikel
+    }));
+
+    aktualisiereFilterDropdown(aktuelleDaten);
+    wendeFilterAn();
     aktualisiereEntnahmeMaterialDatalist();
 }
 
 function aktualisiereFilterDropdown(daten) {
-    const dropdown = document.getElementById('kategorie-filter');
-    const datalist = document.getElementById('kategorie-liste');
-    const regalDropdown = document.getElementById('regal-filter-select');
-    
-    const kategorien = new Set();
-    const regale = new Set();
-    
-    daten.forEach(z => { 
-        if (z.artikel && z.artikel.kategorie && z.artikel.kategorie.trim() !== '') {
-            kategorien.add(z.artikel.kategorie.trim()); 
-        }
-        const regalName = extrahiereRegalName(z.lagerorte?.name || '');
-        if (regalName) {
-            regale.add(regalName);
-        }
+    const katDropdown = $('kategorie-filter'), datalist = $('kategorie-liste'), comboDropdown = $('ort-filter-combo');
+    const kategorien = new Set(), regale = new Set();
+
+    daten.forEach(z => {
+        if (z.artikel?.kategorie?.trim()) kategorien.add(z.artikel.kategorie.trim());
+        const regal = extrahiereRegalName(z.lagerorte?.name || '');
+        if (regal) regale.add(regal);
     });
 
-    if (dropdown) {
-        const aktuelleAuswahl = dropdown.value;
-        dropdown.innerHTML = '<option value="ALLE">Alle Kategorien</option>';
-        Array.from(kategorien).sort().forEach(kat => dropdown.add(new Option(kat, kat)));
-        if (Array.from(dropdown.options).some(opt => opt.value === aktuelleAuswahl)) dropdown.value = aktuelleAuswahl;
+    if (katDropdown) {
+        populateSelect(katDropdown, Array.from(kategorien).sort(), { defaultOption: 'Alle Kategorien' });
     }
-
-    if (regalDropdown) {
-        const aktuelleRegalAuswahl = aktiverRegalFilter || regalDropdown.value;
-        regalDropdown.innerHTML = '<option value="">Alle Regale</option>';
-        Array.from(regale).sort((a,b) => vergleicheRegalNamen(a, b)).forEach(reg => regalDropdown.add(new Option('Regal: ' + reg, reg)));
-        if (Array.from(regalDropdown.options).some(opt => opt.value === aktuelleRegalAuswahl)) {
-            regalDropdown.value = aktuelleRegalAuswahl;
-        }
-    }
-    const comboDropdown = document.getElementById('ort-filter-combo');
     if (comboDropdown) {
-        const aktuelleComboAuswahl = aktiverRegalFilter ? 'regal:' + aktiverRegalFilter : comboDropdown.value;
         comboDropdown.innerHTML = '<option value="">Alle Orte</option>';
-        
-        Array.from(alleLagerorte).sort((a,b) => a.name.localeCompare(b.name, 'de')).forEach(ort => {
-            comboDropdown.add(new Option('📍 ' + ort.name, 'ort:' + ort.id));
-        });
-        
-        Array.from(regale).sort((a,b) => vergleicheRegalNamen(a, b)).forEach(reg => {
-            comboDropdown.add(new Option('🏷️ Regal: ' + reg, 'regal:' + reg));
-        });
-        
-        if (Array.from(comboDropdown.options).some(opt => opt.value === aktuelleComboAuswahl)) {
-            comboDropdown.value = aktuelleComboAuswahl;
-        }
+        Array.from(alleLagerorte).sort((a, b) => a.name.localeCompare(b.name, 'de')).forEach(o => comboDropdown.add(new Option('📍 ' + o.name, 'ort:' + o.id)));
+        Array.from(regale).sort(vergleicheRegalNamen).forEach(r => comboDropdown.add(new Option('🏷️ Regal: ' + r, 'regal:' + r)));
+        if (aktiverRegalFilter) comboDropdown.value = 'regal:' + aktiverRegalFilter;
     }
-
     if (datalist) {
-        datalist.innerHTML = '';
-        Array.from(kategorien).sort().forEach(kat => {
-            const option = document.createElement('option');
-            option.value = kat;
-            datalist.appendChild(option);
-        });
+        datalist.innerHTML = Array.from(kategorien).sort().map(k => `<option value="${escapeHtml(k)}">`).join('');
     }
 }
 
 function wendeFilterAn() {
-    const katFilter = document.getElementById('kategorie-filter')?.value || 'ALLE';
-    const comboFilter = document.getElementById('ort-filter-combo')?.value || '';
-    const suchText = document.getElementById('such-filter')?.value.toLowerCase().trim() || '';
-    
-    let ortFilter = 'ALLE';
-    let regalFilterTemp = '';
-    if (comboFilter.startsWith('ort:')) {
-        ortFilter = comboFilter.substring(4);
-    } else if (comboFilter.startsWith('regal:')) {
-        regalFilterTemp = comboFilter.substring(6);
-    }
-    
-    let gefilterteDaten = aktuelleDaten;
+    const katFilter = $('kategorie-filter')?.value || 'ALLE';
+    const comboFilter = $('ort-filter-combo')?.value || '';
+    const suchText = $('such-filter')?.value.toLowerCase().trim() || '';
 
-    if (suchText !== '') {
-        gefilterteDaten = gefilterteDaten.filter(z => 
-            (z.artikel?.name || '').toLowerCase().includes(suchText) ||
-            (z.artikel?.kategorie || '').toLowerCase().includes(suchText) ||
-            (z.lagerorte?.name || '').toLowerCase().includes(suchText) ||
-            String(z.artikel?.id ?? '').toLowerCase().includes(suchText)
-        );
-    }
+    let ortFilter = 'ALLE', regalTemp = '';
+    if (comboFilter.startsWith('ort:')) ortFilter = comboFilter.substring(4);
+    else if (comboFilter.startsWith('regal:')) regalTemp = comboFilter.substring(6);
 
-    if (regalFilterTemp !== '') {
-        aktiverRegalFilter = regalFilterTemp;
-    } else if (comboFilter.startsWith('ort:') || comboFilter === '') {
+    aktiverRegalFilter = regalTemp || (comboFilter === '' ? '' : aktiverRegalFilter);
+
+    let gefiltert = aktuelleDaten.filter(z => {
+        if (suchText) {
+            const matches = [z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name, String(z.artikel?.id ?? '')]
+                .some(field => (field || '').toLowerCase().includes(suchText));
+            if (!matches) return false;
+        }
+        if (aktiverRegalFilter && ![z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name].some(t => textEnthaeltRegal(t, aktiverRegalFilter))) return false;
+        if (katFilter !== 'ALLE' && z.artikel?.kategorie !== katFilter) return false;
+        if (ortFilter !== 'ALLE' && String(z.lagerort_id) !== String(ortFilter)) return false;
+        return true;
+    });
+
+    tabelleAktualisieren(gefiltert);
+}
+
+function ortComboChanged() {
+    const val = $('ort-filter-combo')?.value || '';
+    if (val.startsWith('regal:')) setzeRegalFilter(val.substring(6), true);
+    else {
         aktiverRegalFilter = '';
+        const url = new URL(window.location.href);
+        url.searchParams.delete('regal');
+        window.history.replaceState({}, '', url.toString());
+        wendeFilterAn();
     }
-    if (aktiverRegalFilter !== '') {
-        gefilterteDaten = gefilterteDaten.filter(z => {
-            const suchfelder = [
-                z.artikel?.name || '',
-                z.artikel?.kategorie || '',
-                z.lagerorte?.name || ''
-            ];
+}
 
-            return suchfelder.some(text => textEnthaeltRegal(text, aktiverRegalFilter));
-        });
+function setzeRegalFilter(regalText, syncUrl = true) {
+    aktiverRegalFilter = extrahiereRegalName(regalText);
+    if (syncUrl) {
+        const url = new URL(window.location.href);
+        if (aktiverRegalFilter) url.searchParams.set('regal', aktiverRegalFilter);
+        else url.searchParams.delete('regal');
+        window.history.replaceState({}, '', url.toString());
     }
-
-    if (katFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => z.artikel && z.artikel.kategorie === katFilter);
-    if (ortFilter !== 'ALLE') gefilterteDaten = gefilterteDaten.filter(z => String(z.lagerort_id) === String(ortFilter));
-
-    tabelleAktualisieren(gefilterteDaten);
+    if ($('ort-filter-combo')) $('ort-filter-combo').value = aktiverRegalFilter ? 'regal:' + aktiverRegalFilter : '';
+    if ($('regal-qr-input') && $('regal-qr-input').value !== regalText) $('regal-qr-input').value = regalText || '';
+    aktualisiereRegalQrVorschau();
+    wendeFilterAn();
 }
 
 function toggleSortierung() {
     sortAscending = !sortAscending;
-    const btn = document.getElementById('btn-sort');
-    if (btn) btn.innerText = sortAscending ? 'A-Z' : 'Z-A';
+    if ($('btn-sort')) $('btn-sort').innerText = sortAscending ? 'A-Z' : 'Z-A';
     wendeFilterAn();
 }
-
 function toggleGruppe(name) {
-    if (offeneGruppen.has(name)) offeneGruppen.delete(name);
-    else offeneGruppen.add(name);
+    if (offeneGruppen.has(name)) offeneGruppen.delete(name); else offeneGruppen.add(name);
     wendeFilterAn();
 }
-
 function toggleAlleGruppen() {
     isAllOpen = !isAllOpen;
     offeneGruppen.clear();
     if (isAllOpen) aktuelleDaten.forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
     wendeFilterAn();
 }
+function toggleAlleArtikelSichtbarkeit() { zeigeAlleArtikel = !zeigeAlleArtikel; wendeFilterAn(); }
 
 function tabelleAktualisieren(daten) {
-    const tbody = document.getElementById('lager-tabelle');
+    const tbody = $('lager-tabelle');
     if (!tbody) return;
-    tbody.innerHTML = ''; 
-    
-    const suchText = document.getElementById('such-filter')?.value.trim() || '';
+    tbody.innerHTML = '';
+
+    const suchText = $('such-filter')?.value.trim() || '';
     const isSearching = suchText.length > 0 || aktiverRegalFilter !== '';
-    
-    const reservierungenDetails = {};
+
+    // Reservierungen aus Packlisten vorberechnen
+    const resMap = {};
     packlistenPositionen.forEach(p => {
-        if(p.artikel_id) {
-            if (!reservierungenDetails[p.artikel_id]) {
-                reservierungenDetails[p.artikel_id] = { gesamt: 0, listen: {} };
-            }
-            reservierungenDetails[p.artikel_id].gesamt += Number(p.menge);
-            
-            const pl = packlisten.find(list => String(list.id) === String(p.packliste_id));
-            const plName = pl ? pl.name : 'Unbekannte Liste';
-            
-            reservierungenDetails[p.artikel_id].listen[plName] = (reservierungenDetails[p.artikel_id].listen[plName] || 0) + Number(p.menge);
-        }
+        if (!p.artikel_id) return;
+        if (!resMap[p.artikel_id]) resMap[p.artikel_id] = { gesamt: 0, listen: {} };
+        resMap[p.artikel_id].gesamt += Number(p.menge);
+        const pl = packlisten.find(l => String(l.id) === String(p.packliste_id));
+        const plName = pl ? pl.name : 'Unbekannt';
+        resMap[p.artikel_id].listen[plName] = (resMap[p.artikel_id].listen[plName] || 0) + Number(p.menge);
     });
 
-    const anzeigeDaten = (zeigeAlleArtikel || aktiverRegalFilter !== '') ? daten : daten.filter(zeile => zeile.artikel && zeile.artikel.wichtig);
-    const gruppierteDaten = {}; 
-    anzeigeDaten.forEach(zeile => {
-        if (!zeile.artikel) return; 
-        const katName = zeile.artikel.kategorie || 'Ohne Kategorie';
-        if (!gruppierteDaten[katName]) { gruppierteDaten[katName] = []; }
-        gruppierteDaten[katName].push(zeile); 
+    const anzeigeDaten = (zeigeAlleArtikel || aktiverRegalFilter !== '') ? daten : daten.filter(z => z.artikel?.wichtig);
+    const gruppen = {};
+    anzeigeDaten.forEach(z => {
+        if (!z.artikel) return;
+        const kat = z.artikel.kategorie || 'Ohne Kategorie';
+        if (!gruppen[kat]) gruppen[kat] = [];
+        gruppen[kat].push(z);
     });
 
     const sortFactor = sortAscending ? 1 : -1;
-    const sortedKategorien = Object.keys(gruppierteDaten).sort((a, b) => {
-        const specialFolder = 'Ohne Kategorie';
-        if (a === specialFolder) return 1;
-        if (b === specialFolder) return -1;
+    const sortedKategorien = Object.keys(gruppen).sort((a, b) => {
+        if (a === 'Ohne Kategorie') return 1; if (b === 'Ohne Kategorie') return -1;
         return a.localeCompare(b, 'de') * sortFactor;
     });
 
     if (anzeigeDaten.length === 0) {
-        const emptyTr = document.createElement('tr');
-        emptyTr.innerHTML = `
-            <td colspan="3" style="text-align:center; padding:24px; color:#666;">
-                ${zeigeAlleArtikel ? 'Keine Artikel vorhanden.' : 'Keine markierten Artikel sichtbar.'}
-            </td>
-        `;
-        tbody.appendChild(emptyTr);
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; padding:24px; color:#666;">${zeigeAlleArtikel ? 'Keine Artikel vorhanden.' : 'Keine markierten Artikel sichtbar.'}</td></tr>`;
+        return;
     }
-    
-    for (const katName of sortedKategorien) {
-        const zeilenListe = gruppierteDaten[katName];
-        
+
+    sortedKategorien.forEach(katName => {
+        const zeilen = gruppen[katName];
         const isOpen = offeneGruppen.has(katName) || isSearching;
-        const icon = isOpen ? '📂' : '📁';
-
-        let ordnerSumme = 0;
-        let hatUnendlich = false;
-        zeilenListe.forEach(z => {
-            if(Number(z.menge) === -1) hatUnendlich = true;
-            else if(Number(z.menge) >= 0) ordnerSumme += Number(z.menge);
+        let ordnerSumme = 0, hatUnendlich = false;
+        zeilen.forEach(z => {
+            if (Number(z.menge) === -1) hatUnendlich = true;
+            else if (Number(z.menge) >= 0) ordnerSumme += Number(z.menge);
         });
-        
-        let summenAnzeige = ordnerSumme;
-        if(hatUnendlich && ordnerSumme > 0) summenAnzeige = `${ordnerSumme} + ∞`;
-        else if(hatUnendlich && ordnerSumme === 0) summenAnzeige = `∞`;
 
+        const sumText = hatUnendlich ? (ordnerSumme > 0 ? `${ordnerSumme} + ∞` : '∞') : ordnerSumme;
         const headerTr = document.createElement('tr');
         headerTr.style.cursor = 'pointer';
         headerTr.onclick = () => toggleGruppe(katName);
-        
         headerTr.innerHTML = `
-            <td colspan="3" style="background-color: #e2e8f0; color: #2c3e50; font-weight: bold; padding: 12px; user-select: none;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>${icon} ${escapeHtml(katName)}</span>
-                    <span class="summen-badge">Gesamt: ${summenAnzeige}</span>
+            <td colspan="3" style="background-color:#e2e8f0; color:#2c3e50; font-weight:bold; padding:12px; user-select:none;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>${isOpen ? '📂' : '📁'} ${escapeHtml(katName)}</span>
+                    <span class="summen-badge">Gesamt: ${sumText}</span>
                 </div>
-            </td>
-        `;
+            </td>`;
         tbody.appendChild(headerTr);
+        if (!isOpen) return;
 
-        if (!isOpen) continue;
-
-        const prefixCounts = {};
-        const prefixSums = {};
-        const prefixInf = {};
-        
-        zeilenListe.forEach(z => {
+        // Artikel-Prefix-Gruppierung
+        const prefixCounts = {}, prefixSums = {}, prefixInf = {};
+        zeilen.forEach(z => {
             const parts = z.artikel.name.trim().split(' ');
-            if (parts.length > 1) { 
-                const prefix = parts[0];
-                prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
-                
-                if (!prefixSums[prefix]) prefixSums[prefix] = 0;
-                if (Number(z.menge) === -1) {
-                    prefixInf[prefix] = true;
-                } else if (Number(z.menge) >= 0) {
-                    prefixSums[prefix] += Number(z.menge);
-                }
+            if (parts.length > 1) {
+                const pref = parts[0];
+                prefixCounts[pref] = (prefixCounts[pref] || 0) + 1;
+                if (Number(z.menge) === -1) prefixInf[pref] = true;
+                else if (Number(z.menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(z.menge);
             }
         });
 
-        zeilenListe.sort((a, b) => {
-            const regalCmp = vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor);
-            if (regalCmp !== 0) return regalCmp;
+        // Nach Artikel gruppieren
+        const artMap = new Map();
+        zeilen.forEach(z => {
+            if (!artMap.has(z.artikel_id)) artMap.set(z.artikel_id, { artikel: z.artikel, bestaende: [] });
+            artMap.get(z.artikel_id).bestaende.push(z);
+        });
 
-            const aName = a.artikel.name.trim();
-            const bName = b.artikel.name.trim();
-            const aParts = aName.split(' ');
-            const bParts = bName.split(' ');
-            const aPrefix = aParts.length > 1 && prefixCounts[aParts[0]] > 1 ? aParts[0] : aName;
-            const bPrefix = bParts.length > 1 && prefixCounts[bParts[0]] > 1 ? bParts[0] : bName;
-
-            const cmp = aPrefix.localeCompare(bPrefix, 'de') * sortFactor;
-            if (cmp !== 0) return cmp;
-            return aName.localeCompare(bName, 'de') * sortFactor;
+        const sortierteArtikel = Array.from(artMap.entries()).map(([artId, grp]) => ({
+            artId, grp,
+            sortRegal: ermittleRegalSchluessel(grp.bestaende),
+            sortName: grp.artikel.name.trim()
+        })).sort((a, b) => {
+            const regalCmp = vergleicheRegalNamen(a.sortRegal, b.sortRegal, sortFactor);
+            return regalCmp !== 0 ? regalCmp : a.sortName.localeCompare(b.sortName, 'de', { numeric: true }) * sortFactor;
         });
 
         let currentPrefix = null;
-        const artikelGruppen = new Map();
-        zeilenListe.forEach(z => {
-            if (!artikelGruppen.has(z.artikel_id)) {
-                artikelGruppen.set(z.artikel_id, {
-                    artikel: z.artikel,
-                    bestaende: []
-                });
-            }
-            artikelGruppen.get(z.artikel_id).bestaende.push(z);
-        });
+        sortierteArtikel.forEach(({ grp, artId }) => {
+            grp.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
+            const parts = grp.artikel.name.trim().split(' ');
+            const isGrp = parts.length > 1 && prefixCounts[parts[0]] > 1;
+            const pref = isGrp ? parts[0] : null;
 
-        const gruppenSortiert = Array.from(artikelGruppen.entries()).map(([artId, gruppe]) => ({
-            artId,
-            gruppe,
-            sortRegal: ermittleRegalSchluessel(gruppe.bestaende),
-            sortName: gruppe.artikel.name.trim()
-        })).sort((a, b) => {
-            const regalCmp = vergleicheRegalNamen(a.sortRegal, b.sortRegal, sortFactor);
-            if (regalCmp !== 0) return regalCmp;
-            return a.sortName.localeCompare(b.sortName, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
-        });
-
-        gruppenSortiert.forEach(({ gruppe, artId }) => {
-            gruppe.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
-
-            const aName = gruppe.artikel.name.trim();
-            const parts = aName.split(' ');
-            const isGroup = parts.length > 1 && prefixCounts[parts[0]] > 1;
-            const prefix = isGroup ? parts[0] : null;
-
-            if (isGroup && currentPrefix !== prefix) {
-                let pSum = prefixSums[prefix] || 0;
-                let pInf = prefixInf[prefix] || false;
-                let pSumAnzeige = pSum;
-                
-                if (pInf && pSum > 0) pSumAnzeige = `${pSum} + ∞`;
-                else if (pInf && pSum === 0) pSumAnzeige = `∞`;
-
-                const subGroupTr = document.createElement('tr');
-                subGroupTr.innerHTML = `
-                    <td colspan="3" style="padding-left: 25px; background: #fafafa; color: #7f8c8d; font-size: 0.85em; font-weight: bold; border-bottom: 1px dashed #ddd; user-select: none;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>🏷️ ${escapeHtml(prefix)}</span>
-                            <span class="sub-sum-badge">Gesamt: ${pSumAnzeige}</span>
+            if (isGrp && currentPrefix !== pref) {
+                const pSum = prefixSums[pref] || 0;
+                const pInf = prefixInf[pref];
+                const pText = pInf ? (pSum > 0 ? `${pSum} + ∞` : '∞') : pSum;
+                const subTr = document.createElement('tr');
+                subTr.innerHTML = `
+                    <td colspan="3" style="padding-left:25px; background:#fafafa; color:#7f8c8d; font-size:0.85em; font-weight:bold; border-bottom:1px dashed #ddd; user-select:none;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>🏷️ ${escapeHtml(pref)}</span>
+                            <span class="sub-sum-badge">Gesamt: ${pText}</span>
                         </div>
                     </td>`;
-                tbody.appendChild(subGroupTr);
-                currentPrefix = prefix;
-            } else if (!isGroup) {
-                currentPrefix = null;
-            }
+                tbody.appendChild(subTr);
+                currentPrefix = pref;
+            } else if (!isGrp) currentPrefix = null;
 
             const tr = document.createElement('tr');
-            tr.style.cursor = isEditMode ? "pointer" : "default";
-
-            tr.onclick = (e) => { 
-                if(hoverWasLongPress) return;
-                if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') openEditModal(artId); 
+            tr.style.cursor = isEditMode ? 'pointer' : 'default';
+            tr.onclick = (e) => {
+                if (window.hoverWasLongPress) return;
+                if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
             };
 
-            let displayName = gruppe.artikel.name;
-            let indent = 25;
-            let iconLabel = '↳';
-            const wichtigBadge = gruppe.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
-            const hatKommentar = gruppe.artikel.kommentar && gruppe.artikel.kommentar.trim() !== '';
-            const bubbleColor = hatKommentar ? '#3498db' : '#bdc3c7'; 
-            const bubbleFill = hatKommentar ? '#3498db' : 'none'; 
-            const bubbleOpacity = hatKommentar ? '1' : '0.5'; 
-            
-            const kommentarText = (gruppe.artikel.kommentar || '').trim();
+            const displayName = isGrp ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
+            const wichtigBadge = grp.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
+            const hatKommentar = Boolean(grp.artikel.kommentar?.trim());
             const kommentarIcon = isEditMode ? `
-                <span onclick="openKommentarModal('${artId}', event)" style="cursor: pointer; margin-left: 8px; vertical-align: middle; opacity: ${bubbleOpacity}; display: inline-block; padding-top: 2px;" title="${hatKommentar ? 'Kommentar ansehen/bearbeiten' : 'Kommentar hinzufügen'}">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="${bubbleFill}" stroke="${bubbleColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
-                    </svg>
+                <span onclick="openKommentarModal('${artId}', event)" style="cursor:pointer; margin-left:8px; vertical-align:middle; opacity:${hatKommentar ? '1' : '0.5'};" title="Kommentar bearbeiten">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="${hatKommentar ? '#3498db' : 'none'}" stroke="${hatKommentar ? '#3498db' : '#bdc3c7'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
                 </span>` : '';
             const kommentarAnzeige = !isEditMode && hatKommentar ? `
                 <div class="bestand-kommentar-anzeige">
-                    <span style="flex: 0 0 auto; color: #3498db; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-top: 1px;">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
-                        </svg>
-                    </span>
-                    <span style="min-width: 0; white-space: pre-wrap; word-break: break-word;">${escapeHtml(kommentarText)}</span>
+                    <span style="color:#3498db;">💬</span>
+                    <span style="word-break:break-word;">${escapeHtml(grp.artikel.kommentar.trim())}</span>
                 </div>` : '';
-            const artikelIdAnzeige = `<div class="bestand-id-anzeige" style="font-size: 0.7em; color: #b0b0b0; margin-top: 2px; user-select: text;">ID: ${escapeHtml(String(gruppe.artikel.id))}</div>`;
-            if (isGroup) {
-                indent = 45;
-                iconLabel = '◦';
-                displayName = displayName.substring(prefix.length).trim(); 
-            }
 
             let latestDate = null;
-            gruppe.bestaende.forEach(b => {
-                if(b.created_at) {
-                    const d = new Date(b.created_at);
-                    if(!latestDate || d > latestDate) latestDate = d;
-                }
-            });
-            
-            let dateStr = "Unbekannt";
-            if(latestDate) {
-                dateStr = latestDate.toLocaleDateString('de-DE') + " " + latestDate.toLocaleTimeString('de-DE', {hour: '2-digit', minute:'2-digit'}) + " Uhr";
-            }
-            let isInfinite = gruppe.bestaende.some(b => Number(b.menge) === -1);
-            let hatNachkaufMarkierung = gruppe.bestaende.some(b => Number(b.menge) === -3);
-            let hatMinusBestand = gruppe.bestaende.some(b => Number(b.menge) === -2 || Number(b.menge) === -3);
+            grp.bestaende.forEach(b => { if (b.created_at && (!latestDate || new Date(b.created_at) > latestDate)) latestDate = new Date(b.created_at); });
+            const dateStr = latestDate ? latestDate.toLocaleDateString('de-DE') + ' ' + latestDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr' : 'Unbekannt';
+
+            // Reservierungs-Hover
             let resHtml = '';
-            const resInfo = reservierungenDetails[artId];
-            if (resInfo && resInfo.gesamt > 0 && !isInfinite) {
-                let hoverText = "<strong>Reserviert für:</strong><br>";
-                for (const [lName, lMenge] of Object.entries(resInfo.listen)) {
-                    const safeLName = escapeHtml(lName);
-                    hoverText += `• ${Number(lMenge) || 0}x in <i>${safeLName}</i><br>`;
-                }
-                resHtml = `<div class="no-select bestand-reserviert-info"
-                    data-hover-type="res" data-hover-content="${hoverText}"
-                    onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
-                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
-                    📦 Reserviert: ${resInfo.gesamt}
-                </div>`;
+            const res = resMap[artId];
+            if (res && res.gesamt > 0 && !grp.bestaende.some(b => Number(b.menge) === -1)) {
+                let hoverText = '<strong>Reserviert für:</strong><br>' + Object.entries(res.listen).map(([l, m]) => `• ${m}x in <i>${escapeHtml(l)}</i><br>`).join('');
+                resHtml = `<div class="no-select bestand-reserviert-info" data-hover-type="res" data-hover-content="${hoverText}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)" ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">📦 Reserviert: ${res.gesamt}</div>`;
             }
 
-            let bestandInfoHtml = "";
-            const einheit = gruppe.artikel.einheit || 'Stück';
-            const verfuegbarkeit = berechneArtikelVerfuegbarkeit(artId, gruppe.bestaende);
-            const verfuegbarkeitFarbe = hatNachkaufMarkierung
-                ? '#c0392b'
-                : (hatMinusBestand ? '#27ae60' : (verfuegbarkeit === '∞' ? '#7f8c8d' : (Number(verfuegbarkeit) > 0 ? '#27ae60' : '#c0392b')));
-            const verfuegbarkeitWert = hatNachkaufMarkierung
-                ? 'Nachkaufen'
-                : (hatMinusBestand ? 'Verfügbar' : (verfuegbarkeit === '∞' ? '∞' : `${verfuegbarkeit}`));
-            const nachkaufHinweis = hatNachkaufMarkierung
-                ? '<div class="bestand-nachkauf-hinweis" style="color: #c0392b;">Nachkaufen</div>'
-                : (hatMinusBestand ? '<div class="bestand-nachkauf-hinweis" style="color: #27ae60;">Verfügbar</div>' : '');
+            // Bestände & Verfügbarkeit
+            const hatNachkauf = grp.bestaende.some(b => Number(b.menge) === -3);
+            const hatMinus = grp.bestaende.some(b => Number(b.menge) === -2 || Number(b.menge) === -3);
+            const verfuegbar = berechneArtikelVerfuegbarkeit(artId, grp.bestaende);
+            const einheit = grp.artikel.einheit || 'Stück';
 
-            gruppe.bestaende.forEach(b => {
-                const isInfLocal = (Number(b.menge) === -1);
-                const isStrichLocal = (Number(b.menge) === -2);
-                const isStrichNachkaufLocal = (Number(b.menge) === -3);
-                let mengeZelle = "";
-                
-                if (isInfLocal) {
-                    mengeZelle = `<span style="font-size: 1.2em; color: #7f8c8d; font-weight: bold;" title="Verbrauchsartikel (Unendlich)">∞</span> <small class="bestand-einheit" style="margin-left: 3px;">${einheit}</small>`;
-                } else if (isStrichLocal || isStrichNachkaufLocal) {
-                    const strichStatus = isStrichNachkaufLocal ? 'warn' : 'ok';
-                    const strichTitle = isStrichNachkaufLocal ? 'Nachkauf erforderlich' : 'Ausreichend vorhanden';
-                    mengeZelle = `<span class="bestand-status-pill ${strichStatus}" title="${strichTitle}">-</span>`;
-                } else {
-                    const wertKlasse = Number(b.menge) > 0 ? 'bestand-menge-ok' : 'bestand-menge-low';
-                    mengeZelle = `
+            let bestandRowsHtml = grp.bestaende.map(b => {
+                const m = Number(b.menge);
+                let zelle = '';
+                if (m === -1) zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
+                else if (m === -2 || m === -3) zelle = `<span class="bestand-status-pill ${m === -3 ? 'warn' : 'ok'}">-</span>`;
+                else {
+                    zelle = `
                         <div class="bestand-ort-qty-wrap">
-                            <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${wertKlasse}" value="${b.menge}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width: 60px;">
-                            <small class="bestand-einheit" style="width: 45px; text-align: left;">${einheit}</small>
+                            <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${m > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${b.menge}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width:60px;">
+                            <small class="bestand-einheit">${einheit}</small>
                         </div>`;
                 }
+                return `<div class="bestand-ort-row"><span class="bestand-ort-name">📍 ${escapeHtml(b.lagerorte.name)}</span>${zelle}</div>`;
+            }).join('');
 
-                bestandInfoHtml += `
-                    <div class="bestand-ort-row">
-                        <span class="bestand-ort-name">📍 ${escapeHtml(b.lagerorte.name)}</span>
-                        ${mengeZelle}
-                    </div>`;
-            });
+            const vFarbe = hatNachkauf ? '#c0392b' : (hatMinus ? '#27ae60' : (verfuegbar === '∞' ? '#7f8c8d' : (Number(verfuegbar) > 0 ? '#27ae60' : '#c0392b')));
+            const vText = hatNachkauf ? 'Nachkaufen' : (hatMinus ? 'Verfügbar' : (verfuegbar === '∞' ? '∞' : verfuegbar));
 
             tr.innerHTML = `
-                <td class="no-select" style="padding-left: ${indent}px; color:#333; vertical-align: top;"
-                    data-hover-type="date" data-hover-content="${dateStr}"
-                    onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)"
-                    ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
-                    ${iconLabel} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}${artikelIdAnzeige}
+                <td class="no-select" style="padding-left:${isGrp ? 45 : 25}px; vertical-align:top;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)" ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)" ontouchmove="handleTouchMove(event)">
+                    ${isGrp ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
+                    <div class="bestand-id-anzeige" style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${escapeHtml(String(grp.artikel.id))}</div>
                 </td>
-                <td colspan="2" style="vertical-align: top;">
-                    <div style="display: flex; flex-direction: column; gap: 6px;">
-                        ${bestandInfoHtml}
+                <td colspan="2" style="vertical-align:top;">
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        ${bestandRowsHtml}
                         <div class="bestand-extra-row">
-                            ${resHtml ? '<div>' + resHtml + '</div>' : ''}
-                            <div class="bestand-verfuegbar-info" style="color: ${verfuegbarkeitFarbe};">
-                                ${hatNachkaufMarkierung ? '' : (hatMinusBestand ? '' : `Verfügbar: <strong>${verfuegbarkeitWert}</strong>`)}
-                                ${nachkaufHinweis}
+                            ${resHtml ? `<div>${resHtml}</div>` : ''}
+                            <div class="bestand-verfuegbar-info" style="color:${vFarbe};">
+                                ${!hatNachkauf && !hatMinus ? `Verfügbar: <strong>${vText}</strong>` : ''}
+                                ${hatNachkauf ? '<div class="bestand-nachkauf-hinweis" style="color:#c0392b;">Nachkaufen</div>' : (hatMinus ? '<div class="bestand-nachkauf-hinweis" style="color:#27ae60;">Verfügbar</div>' : '')}
                             </div>
                         </div>
                     </div>
-                </td>
-            `;
+                </td>`;
             tbody.appendChild(tr);
         });
-    }
+    });
 
-    const hiddenArtikel = new Set(
-        aktuelleDaten
-            .filter(zeile => zeile.artikel && !zeile.artikel.wichtig)
-            .map(zeile => zeile.artikel_id)
-    );
-
-    if (hiddenArtikel.size > 0 && aktiverRegalFilter === '') {
-        const footerTr = document.createElement('tr');
-        footerTr.innerHTML = `
+    const hiddenCount = aktuelleDaten.filter(z => z.artikel && !z.artikel.wichtig).length;
+    if (hiddenCount > 0 && aktiverRegalFilter === '') {
+        const footTr = document.createElement('tr');
+        footTr.innerHTML = `
             <td colspan="3" style="padding:14px; text-align:center; background:#f8fafc; border-top:1px solid #dfe6e9;">
                 <button class="btn" onclick="toggleAlleArtikelSichtbarkeit()" style="background:#34495e; width:auto; min-width:220px;">
-                    ${zeigeAlleArtikel ? 'Weniger anzeigen' : `Mehr anzeigen (${hiddenArtikel.size} weitere)`}
+                    ${zeigeAlleArtikel ? 'Weniger anzeigen' : `Mehr anzeigen (${hiddenCount} weitere)`}
                 </button>
-            </td>
-        `;
-        tbody.appendChild(footerTr);
+            </td>`;
+        tbody.appendChild(footTr);
     }
 }
 
-function toggleAlleArtikelSichtbarkeit() {
-    zeigeAlleArtikel = !zeigeAlleArtikel;
-    wendeFilterAn();
+// Steuerung von Mengen-Feldern und Buttons (∞ und -)
+function aktualisiereMengeEingabeFarbe(feld) {
+    if (!feld) return;
+    const w = String(feld.value ?? '').trim();
+    feld.classList.remove('bestand-menge-ok', 'bestand-menge-low');
+    if (!w || w === '-' || w === '∞') return;
+    const m = werteMengeAus(w);
+    if (Number.isFinite(m)) feld.classList.add(m > 0 ? 'bestand-menge-ok' : 'bestand-menge-low');
 }
 
+function setzeBestandStatus(row, status = 'zahl', nachkauf = false) {
+    if (!row) return;
+    const input = row.querySelector('.new-menge, .edit-menge-input');
+    const infBtn = row.querySelector('.bestand-btn-inf');
+    const minusBtn = row.querySelector('.bestand-btn-minus');
+    const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
+    const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
+    const isStrich = status === 'strich-ok' || status === 'strich-warn';
+
+    row.dataset.stockMode = isStrich ? (status === 'strich-warn' ? 'strich-warn' : 'strich-ok') : status;
+    row.dataset.nachkauf = isStrich && nachkauf ? 'true' : 'false';
+
+    if (nachkaufCheckbox) nachkaufCheckbox.checked = Boolean(isStrich && nachkauf);
+    if (nachkaufWrap) nachkaufWrap.style.display = isStrich ? 'flex' : 'none';
+
+    if (input) {
+        if (status === 'zahl') input.value = input.getAttribute('data-old-value') || (['∞', '-'].includes(input.value) ? '0' : input.value || '0');
+        else if (status === 'inf') { if (input.value !== '∞') input.setAttribute('data-old-value', input.value || '0'); input.value = '∞'; }
+        else { if (input.value !== '-') input.setAttribute('data-old-value', input.value || '0'); input.value = '-'; }
+        aktualisiereMengeEingabeFarbe(input);
+    }
+
+    if (infBtn) {
+        infBtn.classList.toggle('active-inf', status === 'inf');
+        infBtn.style.background = status === 'inf' ? '#27ae60' : '#95a5a6';
+    }
+    if (minusBtn) {
+        minusBtn.classList.toggle('active-minus-ok', status === 'strich-ok' && !nachkauf);
+        minusBtn.classList.toggle('active-minus-warn', status === 'strich-warn' || nachkauf);
+        minusBtn.style.background = (status === 'strich-warn' || nachkauf) ? '#c0392b' : (status === 'strich-ok' ? '#27ae60' : '#95a5a6');
+    }
+}
+
+function bestandEingabeGeaendert(feld) {
+    const row = feld?.closest('.lagerort-row, .edit-ort-row');
+    if (!row || !feld) return;
+    const w = String(feld.value ?? '').trim();
+    if (w === '∞') setzeBestandStatus(row, 'inf', false);
+    else if (w === '-') setzeBestandStatus(row, row.querySelector('.bestand-nachkauf-checkbox')?.checked ? 'strich-warn' : 'strich-ok');
+    else setzeBestandStatus(row, 'zahl', false);
+}
+
+function leseBestandswertAusZeile(row) {
+    const status = row?.dataset?.stockMode || 'zahl';
+    const val = String(row?.querySelector('input')?.value ?? '').trim();
+    if (status === 'inf' || val === '∞') return -1;
+    if (status === 'strich-warn') return BESTAND_STRICH_NACHKAUF;
+    if (status === 'strich-ok' || val === '-') return BESTAND_STRICH_AUSREICHEND;
+    return werteMengeAus(val);
+}
+
+function toggleBestandInf(btn) {
+    const row = btn?.closest('.lagerort-row, .edit-ort-row');
+    if (row) setzeBestandStatus(row, row.dataset.stockMode === 'inf' ? 'zahl' : 'inf', false);
+}
+function toggleBestandMinus(btn) {
+    const row = btn?.closest('.lagerort-row, .edit-ort-row');
+    if (row) setzeBestandStatus(row, row.dataset.stockMode?.startsWith('strich') ? 'zahl' : 'strich-ok', row.dataset.nachkauf === 'true');
+}
+function toggleNachkaufCheckbox(chk) {
+    const row = chk?.closest('.lagerort-row, .edit-ort-row');
+    if (row && row.dataset.stockMode?.startsWith('strich')) setzeBestandStatus(row, chk.checked ? 'strich-warn' : 'strich-ok', chk.checked);
+}
+
+async function speichereMenge(bId) {
+    const f = $(`menge-${bId}`);
+    if (!f) return;
+    const neueMenge = f.value.trim() === '-' ? -2 : werteMengeAus(f.value);
+    f.value = neueMenge === -2 ? '-' : neueMenge;
+    aktualisiereMengeEingabeFarbe(f);
+    f.style.backgroundColor = '#fff3cd';
+
+    const datum = new Date().toISOString();
+    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge, created_at: datum }).eq('id', bId);
+    if (error) {
+        const fb = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge }).eq('id', bId);
+        error = fb.error;
+    }
+    if (!error) {
+        f.style.backgroundColor = '#d4edda';
+        showToast(`Bestand gespeichert: ${f.value}`);
+        setTimeout(() => { if (f) f.style.backgroundColor = ''; ladeAlles(); }, 800);
+    } else showToast('Speicherfehler!', 'error');
+}
+
+// Artikel anlegen / bearbeiten
 function toggleEditMode() {
     isEditMode = !isEditMode;
-    const b = document.getElementById('btn-edit-mode');
-    if(b) { b.innerText = isEditMode ? "✏️ Bearbeiten: AN" : "✏️ Bearbeiten: AUS"; b.style.backgroundColor = isEditMode ? "#e67e22" : "#f39c12"; }
+    const b = $('btn-edit-mode');
+    if (b) { b.innerText = isEditMode ? '✏️ Bearbeiten: AN' : '✏️ Bearbeiten: AUS'; b.style.backgroundColor = isEditMode ? '#e67e22' : '#f39c12'; }
     document.querySelectorAll('.lager-edit-only').forEach(el => el.style.display = isEditMode ? '' : 'none');
     wendeFilterAn();
 }
 
+function openModal() {
+    $('new-name').value = '';
+    $('new-kategorie').value = '';
+    $('new-einheit').value = 'Stück';
+    if ($('new-wichtig')) $('new-wichtig').checked = false;
+    if ($('new-typ')) $('new-typ').value = 'zaehlbar';
+
+    const wrapper = $('new-orte-wrapper');
+    const rows = wrapper.querySelectorAll('.lagerort-row');
+    for (let i = 1; i < rows.length; i++) rows[i].remove();
+
+    const first = rows[0];
+    const input = first.querySelector('.new-menge');
+    input.value = '0'; input.disabled = false;
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(first, 'zahl');
+
+    const def = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
+    if (def && first.querySelector('.new-ort')) first.querySelector('.new-ort').value = def.id;
+    openModalById('artikelModal');
+}
+
+function addOrtRow() {
+    const wrapper = $('new-orte-wrapper');
+    const newRow = wrapper.querySelector('.lagerort-row').cloneNode(true);
+    const input = newRow.querySelector('.new-menge');
+    input.value = '0';
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(newRow, 'zahl');
+    wrapper.appendChild(newRow);
+}
+
+function removeNewOrtRow(btn) {
+    const wrapper = $('new-orte-wrapper');
+    if (wrapper.querySelectorAll('.lagerort-row').length > 1) btn.closest('.lagerort-row').remove();
+    else showToast('Ein Artikel muss mindestens einen Lagerort haben!', 'warning');
+}
+
+async function artikelAnlegen() {
+    const n = $('new-name').value.trim(), k = $('new-kategorie').value.trim(), e = $('new-einheit').value;
+    const w = Boolean($('new-wichtig')?.checked), t = $('new-typ')?.value || 'zaehlbar';
+    if (!n) return showToast('Bitte einen Namen eingeben!', 'warning');
+
+    if (alleArtikelInfos.some(a => a.name.toLowerCase() === n.toLowerCase()) && !confirm(`Warnung: Artikel "${n}" existiert bereits. Trotzdem anlegen?`)) return;
+
+    const { data, error } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, einheit: e, wichtig: w, typ: t }]).select();
+    if (error) return showToast(error.code === '23505' ? `Artikel "${n}" existiert bereits.` : 'Fehler: ' + error.message, 'error');
+
+    const inserts = Array.from(document.querySelectorAll('#new-orte-wrapper .lagerort-row')).map(row => {
+        const menge = leseBestandswertAusZeile(row);
+        const oldVal = werteMengeAus(row.querySelector('.new-menge')?.getAttribute('data-old-value') || '0');
+        return { artikel_id: data[0].id, lagerort_id: row.querySelector('.new-ort').value, menge, alte_menge: menge < 0 ? oldVal : menge };
+    });
+
+    await dbClient.from('bestand').insert(inserts);
+    closeModal('artikelModal');
+    showToast('Neuer Artikel angelegt!');
+    ladeAlles();
+}
+
 function addEditOrtRow(data = null) {
-    const wrapper = document.getElementById('edit-orte-wrapper');
+    const wrapper = $('edit-orte-wrapper');
     const div = document.createElement('div');
     div.className = 'edit-ort-row';
-    div.style = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
-    
-    const defaultOrt = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
-    
-    let options = alleLagerorte.map(o => {
-        let isSelected = false;
-        if (data && data.lagerort_id == o.id) {
-            isSelected = true;
-        } 
-        else if (!data && defaultOrt && o.id == defaultOrt.id) {
-            isSelected = true;
-        }
-        return `<option value="${o.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(o.name)}</option>`;
-    }).join('');
-    
-    let displayVal = '0';
-    let hiddenOldVal = '0'; 
-    let statusValue = 'zahl';
-    
+    div.style = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+
+    const def = alleLagerorte.find(o => o.name.toLowerCase() === 'sonstiger ort im lager');
+    const options = alleLagerorte.map(o => `<option value="${o.id}" ${(data?.lagerort_id == o.id || (!data && def?.id == o.id)) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('');
+
+    let displayVal = '0', status = 'zahl';
     if (data) {
-        if (data.menge == -1) displayVal = '∞';
-        else if (data.menge == -2) {
-            displayVal = '-';
-            statusValue = 'strich-ok';
-        }
-        else if (data.menge == -3) {
-            displayVal = '-';
-            statusValue = 'strich-warn';
-        }
+        if (data.menge == -1) { displayVal = '∞'; status = 'inf'; }
+        else if (data.menge == -2) { displayVal = '-'; status = 'strich-ok'; }
+        else if (data.menge == -3) { displayVal = '-'; status = 'strich-warn'; }
         else displayVal = data.menge;
-        
-        hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge < 0 ? '0' : data.menge);
     }
 
     div.innerHTML = `
-        <div class="bestand-row-stack" style="width: 100%;">
-            <select class="edit-ort-select" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">${options}</select>
-            
-            <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
-                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${hiddenOldVal}" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
-                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
-                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleBestandMinus(this)">-</button>
+        <div class="bestand-row-stack" style="width:100%;">
+            <select class="edit-ort-select" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;">${options}</select>
+            <div class="bestand-action-row" style="flex-wrap:nowrap; width:100%;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;">
+                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background:#95a5a6; padding:10px; width:auto; min-width:68px; font-weight:bold;" onclick="toggleBestandInf(this)">∞</button>
+                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background:#95a5a6; padding:10px; width:auto; min-width:44px; font-weight:bold;" onclick="toggleBestandMinus(this)">-</button>
             </div>
-
-            <label class="bestand-nachkauf-wrap">
-                <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
-                <span>Auf Nachkaufen setzen</span>
-            </label>
+            <label class="bestand-nachkauf-wrap"><input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)"><span>Auf Nachkaufen setzen</span></label>
         </div>
-
-        <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeEditRow(this)">🗑️</button>
-    `;
-    setzeBestandStatus(div, statusValue, statusValue === 'strich-warn');
+        <button type="button" class="btn" style="background:#e74c3c; padding:8px 12px; width:auto;" onclick="removeEditRow(this)">🗑️</button>`;
+    setzeBestandStatus(div, status, status === 'strich-warn');
     wrapper.appendChild(div);
 }
-
 function removeEditRow(btn) {
-    const wrapper = document.getElementById('edit-orte-wrapper');
-    if (wrapper.querySelectorAll('.edit-ort-row').length > 1) {
-        btn.closest('.edit-ort-row').remove();
-    } else {
-        showToast("Ein Artikel muss mindestens einen Lagerort haben!", "warning");
-    }
+    if ($('edit-orte-wrapper').querySelectorAll('.edit-ort-row').length > 1) btn.closest('.edit-ort-row').remove();
+    else showToast('Ein Artikel muss mindestens einen Lagerort haben!', 'warning');
 }
 
 async function openEditModal(artikelId) {
     if (!isEditMode) return;
     const art = alleArtikelInfos.find(a => a.id === artikelId);
     const bestaende = aktuelleDaten.filter(b => b.artikel_id === artikelId);
-    
-    document.getElementById('edit-artikel-id').value = artikelId;
-    document.getElementById('edit-name').value = art.name;
-    document.getElementById('edit-kategorie').value = art.kategorie || '';
-    document.getElementById('edit-einheit').value = art.einheit || 'Stück';
-    const editWichtig = document.getElementById('edit-wichtig');
-    if (editWichtig) editWichtig.checked = Boolean(art.wichtig);
-    const editTyp = document.getElementById('edit-typ');
-    if (editTyp) editTyp.value = art.typ || 'zaehlbar';
+    $('edit-artikel-id').value = artikelId;
+    $('edit-name').value = art.name;
+    $('edit-kategorie').value = art.kategorie || '';
+    $('edit-einheit').value = art.einheit || 'Stück';
+    if ($('edit-wichtig')) $('edit-wichtig').checked = Boolean(art.wichtig);
+    if ($('edit-typ')) $('edit-typ').value = art.typ || 'zaehlbar';
 
-    const wrapper = document.getElementById('edit-orte-wrapper');
+    const wrapper = $('edit-orte-wrapper');
     wrapper.innerHTML = '';
-    
-    bestaende.forEach(b => addEditOrtRow(b));
-    if(bestaende.length === 0) addEditOrtRow();
-
-    document.getElementById('editModal').style.display = 'block';
+    if (bestaende.length) bestaende.forEach(b => addEditOrtRow(b));
+    else addEditOrtRow();
+    openModalById('editModal');
 }
 
 async function speichereBearbeitung() {
-    try {
-        const aid = document.getElementById('edit-artikel-id').value;
-        const nName = document.getElementById('edit-name').value.trim();
-        const nKat = document.getElementById('edit-kategorie').value.trim();
-        const nEinheit = document.getElementById('edit-einheit').value;
-        const nWichtig = Boolean(document.getElementById('edit-wichtig')?.checked);
-        const nTyp = document.getElementById('edit-typ')?.value || 'zaehlbar';
+    const aid = $('edit-artikel-id').value, name = $('edit-name').value.trim(), kat = $('edit-kategorie').value.trim();
+    const einheit = $('edit-einheit').value, wichtig = Boolean($('edit-wichtig')?.checked), typ = $('edit-typ')?.value || 'zaehlbar';
 
-        const doppelt = alleArtikelInfos.find(a => a.name.toLowerCase() === nName.toLowerCase() && String(a.id) !== String(aid));
-        if (doppelt) {
-            const weiter = confirm(`Hinweis: Ein anderer Artikel heißt bereits "${nName}" (Kategorie: ${doppelt.kategorie || 'Ohne'}). Wirklich umbenennen?`);
-            if (!weiter) return;
-        }
+    const { error: upErr } = await dbClient.from('artikel').update({ name, kategorie: kat, einheit, wichtig, typ }).eq('id', aid);
+    if (upErr) return showToast(upErr.code === '23505' ? `Name "${name}" bereits vergeben.` : 'Fehler: ' + upErr.message, 'error');
 
-        const { error: updateErr } = await dbClient.from('artikel').update({ name: nName, kategorie: nKat, einheit: nEinheit, wichtig: nWichtig, typ: nTyp }).eq('id', aid);
-        if (updateErr) {
-            if (updateErr.code === '23505') {
-                showToast(`Ein anderer Artikel heißt bereits "${nName}" (von der Datenbank verhindert).`, "error");
-            } else {
-                showToast("Fehler: " + updateErr.message, "error");
-            }
-            return;
-        }
-        await dbClient.from('bestand').delete().eq('artikel_id', aid);
+    await dbClient.from('bestand').delete().eq('artikel_id', aid);
+    const inserts = Array.from(document.querySelectorAll('.edit-ort-row')).map(row => {
+        const oid = row.querySelector('.edit-ort-select').value;
+        const menge = leseBestandswertAusZeile(row);
+        const oldVal = werteMengeAus(row.querySelector('.edit-menge-input')?.getAttribute('data-old-value') || '0');
+        return { artikel_id: aid, lagerort_id: oid, menge, alte_menge: menge < 0 ? oldVal : menge };
+    });
+    if (inserts.length) await dbClient.from('bestand').insert(inserts);
 
-        const inserts = [];
-        document.querySelectorAll('.edit-ort-row').forEach(row => {
-            const oid = row.querySelector('.edit-ort-select').value;
-            const input = row.querySelector('.edit-menge-input');
-            
-            const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
-            const menge = leseBestandswertAusZeile(row);
-            
-            const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
-            
-            inserts.push({ artikel_id: aid, lagerort_id: oid, menge: menge, alte_menge: finaleAlteMenge });
-        });
-
-        if (inserts.length > 0) {
-            await dbClient.from('bestand').insert(inserts);
-        }
-
-        closeModal('editModal');
-        showToast("Artikel und Standorte aktualisiert!");
-        ladeAlles();
-    } catch(e) { showToast("Fehler beim Speichern", "error"); console.error(e); }
+    closeModal('editModal');
+    showToast('Artikel aktualisiert!');
+    ladeAlles();
 }
 
 async function artikelLoeschen() {
-    if(confirm("Diesen Artikel und alle seine Standorte wirklich komplett löschen?")) {
-        const aId = document.getElementById('edit-artikel-id').value;
-        await dbClient.from('bestand').delete().eq('artikel_id', aId);
-        await dbClient.from('artikel').delete().eq('id', aId);
-        closeModal('editModal'); 
-        showToast('Artikel komplett gelöscht');
-        ladeAlles();
-    }
+    if (!confirm('Diesen Artikel und alle seine Standorte wirklich komplett löschen?')) return;
+    const aId = $('edit-artikel-id').value;
+    await dbClient.from('bestand').delete().eq('artikel_id', aId);
+    await dbClient.from('artikel').delete().eq('id', aId);
+    closeModal('editModal');
+    showToast('Artikel gelöscht');
+    ladeAlles();
 }
 
-async function speichereMenge(bId) {
-    const f = document.getElementById(`menge-${bId}`);
-    if(!f) return;
-    
-    let neueMenge;
-    if (f.value.trim() === '-') {
-        neueMenge = -2;
-    } else {
-        neueMenge = werteMengeAus(f.value);
-    }
-    
-    f.value = neueMenge === -2 ? '-' : neueMenge; 
-    aktualisiereMengeEingabeFarbe(f);
-    f.style.backgroundColor = '#fff3cd'; 
-
-    const aktuellesDatum = new Date().toISOString();
-    
-    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge, created_at: aktuellesDatum }).eq('id', bId);
-    if (error) {
-        const fallback = await dbClient.from('bestand').update({ menge: neueMenge, alte_menge: neueMenge }).eq('id', bId);
-        error = fallback.error;
-    }
-    
-    if (!error) {
-        f.style.backgroundColor = '#d4edda'; 
-        showToast(`Bestand gespeichert: ${f.value}`);
-        setTimeout(() => { if(f) f.style.backgroundColor = ''; ladeAlles(); }, 800); 
-    } else { showToast("Speicherfehler!", "error"); }
-}
-
-async function artikelAnlegen() {
-    try {
-        const n = document.getElementById('new-name').value.trim();
-        const k = document.getElementById('new-kategorie').value.trim();
-        const e = document.getElementById('new-einheit').value;
-        const w = Boolean(document.getElementById('new-wichtig')?.checked);
-        const t = document.getElementById('new-typ')?.value || 'zaehlbar';
-        
-        if (!n) { showToast("Bitte einen Namen eingeben!", "warning"); return; }
-
-        const existiertBereits = alleArtikelInfos.find(a => a.name.toLowerCase() === n.toLowerCase());
-        if (existiertBereits) {
-            const weiter = confirm(`Warnung: Ein Artikel mit dem Namen "${n}" existiert bereits in der Kategorie "${existiertBereits.kategorie || 'Ohne Kategorie'}". Möchtest du ihn trotzdem anlegen?`);
-            if (!weiter) return;
-        }
-
-        const { data: nA, error: err } = await dbClient.from('artikel').insert([{ name: n, kategorie: k, einheit: e, wichtig: w, typ: t }]).select();
-        if (err) {
-            // 23505 = unique_violation -> greift der DB-Constraint auf lower(name),
-            // z.B. weil zwei Nutzer/Tabs gleichzeitig denselben Artikel angelegt haben.
-            if (err.code === '23505') {
-                showToast(`Ein Artikel mit dem Namen "${n}" existiert bereits (von der Datenbank verhindert).`, "error");
-            } else {
-                showToast("Fehler: " + err.message, "error");
-            }
-            return;
-        }
-        
-        const bestandInserts = [];
-        const rows = document.querySelectorAll('#new-orte-wrapper .lagerort-row');
-        
-        rows.forEach(row => {
-            const ortSelect = row.querySelector('.new-ort').value;
-            const input = row.querySelector('.new-menge');
-            
-            const alteMengeAusFeld = werteMengeAus(input.getAttribute('data-old-value') || '0');
-            const menge = leseBestandswertAusZeile(row);
-            const finaleAlteMenge = (menge < 0) ? alteMengeAusFeld : menge;
-            
-            bestandInserts.push({ 
-                artikel_id: nA[0].id, 
-                lagerort_id: ortSelect, 
-                menge: menge,
-                alte_menge: finaleAlteMenge 
-            });
-        });
-        
-        await dbClient.from('bestand').insert(bestandInserts);
-        
-        closeModal('artikelModal'); 
-        showToast('Neuer Artikel angelegt!');
-        ladeAlles(); 
-    } catch (e) { console.error(e); showToast("Fehler", "error"); }
-}
-
-function openNeuOrtModal() {
-    document.getElementById('neu-ort-name').value = '';
-    document.getElementById('neuOrtModal').style.display = 'block';
-}
-
+// Lagerorte verwalten
+function openNeuOrtModal() { $('neu-ort-name').value = ''; openModalById('neuOrtModal'); }
 async function speichereNeuenOrt() {
-    const nOrt = document.getElementById('neu-ort-name').value.trim();
-    if (!nOrt) { 
-        showToast("Bitte einen Namen für den Lagerort eingeben!", "warning"); 
-        return; 
-    }
-    
+    const nOrt = $('neu-ort-name').value.trim();
+    if (!nOrt) return showToast('Bitte Namen eingeben!', 'warning');
     const { error } = await dbClient.from('lagerorte').insert([{ name: nOrt }]);
-    
-    if (error) {
-        showToast("Fehler: " + error.message, "error"); 
-    } else { 
-        closeModal('neuOrtModal');
-        showToast('Neuer Ort angelegt!'); 
-        ladeAlles(); 
-    }
+    if (error) showToast('Fehler: ' + error.message, 'error');
+    else { closeModal('neuOrtModal'); showToast('Neuer Ort angelegt!'); ladeAlles(); }
 }
-
-/**
- * Öffnet "Lagerorte verwalten". Optional kann ein Lagerort direkt
- * vorausgewählt werden (z.B. Klick auf "⚙️ Verwalten" in der Kisten-/NFC-
- * Orte-Übersicht), um z.B. direkt einen NFC-Tag dafür zu beschreiben.
- */
 function openOrteVerwalten(preselectId = null) {
-    const sel = document.getElementById('manage-ort-select');
-    sel.innerHTML = '';
-
-    if (alleLagerorte.length === 0) {
-        showToast("Keine Lagerorte vorhanden.", "warning");
-        return;
-    }
-
-    alleLagerorte.forEach(o => sel.add(new Option(o.name, o.id)));
-    if (preselectId) sel.value = preselectId;
+    populateSelect($('manage-ort-select'), alleLagerorte, { selectedValue: preselectId });
     ortSelectChanged();
-    document.getElementById('orteModal').style.display = 'block';
+    openModalById('orteModal');
 }
-
 function ortSelectChanged() {
-    const selId = document.getElementById('manage-ort-select').value;
+    const selId = $('manage-ort-select').value;
     const ort = alleLagerorte.find(o => String(o.id) === String(selId));
-    if(ort) {
-        document.getElementById('manage-ort-name').value = ort.name;
-    }
-
-    const statusEl = document.getElementById('manage-ort-nfc-status');
-    const entfernenBtn = document.getElementById('manage-ort-nfc-entfernen-btn');
-    if (statusEl) {
-        statusEl.textContent = ort?.nfc_code
-            ? `Aktueller Code: ${ort.nfc_code}`
-            : 'Noch kein NFC-Tag mit diesem Lagerort verknüpft.';
-    }
-    if (entfernenBtn) entfernenBtn.style.display = ort?.nfc_code ? 'block' : 'none';
+    if (ort) $('manage-ort-name').value = ort.name;
+    const statusEl = $('manage-ort-nfc-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
+    if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein NFC-Tag verknüpft.';
+    if (delBtn) delBtn.style.display = ort?.nfc_code ? 'block' : 'none';
 }
-
 async function speichereOrt() {
-    const oId = document.getElementById('manage-ort-select').value;
-    const nName = document.getElementById('manage-ort-name').value.trim();
-    if(!oId || !nName) return;
-
+    const oId = $('manage-ort-select').value, nName = $('manage-ort-name').value.trim();
+    if (!oId || !nName) return;
     const { error } = await dbClient.from('lagerorte').update({ name: nName }).eq('id', oId);
-    if (error) showToast("Fehler: " + error.message, "error");
-    else {
-        closeModal('orteModal');
-        showToast("Lagerort umbenannt!");
-        ladeAlles();
-    }
+    if (error) showToast('Fehler: ' + error.message, 'error');
+    else { closeModal('orteModal'); showToast('Lagerort umbenannt!'); ladeAlles(); }
 }
-
 async function loescheOrt() {
-    const oId = document.getElementById('manage-ort-select').value;
-    if(!oId) return;
-
-    const inUse = aktuelleDaten.some(b => String(b.lagerort_id) === String(oId));
-    if(inUse) {
-        showToast("Fehler: Ort ist nicht leer! Bitte erst die Artikel dort umbuchen.", "error");
-        return;
-    }
-
-    if(confirm("Diesen Lagerort wirklich löschen?")) {
-        const { error } = await dbClient.from('lagerorte').delete().eq('id', oId);
-        if (error) showToast("Fehler: " + error.message, "error");
-        else {
-            closeModal('orteModal');
-            showToast("Lagerort gelöscht!");
-            ladeAlles();
-        }
-    }
+    const oId = $('manage-ort-select').value;
+    if (aktuelleDaten.some(b => String(b.lagerort_id) === String(oId))) return showToast('Fehler: Ort ist nicht leer!', 'error');
+    if (!confirm('Diesen Lagerort wirklich löschen?')) return;
+    const { error } = await dbClient.from('lagerorte').delete().eq('id', oId);
+    if (error) showToast('Fehler: ' + error.message, 'error');
+    else { closeModal('orteModal'); showToast('Lagerort gelöscht!'); ladeAlles(); }
 }
-
-/** Entfernt nur die NFC-Verknüpfung eines Lagerorts (Ort selbst + Bestand bleiben erhalten). */
 async function entferneNfcVonOrt() {
-    const oId = document.getElementById('manage-ort-select').value;
-    if (!oId) return;
-    if (!confirm('NFC-Tag-Zuordnung für diesen Lagerort wirklich entfernen? Der physische Tag funktioniert danach nicht mehr.')) return;
-
-    const { error } = await dbClient.from('lagerorte').update({ nfc_code: null, zugewiesene_packliste_id: null, zugewiesen_am: null }).eq('id', oId);
-    if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
+    const oId = $('manage-ort-select').value;
+    if (!confirm('NFC-Tag-Zuordnung für diesen Lagerort wirklich entfernen?')) return;
+    await dbClient.from('lagerorte').update({ nfc_code: null, zugewiesene_packliste_id: null, zugewiesen_am: null }).eq('id', oId);
     showToast('NFC-Zuordnung entfernt.');
     await ladeAlles();
-    const sel = document.getElementById('manage-ort-select');
-    if (sel) sel.value = oId;
     ortSelectChanged();
-    renderKistenListe();
 }
-
-/** Baut den Link, der auf einen NFC-Tag/QR-Code für einen Lagerort geschrieben wird. */
-function gibOrtCheckLink(code) {
-    const url = new URL('https://trilager.pius-s.de');
-    url.searchParams.set('kistencheck', code);
-    return url.toString();
-}
-
-/**
- * Schreibt einen NFC-Tag für den aktuell in "Orte verwalten" ausgewählten
- * Lagerort. Legt bei Bedarf automatisch einen eindeutigen nfc_code an - der
- * Lagerort selbst existiert schon, hier wird nur die NFC-Verknüpfung ergänzt.
- * Das ist das zentrale Werkzeug, um aus JEDEM Lagerort (neu oder schon
- * jahrelang im Einsatz wie "Kiste Banner (Regal C)") eine per NFC scanbare
- * Kiste zu machen - es gibt keine separate "Kisten"-Verwaltung mehr.
- */
 async function schreibeNfcTagFuerOrt() {
-    const oId = document.getElementById('manage-ort-select').value;
+    const oId = $('manage-ort-select').value;
     const ort = alleLagerorte.find(o => String(o.id) === String(oId));
-    if (!ort) { showToast('Bitte zuerst einen Lagerort auswählen.', 'warning'); return; }
-
+    if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
     let code = ort.nfc_code;
     if (!code) {
-        const slug = String(ort.name || 'ort')
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '')
-            .slice(0, 40);
+        const slug = String(ort.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         code = `${slug || 'ort'}-${ort.id}`;
-        const { error } = await dbClient.from('lagerorte').update({ nfc_code: code }).eq('id', ort.id);
-        if (error) { showToast('Fehler beim Anlegen des NFC-Codes: ' + error.message, 'error'); return; }
+        await dbClient.from('lagerorte').update({ nfc_code: code }).eq('id', ort.id);
         await ladeAlles();
         ortSelectChanged();
     }
-
-    const link = gibOrtCheckLink(code);
-    const ortName = ort.name;
-
-    if (typeof window.nfc !== 'undefined') {
-        showToast('📶 App: NFC-Tag jetzt an das Handy halten…', 'success');
-
-        const schreibeAktion = () => {
-            const record = window.ndef.uriRecord(link);
-            window.nfc.write([record], () => {
-                if (navigator.vibrate) navigator.vibrate(200);
-                showToast('✅ NFC-Tag für "' + ortName + '" beschrieben!', 'success');
-                window.nfc.removeNdefListener();
-                window.nfc.removeNdefFormatableListener();
-            }, (err) => {
-                showToast('Schreiben fehlgeschlagen: ' + err, 'error');
-                window.nfc.removeNdefListener();
-                window.nfc.removeNdefFormatableListener();
-            });
-        };
-
-        window.nfc.addNdefListener(schreibeAktion, () => {}, (err) => { console.log(err); });
-        window.nfc.addNdefFormatableListener(schreibeAktion, () => {}, (err) => { console.log(err); });
-        return;
-    }
-
-    if (!('NDEFReader' in window)) {
-        showToast('NFC-Beschreiben wird von diesem Browser nicht unterstützt.', 'error');
-        return;
-    }
-    try {
-        const writer = new NDEFReader();
-        showToast('📶 Web-NFC: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
-        await writer.write({ records: [{ recordType: 'url', data: link }] });
-        if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ NFC-Tag für "' + ortName + '" beschrieben!', 'success');
-    } catch (err) {
-        showToast('Schreiben fehlgeschlagen: ' + err, 'error');
-    }
+    const link = new URL('https://trilager.pius-s.de'); link.searchParams.set('kistencheck', code);
+    await schreibeNfcUrlTag(link.toString(), ort.name);
 }
 
+// Kommentare
+function openKommentarModal(artikelId, event) {
+    if (event) event.stopPropagation();
+    if (!isEditMode) return;
+    const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
+    if (!art) return;
+    $('kommentar-artikel-id').value = artikelId;
+    $('kommentar-artikel-name').innerText = art.name;
+    $('kommentar-text').value = art.kommentar || '';
+    openModalById('kommentarModal');
+}
+async function speichereKommentar() {
+    const aid = $('kommentar-artikel-id').value, text = $('kommentar-text').value;
+    const { error } = await dbClient.from('artikel').update({ kommentar: text }).eq('id', aid);
+    if (error) showToast('Fehler: ' + error.message, 'error');
+    else { closeModal('kommentarModal'); showToast('Kommentar gespeichert!'); ladeAlles(); }
+}
 
+// =========================================================================
+// 6. EVENT- & PACKLISTEN-MODUS (INKL. EXCEL & DRUCK)
+// =========================================================================
 async function ladeEventDaten() {
-    try {
-        const resList = await dbClient.from('packlisten').select('*').order('name');
-        if(resList.error) throw resList.error;
-        packlisten = resList.data || [];
-        
-        const sel = document.getElementById('packlisten-auswahl');
-        const prevVal = sel.value;
-        sel.innerHTML = '<option value="">-- Wähle Resort / Packliste --</option>';
-        packlisten.forEach(pl => sel.add(new Option(pl.name, pl.id)));
-        if (packlisten.some(pl => pl.id == prevVal)) sel.value = prevVal;
-
-        const resPos = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
-        if(resPos.error) throw resPos.error;
-        packlistenPositionen = resPos.data || [];
-
-        zeigePackliste();
-    } catch(e) {
-        showToast("Fehler beim Event-Laden", "error");
-    }
-}
-
-async function neuePacklisteAnlegen() {
-    const nName = prompt("Name der neuen Packliste (z.B. Resort Wechselzone):");
-    if (!nName || nName.trim() === "") return;
-    const { error } = await dbClient.from('packlisten').insert([{ name: nName.trim() }]);
-    if (error) showToast("Fehler: " + error.message, "error"); 
-    else { showToast('Packliste erstellt'); ladeEventDaten(); }
+    const { data: lists } = await dbClient.from('packlisten').select('*').order('name');
+    packlisten = lists || [];
+    populateSelect($('packlisten-auswahl'), packlisten, { defaultOption: '-- Wähle Resort / Packliste --' });
+    const { data: pos } = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
+    packlistenPositionen = pos || [];
+    zeigePackliste();
 }
 
 function zeigePackliste() {
-    const currentId = document.getElementById('packlisten-auswahl').value;
-    const detailsDiv = document.getElementById('packliste-details');
-    const tbody = document.getElementById('event-tabelle');
+    const currentId = $('packlisten-auswahl').value;
+    const details = $('packliste-details'), tbody = $('event-tabelle');
     tbody.innerHTML = '';
+    if (!currentId) { details.style.display = 'none'; return; }
+    details.style.display = 'block';
 
-    if (!currentId) { detailsDiv.style.display = 'none'; return; }
-    detailsDiv.style.display = 'block';
-
-    const positionen = packlistenPositionen.filter(p => p.packliste_id == currentId);
-    
+    const positionen = packlistenPositionen.filter(p => String(p.packliste_id) === String(currentId));
     if (positionen.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Gegenstände in dieser Liste.</td></tr>';
         return;
     }
 
     positionen.forEach(pos => {
-        const tr = document.createElement('tr');
-        let anzeigeName = "";
-        let statusHtml = "";
-        let availableHtml = "-";
-
+        let name = '', avail = '-', status = '<span style="color:#7f8c8d;">- Manuell prüfen -</span>';
         if (pos.artikel_id && pos.artikel) {
-            anzeigeName = (pos.artikel.kategorie ? pos.artikel.kategorie + " > " : "") + pos.artikel.name;
-            
-            let gesamtLager = 0;
-            let hatUnendlich = false;
-            let hatStrich = false;
-            
-            aktuelleDaten.forEach(b => { 
-                if(b.artikel_id === pos.artikel_id) {
-                    if(Number(b.menge) === -1) hatUnendlich = true;
-                    else if(Number(b.menge) === -2) hatStrich = true;
-                    else if(Number(b.menge) >= 0) gesamtLager += Number(b.menge); 
-                }
+            name = (pos.artikel.kategorie ? pos.artikel.kategorie + ' > ' : '') + pos.artikel.name;
+            let gesamt = 0, inf = false, minus = false;
+            aktuelleDaten.filter(b => b.artikel_id === pos.artikel_id).forEach(b => {
+                const m = Number(b.menge);
+                if (m === -1) inf = true; else if (m === -2) minus = true; else if (m >= 0) gesamt += m;
             });
-            
-            if (hatUnendlich || hatStrich) {
-                availableHtml = hatUnendlich
-                    ? `<span style="font-size:1.2em; font-weight:bold;">∞</span>`
-                    : `<span style="font-size:1.2em; font-weight:bold;">-</span>`;
-                statusHtml = `<span class="event-ok">✅ OK</span>`;
+
+            if (inf || minus) {
+                avail = inf ? '∞' : '-';
+                status = '<span class="event-ok">✅ OK</span>';
             } else {
-                let verbrauchtAndere = 0;
-                packlistenPositionen.forEach(p => {
-                    if (p.artikel_id === pos.artikel_id && p.packliste_id != currentId) verbrauchtAndere += Number(p.menge);
-                });
-
-                const verfuegbar = gesamtLager - verbrauchtAndere;
-                availableHtml = verfuegbar;
-
-                if (pos.menge > verfuegbar) {
-                    statusHtml = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
-                } else {
-                    statusHtml = `<span class="event-ok">✅ OK</span>`;
-                }
+                const verbrauchtAndere = packlistenPositionen.filter(p => p.artikel_id === pos.artikel_id && String(p.packliste_id) !== String(currentId))
+                    .reduce((sum, p) => sum + Number(p.menge), 0);
+                const frei = gesamt - verbrauchtAndere;
+                avail = frei;
+                status = pos.menge > frei ? `<span class="event-warning">❌ Zu wenig (${frei - pos.menge})</span>` : '<span class="event-ok">✅ OK</span>';
             }
         } else {
-            anzeigeName = escapeHtml(pos.eigener_name) + " <small style='color:#999;'>(Eigener Posten)</small>";
-            statusHtml = `<span style="color:#7f8c8d;">- Manuell prüfen -</span>`;
+            name = escapeHtml(pos.eigener_name) + ' <small style="color:#999;">(Eigener Posten)</small>';
         }
 
-        let mengeZelle = pos.menge;
+        let mengeCell = pos.menge;
         if (isEventEditMode) {
-            mengeZelle = `<input type="text" class="menge-input" value="${pos.menge}" onchange="updatePackMenge(${pos.id}, this.value)">`;
-            statusHtml += ` <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:10px;" onclick="loeschePackPosition(${pos.id})">🗑️</button>`;
+            mengeCell = `<input type="text" class="menge-input" value="${pos.menge}" onchange="updatePackMenge(${pos.id}, this.value)">`;
+            status += ` <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:10px;" onclick="loeschePackPosition(${pos.id})">🗑️</button>`;
         }
-
-        tr.innerHTML = `<td><strong>${anzeigeName}</strong></td><td>${mengeZelle}</td><td>${availableHtml}</td><td>${statusHtml}</td>`;
-        tbody.appendChild(tr);
+        tbody.innerHTML += `<tr><td><strong>${name}</strong></td><td>${mengeCell}</td><td>${avail}</td><td>${status}</td></tr>`;
     });
-
     renderEventKistenListe();
 }
 
 function toggleEventEditMode() {
     isEventEditMode = !isEventEditMode;
-    const b = document.getElementById('btn-event-edit');
-    if(b) { b.innerText = isEventEditMode ? "✏️ Bearbeiten: AN" : "✏️ Bearbeiten: AUS"; b.style.backgroundColor = isEventEditMode ? "#e67e22" : "#f39c12"; }
+    const b = $('btn-event-edit');
+    if (b) { b.innerText = isEventEditMode ? '✏️ Bearbeiten: AN' : '✏️ Bearbeiten: AUS'; b.style.backgroundColor = isEventEditMode ? '#e67e22' : '#f39c12'; }
     document.querySelectorAll('.event-edit-only').forEach(el => el.style.display = isEventEditMode ? '' : 'none');
     zeigePackliste();
 }
 
 function openPackItemModal() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) { showToast("Bitte wähle zuerst eine Packliste aus!", "warning"); return; }
-    
-    const datalist = document.getElementById('pack-artikel-datalist');
+    if (!$('packlisten-auswahl').value) return showToast('Bitte wähle zuerst eine Packliste aus!', 'warning');
+    const datalist = $('pack-artikel-datalist');
     datalist.innerHTML = '';
-    document.getElementById('pack-artikel-input').value = '';
-    
-    const sortierteArt = [...alleArtikelInfos].sort((a, b) => {
-        const aKat = a.kategorie || '';
-        const bKat = b.kategorie || '';
-        if (aKat !== bKat) return aKat.localeCompare(bKat, 'de');
-        return a.name.localeCompare(b.name, 'de');
+    $('pack-artikel-input').value = '';
+    alleArtikelInfos.forEach(art => {
+        datalist.innerHTML += `<option value="${escapeHtml((art.kategorie ? art.kategorie + ' > ' : '') + art.name)}">`;
     });
-
-    sortierteArt.forEach(art => {
-        const nameString = (art.kategorie ? art.kategorie + " > " : "") + art.name;
-        const option = document.createElement('option');
-        option.value = nameString;
-        datalist.appendChild(option);
-    });
-    
-    document.getElementById('packItemModal').style.display = 'block';
+    openModalById('packItemModal');
     togglePackTyp();
 }
 
 function togglePackTyp() {
-    const typ = document.getElementById('pack-typ').value;
-    document.getElementById('div-pack-lager').style.display = typ === 'lager' ? 'block' : 'none';
-    document.getElementById('div-pack-custom').style.display = typ === 'custom' ? 'block' : 'none';
-    aktualisierePackVerfuegbarkeit(); 
+    const typ = $('pack-typ').value;
+    $('div-pack-lager').style.display = typ === 'lager' ? 'block' : 'none';
+    $('div-pack-custom').style.display = typ === 'custom' ? 'block' : 'none';
+    aktualisierePackVerfuegbarkeit();
 }
 
 function aktualisierePackVerfuegbarkeit() {
-    const typ = document.getElementById('pack-typ').value;
-    const infoDiv = document.getElementById('pack-artikel-info');
+    if ($('pack-typ').value !== 'lager') return;
+    const val = $('pack-artikel-input').value;
+    const art = alleArtikelInfos.find(a => (a.kategorie ? a.kategorie + ' > ' : '') + a.name === val);
+    const info = $('pack-artikel-info');
+    if (!art) { info.innerHTML = ''; return; }
 
-    if (typ !== 'lager') { infoDiv.innerHTML = ''; return; }
-
-    const inputVal = document.getElementById('pack-artikel-input').value;
-    const matchedArt = alleArtikelInfos.find(a => {
-        const n = (a.kategorie ? a.kategorie + " > " : "") + a.name;
-        return n === inputVal;
-    });
-
-    if (!matchedArt) { infoDiv.innerHTML = ''; return; }
-    const selId = matchedArt.id;
-
-    let gesamtLager = 0;
-    let hatUnendlich = false;
-    let hatStrich = false;
-    aktuelleDaten.forEach(b => { 
-        if(b.artikel_id === selId) {
-            if(Number(b.menge) === -1) hatUnendlich = true;
-            else if(Number(b.menge) === -2) hatStrich = true;
-            else if(Number(b.menge) >= 0) gesamtLager += Number(b.menge); 
-        }
-    });
-
-    if (hatUnendlich || hatStrich) {
-        infoDiv.innerHTML = hatUnendlich
-            ? `✅ Sonderartikel (Bestand wird nicht limitiert: ∞)`
-            : `✅ Sonderartikel (Bestand wird nicht limitiert: -)`;
-        infoDiv.style.color = '#27ae60';
-        return;
-    }
-
-    let reserviert = 0;
-    packlistenPositionen.forEach(p => { if (p.artikel_id === selId) reserviert += Number(p.menge); });
-
-    const verfuegbar = gesamtLager - reserviert;
-
-    if (verfuegbar > 0) {
-        infoDiv.innerHTML = `✅ Noch <strong>${verfuegbar}</strong> frei im Lager`;
-        infoDiv.style.color = '#27ae60'; 
-    } else if (verfuegbar === 0) {
-        infoDiv.innerHTML = `⚠️ Nichts mehr frei (Genau 0)`;
-        infoDiv.style.color = '#f39c12'; 
+    const verbleibend = holeVerbleibendeMenge(art.id);
+    if (verbleibend === '∞' || verbleibend === '-') {
+        info.innerHTML = `✅ Sonderartikel (Bestand nicht limitiert: ${verbleibend})`;
+        info.style.color = '#27ae60';
+    } else if (verbleibend > 0) {
+        info.innerHTML = `✅ Noch <strong>${verbleibend}</strong> frei im Lager`;
+        info.style.color = '#27ae60';
     } else {
-        infoDiv.innerHTML = `❌ Überbucht! (Es fehlen ${Math.abs(verfuegbar)})`;
-        infoDiv.style.color = '#e74c3c'; 
+        info.innerHTML = `⚠️ Nichts mehr frei (Genau 0)`;
+        info.style.color = '#e74c3c';
     }
 }
 
 async function packPositionSpeichern() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    const typ = document.getElementById('pack-typ').value;
-    const menge = werteMengeAus(document.getElementById('pack-menge').value); 
-    
-    let dbObj = { packliste_id: listId, menge: menge };
+    const listId = $('packlisten-auswahl').value, typ = $('pack-typ').value, menge = werteMengeAus($('pack-menge').value);
+    const dbObj = { packliste_id: listId, menge };
 
     if (typ === 'lager') {
-        const inputVal = document.getElementById('pack-artikel-input').value;
-        
-        const matchedArt = alleArtikelInfos.find(a => {
-            const n = (a.kategorie ? a.kategorie + " > " : "") + a.name;
-            return n === inputVal;
-        });
-        
-        if (!matchedArt) { 
-            showToast("Bitte wähle einen gültigen Artikel aus der Vorschlagsliste!", "warning"); 
-            return; 
-        }
-        dbObj.artikel_id = matchedArt.id;
+        const val = $('pack-artikel-input').value;
+        const art = alleArtikelInfos.find(a => (a.kategorie ? a.kategorie + ' > ' : '') + a.name === val);
+        if (!art) return showToast('Ungültiger Artikel!', 'warning');
+        dbObj.artikel_id = art.id;
     } else {
-        const en = document.getElementById('pack-eigener-name').value;
-        if (!en) { showToast("Bitte Namen eingeben!", "warning"); return; }
+        const en = $('pack-eigener-name').value.trim();
+        if (!en) return showToast('Bitte Namen eingeben!', 'warning');
         dbObj.eigener_name = en;
     }
 
     const { error } = await dbClient.from('packlisten_positionen').insert([dbObj]);
-    if (error) showToast("Fehler: " + error.message, "error");
-    else { 
-        closeModal('packItemModal'); 
-        document.getElementById('pack-eigener-name').value=''; 
-        showToast("Zur Packliste hinzugefügt!");
-        ladeAlles(); 
-    }
+    if (error) showToast('Fehler: ' + error.message, 'error');
+    else { closeModal('packItemModal'); showToast('Position hinzugefügt!'); ladeAlles(); }
 }
 
-async function updatePackMenge(posId, neueMenge) {
-    const calcMenge = werteMengeAus(neueMenge);
-    await dbClient.from('packlisten_positionen').update({ menge: calcMenge }).eq('id', posId);
-    showToast("Menge in Packliste aktualisiert");
+async function updatePackMenge(posId, val) {
+    await dbClient.from('packlisten_positionen').update({ menge: werteMengeAus(val) }).eq('id', posId);
     ladeAlles();
 }
-
 async function loeschePackPosition(posId) {
-    if(confirm("Position von der Liste löschen?")) {
-        await dbClient.from('packlisten_positionen').delete().eq('id', posId);
-        ladeAlles();
-    }
+    if (confirm('Position löschen?')) { await dbClient.from('packlisten_positionen').delete().eq('id', posId); ladeAlles(); }
 }
-
+async function neuePacklisteAnlegen() {
+    const n = prompt('Name der neuen Packliste:');
+    if (n?.trim()) { await dbClient.from('packlisten').insert([{ name: n.trim() }]); ladeEventDaten(); }
+}
 async function umbenennePackliste() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) { showToast("Bitte wähle zuerst eine Packliste aus.", "warning"); return; }
-
-    const aktuelleListe = packlisten.find(pl => pl.id == listId);
-    const neuerName = prompt("Neuer Name für die Packliste:", aktuelleListe.name);
-
-    if (!neuerName || neuerName.trim() === "" || neuerName === aktuelleListe.name) return;
-    const { error } = await dbClient.from('packlisten').update({ name: neuerName.trim() }).eq('id', listId);
-    if (error) showToast("Fehler: " + error.message, "error"); 
-    else { showToast("Packliste umbenannt"); ladeEventDaten(); }
+    const id = $('packlisten-auswahl').value;
+    const cur = packlisten.find(p => p.id == id);
+    const n = prompt('Neuer Name:', cur?.name);
+    if (n?.trim() && n !== cur.name) { await dbClient.from('packlisten').update({ name: n.trim() }).eq('id', id); ladeEventDaten(); }
 }
-
 async function loeschePackliste() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) return;
-
-    const aktuelleListe = packlisten.find(pl => pl.id == listId);
-    if (confirm(`Möchtest du die Packliste "${aktuelleListe.name}" wirklich löschen?`)) {
-        const { error } = await dbClient.from('packlisten').delete().eq('id', listId);
-        if (error) showToast("Fehler: " + error.message, "error"); 
-        else { document.getElementById('packlisten-auswahl').value = ""; showToast("Gelöscht!"); ladeAlles(); }
-    }
+    const id = $('packlisten-auswahl').value;
+    if (confirm('Packliste wirklich löschen?')) { await dbClient.from('packlisten').delete().eq('id', id); $('packlisten-auswahl').value = ''; ladeAlles(); }
 }
 
+// Einkaufsliste & Excel Export
 function startEinkaufsliste() {
-    einkaufslisteArray = [];
-    autoFehlbestandListe = [];
-    eigeneVorschlaegeListe = [];
-    manuelleEintraegeListe = [];
+    autoFehlbestandListe = []; eigeneVorschlaegeListe = []; manuelleEintraegeListe = [];
+    const bestandMap = {}, nachkaufSet = new Set(), bedarfMap = {}, eigeneMap = {};
 
-    let artikelBestand = {};
-    let nachkaufMarkierteArtikel = new Set();
-    
     aktuelleDaten.forEach(b => {
-        const menge = Number(b.menge);
-        if (menge === -3) {
-            nachkaufMarkierteArtikel.add(String(b.artikel_id));
-        } else if (menge === -1 || menge === -2) {
-            // unbelegte Werte tauchen nicht im verfügbaren Lagerbestand auf
-        } else if (Number(b.menge) >= 0) {
-            artikelBestand[b.artikel_id] = (artikelBestand[b.artikel_id] || 0) + Number(b.menge);
-        }
+        const m = Number(b.menge);
+        if (m === -3) nachkaufSet.add(String(b.artikel_id));
+        else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + m;
     });
-
-    let artikelBedarf = {};
-    let eigeneGegenstaende = {}; 
 
     packlistenPositionen.forEach(p => {
-        if (p.artikel_id) {
-            if (!artikelIgnorieren.has(p.artikel_id)) {
-                artikelBedarf[p.artikel_id] = (artikelBedarf[p.artikel_id] || 0) + Number(p.menge);
-            }
-        } else if (p.eigener_name) {
-            eigeneGegenstaende[p.eigener_name] = (eigeneGegenstaende[p.eigener_name] || 0) + Number(p.menge);
-        }
+        if (p.artikel_id) bedarfMap[p.artikel_id] = (bedarfMap[p.artikel_id] || 0) + Number(p.menge);
+        else if (p.eigener_name) eigeneMap[p.eigener_name] = (eigeneMap[p.eigener_name] || 0) + Number(p.menge);
     });
-
-    const ulAuto = document.getElementById('auto-kauf-liste');
-    const ulEigene = document.getElementById('eigene-kauf-liste');
-    ulAuto.innerHTML = '';
-    if (ulEigene) ulEigene.innerHTML = '';
-
-    function fuegeAutoFehlbestandHinzu(artikel, menge, grund) {
-        const bestehenderEintrag = autoFehlbestandListe.find(item => item.artikel === artikel);
-        if (bestehenderEintrag) {
-            bestehenderEintrag.menge += menge;
-            if (grund && !String(bestehenderEintrag.grund || '').includes(grund)) {
-                bestehenderEintrag.grund = `${bestehenderEintrag.grund} / ${grund}`;
-            }
-        } else {
-            autoFehlbestandListe.push({ artikel: artikel, menge: menge, grund: grund });
-        }
-    }
 
     alleArtikelInfos.forEach(art => {
-        let bestand = nachkaufMarkierteArtikel.has(String(art.id)) ? 0 : (artikelBestand[art.id] || 0);
-        let bedarf = artikelBedarf[art.id] || 0;
-
-        if (nachkaufMarkierteArtikel.has(String(art.id))) {
-            const fehlMenge = Math.max(1, bedarf);
-            fuegeAutoFehlbestandHinzu(art.name, fehlMenge, bedarf > 0 ? 'Nachkauf markiert' : 'Nachkauf markiert');
+        const bestand = nachkaufSet.has(String(art.id)) ? 0 : (bestandMap[art.id] || 0);
+        const bedarf = bedarfMap[art.id] || 0;
+        if (nachkaufSet.has(String(art.id))) {
+            autoFehlbestandListe.push({ artikel: art.name, menge: Math.max(1, bedarf), grund: 'Nachkauf markiert' });
         } else if (bedarf > bestand) {
-            let fehlMenge = bedarf - bestand;
-            fuegeAutoFehlbestandHinzu(art.name, fehlMenge, 'Fehlt im Lager');
+            autoFehlbestandListe.push({ artikel: art.name, menge: bedarf - bestand, grund: 'Fehlt im Lager' });
         }
     });
 
-    // Hinweis: Bestand an Kisten-Lagerorten (z.B. "Kiste: Ausschank (Regal B)")
-    // ist ganz normaler Bestand und wird durch die Schleife oben automatisch
-    // mit erfasst - kein Sonderfall-Code für Kisten nötig.
-
-    if (ulAuto) {
-        if (autoFehlbestandListe.length === 0) {
-            ulAuto.innerHTML = '<li style="color:#27ae60;">Alles grün! Das Lager deckt alle Listen ab.</li>';
-        } else {
-            ulAuto.innerHTML = autoFehlbestandListe.map(item => `<li>${item.menge}x ${escapeHtml(item.artikel)}</li>`).join('');
-        }
-    }
-
-    for (let name in eigeneGegenstaende) {
-        eigeneVorschlaegeListe.push({ artikel: name, menge: eigeneGegenstaende[name], grund: 'Sonderposten Packliste' });
-    }
-
-    if (ulEigene) {
-        if (eigeneVorschlaegeListe.length === 0) {
-            ulEigene.innerHTML = '<li style="color:#7f8c8d;">Keine eigenen Gegenstände gefunden.</li>';
-        } else {
-            eigeneVorschlaegeListe.forEach((item, index) => {
-                ulEigene.innerHTML += `
-                    <li style="margin-bottom: 6px;">
-                        <label style="display:flex; gap:8px; align-items:center; cursor:pointer;">
-                            <input type="checkbox" class="eigene-kauf-check" data-index="${index}" checked onchange="aktualisiereEinkaufslisteAuswahl()">
-                            <span>${item.menge}x ${escapeHtml(item.artikel)}</span>
-                        </label>
-                    </li>`;
-            });
-        }
-    }
+    $('auto-kauf-liste').innerHTML = autoFehlbestandListe.length ? autoFehlbestandListe.map(i => `<li>${i.menge}x ${escapeHtml(i.artikel)}</li>`).join('') : '<li style="color:#27ae60;">Alles grün! Keine Fehlbestände.</li>';
+    $('eigene-kauf-liste').innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
+        eigeneVorschlaegeListe.push({ artikel: name, menge: m, grund: 'Sonderposten Packliste' });
+        return `<li style="margin-bottom:6px;"><label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="eigene-kauf-check" data-index="${idx}" checked onchange="aktualisiereEinkaufslisteAuswahl()"><span>${m}x ${escapeHtml(name)}</span></label></li>`;
+    }).join('') || '<li style="color:#7f8c8d;">Keine eigenen Gegenstände.</li>';
 
     aktualisiereEinkaufslisteAuswahl();
-
-    document.getElementById('manuell-kauf-liste').innerHTML = '';
-    document.getElementById('kauflisteModal').style.display = 'block';
+    $('manuell-kauf-liste').innerHTML = '';
+    openModalById('kauflisteModal');
 }
 
 function aktualisiereEinkaufslisteAuswahl() {
-    const checks = document.querySelectorAll('.eigene-kauf-check');
-    const ausgewaehlteEigene = [];
-
-    checks.forEach(chk => {
-        if (!chk.checked) return;
-        const idx = Number(chk.getAttribute('data-index'));
-        const item = eigeneVorschlaegeListe[idx];
-        if (item) ausgewaehlteEigene.push(item);
-    });
-
-    einkaufslisteArray = [...autoFehlbestandListe, ...ausgewaehlteEigene, ...manuelleEintraegeListe];
+    const ausgewaehlt = Array.from(document.querySelectorAll('.eigene-kauf-check:checked')).map(chk => eigeneVorschlaegeListe[Number(chk.dataset.index)]).filter(Boolean);
+    einkaufslisteArray = [...autoFehlbestandListe, ...ausgewaehlt, ...manuelleEintraegeListe];
 }
 
 function manuellAufZettel() {
-    const nameFeld = document.getElementById('manuell-kauf-name');
-    const mengeFeld = document.getElementById('manuell-kauf-menge');
-    const name = nameFeld.value.trim();
-    const menge = werteMengeAus(mengeFeld.value); 
-
-    if (!name || menge <= 0) return;
-
-    manuelleEintraegeListe.push({ artikel: name, menge: menge, grund: 'Manuell hinzugefügt' });
+    const n = $('manuell-kauf-name').value.trim(), m = werteMengeAus($('manuell-kauf-menge').value);
+    if (!n || m <= 0) return;
+    manuelleEintraegeListe.push({ artikel: n, menge: m, grund: 'Manuell hinzugefügt' });
     aktualisiereEinkaufslisteAuswahl();
-    
-    const ulManuell = document.getElementById('manuell-kauf-liste');
-    ulManuell.innerHTML += `<li>${menge}x ${escapeHtml(name)}</li>`;
-
-    nameFeld.value = '';
-    mengeFeld.value = '1';
-    nameFeld.focus();
+    $('manuell-kauf-liste').innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
+    $('manuell-kauf-name').value = ''; $('manuell-kauf-menge').value = '1';
 }
 
 async function downloadExcel() {
-    if (einkaufslisteArray.length === 0) {
-        showToast("Die Liste ist komplett leer.", "warning");
-        return;
-    }
+    if (!einkaufslisteArray.length) return showToast('Die Liste ist leer.', 'warning');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Einkaufsliste');
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Einkaufsliste');
+    ws.mergeCells('A1:C1');
+    const t = ws.getCell('A1'); t.value = '📦 EINKAUFSLISTE - TRISPORT ERDING'; t.font = { size: 16, bold: true, color: { argb: 'FFE3000F' } }; t.alignment = { horizontal: 'center' };
+    ws.mergeCells('A2:C2');
+    const sub = ws.getCell('A2'); sub.value = 'Erstellt am: ' + new Date().toLocaleString('de-DE'); sub.alignment = { horizontal: 'center' };
 
-    sheet.mergeCells('A1:C1');
-    const titleCell = sheet.getCell('A1');
-    titleCell.value = '📦 EINKAUFSLISTE - TRISPORT ERDING';
-    titleCell.font = { size: 16, bold: true, color: { argb: 'FFE3000F' } }; 
-    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-
-    sheet.mergeCells('A2:C2');
-    const timeCell = sheet.getCell('A2');
-    timeCell.value = 'Erstellt am: ' + new Date().toLocaleString('de-DE');
-    timeCell.font = { italic: true, color: { argb: 'FF666666' } }; 
-    timeCell.alignment = { horizontal: 'center' };
-
-    const headerRow = sheet.getRow(4);
-    headerRow.values = ['ARTIKEL / MATERIAL', 'MENGE', 'GRUND / HERKUNFT'];
-    
-    ['A', 'B', 'C'].forEach(col => {
-        const cell = sheet.getCell(`${col}4`);
-        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; 
-        cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FF3498DB' } 
-        };
-        cell.border = { bottom: { style: 'medium', color: { argb: 'FF000000' } } };
+    const h = ws.getRow(4); h.values = ['ARTIKEL / MATERIAL', 'MENGE', 'GRUND / HERKUNFT'];
+    ['A', 'B', 'C'].forEach(c => {
+        const cell = ws.getCell(`${c}4`);
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3498DB' } };
     });
 
-    let currentRow = 5;
-    einkaufslisteArray.forEach(item => {
-        const row = sheet.getRow(currentRow);
+    einkaufslisteArray.forEach((item, i) => {
+        const row = ws.getRow(5 + i);
         row.values = [item.artikel, item.menge, item.grund];
-        
-        ['A', 'B', 'C'].forEach(col => {
-            sheet.getCell(`${col}${currentRow}`).border = {
-                bottom: { style: 'thin', color: { argb: 'FFDDDDDD' } }
-            };
-        });
-        currentRow++;
     });
+    ws.getColumn(1).width = 40; ws.getColumn(2).width = 12; ws.getColumn(3).width = 30;
 
-    sheet.getColumn(1).width = 40; 
-    sheet.getColumn(2).width = 12; 
-    sheet.getColumn(3).width = 30; 
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `Trisport_Einkauf_${new Date().toISOString().split('T')[0]}.xlsx`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
-
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = `Trisport_Einkauf_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.click();
     closeModal('kauflisteModal');
-    showToast("Download gestartet!");
 }
 
 function druckePackliste() {
-    const listId = document.getElementById('packlisten-auswahl').value;
+    const listId = $('packlisten-auswahl').value;
     if (!listId) return;
-
-    const liste = packlisten.find(pl => pl.id == listId);
-    const positionen = packlistenPositionen.filter(p => p.packliste_id == listId);
-
-    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf("/") + 1);
-
-    const printWindow = window.open('', '_blank');
+    const pl = packlisten.find(p => p.id == listId);
+    const pos = packlistenPositionen.filter(p => p.packliste_id == listId);
+    const baseUrl = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
 
     const gruppen = {};
-
-    positionen.forEach(pos => {
-        let kategorie = 'Ohne Kategorie';
-        let name = '';
-        let ort = '-';
-
-        if (pos.artikel_id && pos.artikel) {
-            kategorie = (pos.artikel.kategorie || 'Ohne Kategorie').trim() || 'Ohne Kategorie';
-            name = pos.artikel.name;
-
-            const ortNamen = aktuelleDaten
-                .filter(b => b.artikel_id === pos.artikel_id && b.lagerorte && b.lagerorte.name)
-                .map(b => b.lagerorte.name);
-
-            const eindeutigeOrte = Array.from(new Set(ortNamen));
-            ort = eindeutigeOrte.length > 0 ? eindeutigeOrte.join(', ') : '-';
-        } else {
-            kategorie = 'Eigene Gegenstaende';
-            name = (pos.eigener_name || 'Unbenannt') + ' (Manuell)';
-            ort = 'Nicht im Lager';
-        }
-
-        if (!gruppen[kategorie]) gruppen[kategorie] = [];
-        gruppen[kategorie].push({ name, menge: pos.menge, ort });
+    pos.forEach(p => {
+        let kat = p.artikel?.kategorie || 'Ohne Kategorie', ort = '-';
+        if (p.artikel_id) {
+            const orte = Array.from(new Set(aktuelleDaten.filter(b => b.artikel_id === p.artikel_id && b.lagerorte?.name).map(b => b.lagerorte.name)));
+            ort = orte.join(', ') || '-';
+        } else { kat = 'Eigene Gegenstaende'; ort = 'Nicht im Lager'; }
+        if (!gruppen[kat]) gruppen[kat] = [];
+        gruppen[kat].push({ name: p.artikel?.name || p.eigener_name, menge: p.menge, ort });
     });
 
-    const kategorienSortiert = Object.keys(gruppen).sort((a, b) => {
-        if (a === 'Ohne Kategorie') return 1;
-        if (b === 'Ohne Kategorie') return -1;
-        if (a === 'Eigene Gegenstaende') return 1;
-        if (b === 'Eigene Gegenstaende') return -1;
-        return a.localeCompare(b, 'de');
-    });
+    const win = window.open('', '_blank');
+    let rowsHtml = Object.entries(gruppen).map(([kat, items]) => `
+        <tr style="background:#eef3f8; font-weight:bold;"><td colspan="4">📁 ${escapeHtml(kat)}</td></tr>
+        ${items.map(i => `<tr><td style="text-align:center; width:60px;"><div style="width:24px; height:18px; border:1px solid #333; margin:auto;"></div></td><td><strong>${escapeHtml(i.name)}</strong></td><td>${i.menge}</td><td>${escapeHtml(i.ort)}</td></tr>`).join('')}
+    `).join('');
 
-    let rowsHtml = '';
-    kategorienSortiert.forEach(kategorie => {
-        rowsHtml += `
-            <tr class="category-row">
-                <td colspan="4">📁 ${kategorie}</td>
-            </tr>`;
-
-        gruppen[kategorie]
-            .sort((a, b) => a.name.localeCompare(b.name, 'de'))
-            .forEach(item => {
-                rowsHtml += `
-                    <tr>
-                        <td style="text-align:center; width: 60px;"><div class="check"></div></td>
-                        <td><strong>${item.name}</strong></td>
-                        <td style="width: 80px;">${item.menge}</td>
-                        <td>${item.ort}</td>
-                    </tr>`;
-            });
-    });
-
-    if (!rowsHtml) {
-        rowsHtml = '<tr><td colspan="4" style="text-align:center; color:#666;">Keine Positionen in dieser Packliste.</td></tr>';
-    }
-    
-    let html = `
-        <html>
-        <head>
-            <title>Packliste: ${liste.name}</title>
-            <style>
-                body { font-family: sans-serif; margin: 0; padding: 16px; color: #333; }
-                .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e3000f; padding-bottom: 15px; margin-bottom: 16px; }
-                .header-text h1 { color: #e3000f; margin: 0 0 5px 0; }
-                .header-text p { margin: 0; color: #666; }
-                .corner-logo { height: 60px; width: auto; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
-                thead { display: table-header-group; }
-                th, td { border: 1px solid #ddd; padding: 10px; text-align: left; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                th:nth-child(1), td:nth-child(1) { width: 60px; text-align: center; }
-                th:nth-child(2), td:nth-child(2) { width: 44%; }
-                th:nth-child(3), td:nth-child(3) { width: 80px; }
-                th:nth-child(4), td:nth-child(4) { width: 36%; }
-                th { background-color: #f2f2f2; }
-                .category-row td { background:#eef3f8; font-weight:bold; color:#2c3e50; }
-                .check { width: 30px; border: 1px solid #333; height: 20px; display: inline-block; }
-                @media print {
-                    @page { size: A4 portrait; margin: 10mm; }
-                    .no-print { display: none; }
-                    tr { page-break-inside: avoid; }
-                    .category-row { page-break-after: avoid; }
-                    .category-row + tr { page-break-before: avoid; }
-                    body { padding: 0; }
-                }
-            </style>
-        </head>
-        <body>
-            <button class="no-print" onclick="window.print()" style="margin-bottom:20px; padding:10px; cursor: pointer;">🖨️ Jetzt drucken</button>
-            <div class="header-container">
-                <div class="header-text">
-                    <h1>📦 Packliste: ${liste.name}</h1>
-                    <p>Erstellt am: ${new Date().toLocaleDateString('de-DE')}</p>
-                </div>
-                <img src="${baseUrl}trisportlogo.jpg" class="corner-logo" alt="Trisport Erding Logo">
+    win.document.write(`
+        <html><head><title>Packliste: ${escapeHtml(pl.name)}</title><style>
+            body { font-family:sans-serif; padding:16px; color:#333; }
+            table { width:100%; border-collapse:collapse; margin-top:10px; }
+            th, td { border:1px solid #ddd; padding:8px; text-align:left; }
+            th { background:#f2f2f2; }
+            @media print { .no-print { display:none; } }
+        </style></head><body>
+            <button class="no-print" onclick="window.print()" style="padding:10px; margin-bottom:15px; cursor:pointer;">🖨️ Jetzt drucken</button>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #e3000f; padding-bottom:10px;">
+                <div><h1 style="color:#e3000f; margin:0;">📦 Packliste: ${escapeHtml(pl.name)}</h1><p style="margin:4px 0 0; color:#666;">Datum: ${new Date().toLocaleDateString('de-DE')}</p></div>
+                <img src="${baseUrl}trisportlogo.jpg" style="height:55px;" alt="Logo">
             </div>
-            <table>
-                <thead>
-                    <tr><th>Gepackt</th><th>Gegenstand / Material</th><th>Menge</th><th>Lagerort</th></tr>
-                </thead>
-                <tbody>
-                    ${rowsHtml}
-                </tbody>
-            </table>
-            <div style="margin-top: 30px; font-size: 0.8em; color: #666; text-align: center;">Trisport Erding Lager-Verwaltung</div>
-        </body>
-        </html>`;
-
-    printWindow.document.write(html);
-    printWindow.document.close();
-}
-// --- KOMMENTAR FUNKTIONEN ---
-
-function openKommentarModal(artikelId, event) {
-    // Verhindert, dass der Klick auf die Sprechblase versehentlich 
-    // den Artikel-Bearbeiten-Modus öffnet
-    if (event) event.stopPropagation(); 
-    if (!isEditMode) return;
-    
-    // Artikel suchen
-    const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
-    if (!art) return;
-    
-    document.getElementById('kommentar-artikel-id').value = artikelId;
-    document.getElementById('kommentar-artikel-name').innerText = art.name;
-    document.getElementById('kommentar-text').value = art.kommentar || '';
-    
-    document.getElementById('kommentarModal').style.display = 'block';
-}
-
-async function speichereKommentar() {
-    const artId = document.getElementById('kommentar-artikel-id').value;
-    const neuerKommentar = document.getElementById('kommentar-text').value;
-    
-    // In Supabase speichern
-    const { error } = await dbClient.from('artikel')
-        .update({ kommentar: neuerKommentar })
-        .eq('id', artId);
-        
-    if (error) {
-        showToast("Fehler beim Speichern des Kommentars: " + error.message, "error");
-    } else {
-        closeModal('kommentarModal');
-        showToast("Kommentar gespeichert!");
-        ladeAlles(); // Lädt die Tabelle neu, damit sich die Farbe der Sprechblase aktualisiert
-    }
-}
-
-async function formularAntwortSpeichern() {
-    const formname = document.getElementById('formular-name')?.value.trim() || 'Anonyme Person';
-    const frage1 = document.getElementById('formular-frage1')?.value.trim() || '';
-    const frage2 = document.getElementById('formular-frage2')?.value.trim() || '';
-
-    if (!frage1 && !frage2) {
-        showToast('Bitte beantworte mindestens eine Frage.', 'warning');
-        return;
-    }
-
-    const { error } = await dbClient.from(FORMULAR_TABLE).insert([
-        { name: formname, frage1, frage2 }
-    ]);
-
-    if (error) {
-        console.error(error);
-        showToast('Speichern fehlgeschlagen. Tabelle "formular_antworten" prüfen.', 'error');
-        return;
-    }
-
-    showToast('Antwort gespeichert. Danke!');
-    const nameFeld = document.getElementById('formular-name');
-    const q1 = document.getElementById('formular-frage1');
-    const q2 = document.getElementById('formular-frage2');
-    if (nameFeld) nameFeld.value = '';
-    if (q1) q1.value = '';
-    if (q2) q2.value = '';
-}
-
-async function formularAntwortenLaden() {
-    const ziel = document.getElementById('formular-antworten');
-    if (!ziel) return;
-
-    const { data, error } = await dbClient
-        .from(FORMULAR_TABLE)
-        .select('name, frage1, frage2, created_at')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-    if (error) {
-        console.error(error);
-        ziel.style.display = 'block';
-        ziel.innerHTML = '<p style="color:#c0392b; margin:0;">Antworten konnten nicht geladen werden. Bitte Supabase-Tabelle "formular_antworten" inkl. Spalten "frage1", "frage2", "name", "created_at" prüfen.</p>';
-        return;
-    }
-
-    if (!data || data.length === 0) {
-        ziel.style.display = 'block';
-        ziel.innerHTML = '<p style="margin:0; color:#7f8c8d;">Noch keine Antworten vorhanden.</p>';
-        return;
-    }
-
-    let html = '';
-    data.forEach((eintrag, index) => {
-        const zeit = eintrag.created_at
-            ? new Date(eintrag.created_at).toLocaleString('de-DE')
-            : 'Unbekannt';
-
-        html += `
-            <div class="survey-answer-item">
-                <h4>Antwort ${index + 1} - ${escapeHtml(zeit)}</h4>
-                <p><strong>Name:</strong><br>${escapeHtml(eintrag.name) || '<em>-</em>'}</p>
-                <p><strong>Frage 1:</strong><br>${escapeHtml(eintrag.frage1) || '<em>-</em>'}</p>
-                <p><strong>Frage 2:</strong><br>${escapeHtml(eintrag.frage2) || '<em>-</em>'}</p>
-            </div>
-        `;
-    });
-
-    ziel.style.display = 'block';
-    ziel.innerHTML = html;
+            <table><thead><tr><th>Gepackt</th><th>Gegenstand</th><th>Menge</th><th>Lagerort</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+        </body></html>`);
+    win.document.close();
 }
 
 // =========================================================================
-// SCHNELL-RÜCKGABE (POOL-AUSGLEICH) für Helfer beim Abbau
-// Scan-Format (QR-Code UND NFC-Tag identisch): "artikel:<artikel_id>"
-// Bucht +1 auf den ERSTEN gefundenen bestand-Eintrag dieses Artikels.
+// 7. KISTEN- & LAGERORT-CHECK MODUS
 // =========================================================================
+function gibNfcOrte() { return alleLagerorte.filter(o => o.nfc_code); }
+function gibKistenBestand(lid) { return aktuelleDaten.filter(z => String(z.lagerort_id) === String(lid)).sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de')); }
 
-/**
- * Extrahiert die Artikel-ID aus einem gescannten Code. Unterstützt zwei Formate:
- * 1. Einfacher Text "artikel:ID" (klassischer QR-/NFC-Text, In-App-Scanner)
- * 2. Eine URL mit ?rueckgabe=ID (funktioniert auch mit der normalen Kamera-App
- *    des Handys und mit dem NFC-Hintergrund-Lesen von iOS/Android, ganz ohne
- *    Web-NFC-API)
- */
-function extrahiereArtikelIdAusScan(rawText) {
-    const text = String(rawText || '').trim();
-    if (!text) return null;
-
-    // 1. Format: artikel:123 (Für normale QR-Codes)
-    const einfacherMatch = /^artikel:(.+)$/i.exec(text);
-    if (einfacherMatch) return einfacherMatch[1].trim();
-
-    // 2. Format: URL-Parameter (Kugelsicher: Sucht einfach nach "rueckgabe=...")
-    const urlMatch = /rueckgabe=([^&\s]+)/i.exec(text);
-    if (urlMatch) return urlMatch[1].trim();
-
-    return null;
-}
-
-/**
- * Zentrale Verarbeitung eines gescannten Codes beim ZURÜCKBRINGEN (Check-In).
- * Sucht die offene Ausleihe (Entnahme) und reduziert diese um 1,
- * wodurch der Artikel automatisch wieder verfügbar wird.
- */
-async function verarbeiteRueckgabeScan(rawCode) {
-    if (rueckgabeScanSperre) return;
-
-    const code = String(rawCode || '').trim();
-    const artikelId = extrahiereArtikelIdAusScan(code);
-
-    if (!artikelId) {
-        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('Unbekannter Code: "' + code + '"', 'error');
-        return;
-    }
-
-    rueckgabeScanSperre = true;
-
-    const statusEl = document.getElementById('rueckgabe-scanner-status');
-    if (statusEl) statusEl.innerText = 'Buche zurück…';
-
-    try {
-        // 1. Artikelnamen für besseres Feedback laden
-        const { data: artikelDaten } = await dbClient
-            .from('artikel')
-            .select('name')
-            .eq('id', artikelId)
-            .single();
-        
-        const artikelName = artikelDaten?.name || ('Artikel ' + artikelId);
-
-        // 2. Offene Entnahmen abrufen (hier liegen die ausgeliehenen Sachen)
-        const { data: entnahmen, error: fetchError } = await dbClient
-            .from(ENTNAHME_PROTOKOLL_TABLE)
-            .select('*')
-            .order('created_at', { ascending: true }); // Älteste zuerst abarbeiten
-
-        if (fetchError) throw fetchError;
-
-        let gefundeneEntnahme = null;
-        let materialIndex = -1;
-
-        // 3. Suche eine Entnahme, bei der genau dieser Artikel noch ausgeliehen ist (Menge > 0)
-        for (let e of (entnahmen || [])) {
-            const mats = Array.isArray(e.materialien) ? e.materialien : [];
-            const idx = mats.findIndex(m => String(m.artikel_id) === String(artikelId) && Number(m.menge) > 0);
-            if (idx !== -1) {
-                gefundeneEntnahme = e;
-                materialIndex = idx;
-                break;
-            }
-        }
-
-        // Wenn keine Entnahme gefunden wurde, ist der Artikel schon vollzählig (Gesamtmenge erreicht)!
-        if (!gefundeneEntnahme) {
-            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            showToast('Fehler: Der Artikel ist bereits vollzählig im System!', 'error');
-            if (statusEl) statusEl.innerText = '⚠️ Bereits vollzählig im Lager';
-            return;
-        }
-
-        // 4. Menge in der gefundenen Entnahme um 1 reduzieren
-        const urspruenglicheMaterialien = gefundeneEntnahme.materialien.map(item => ({ ...item }));
-        const neueMaterialien = [...gefundeneEntnahme.materialien];
-        neueMaterialien[materialIndex].menge -= 1;
-
-        // Für den Audit-Log: genau die zurückgegebene Position (immer Menge 1
-        // pro Scan) festhalten, bevor sie ggf. aus der Liste entfernt wird.
-        const auditPosition = {
-            artikel_id: urspruenglicheMaterialien[materialIndex].artikel_id,
-            label: urspruenglicheMaterialien[materialIndex].label || artikelName,
-            kategorie: urspruenglicheMaterialien[materialIndex].kategorie,
-            einheit: urspruenglicheMaterialien[materialIndex].einheit,
-            menge: 1
-        };
-
-        // Wenn die Menge 0 erreicht, den Artikel ganz aus dieser Entnahme-Liste streichen
-        if (neueMaterialien[materialIndex].menge <= 0) {
-            neueMaterialien.splice(materialIndex, 1);
-        }
-
-        const auditBasis = {
-            entnahme_id: String(gefundeneEntnahme.id),
-            name: gefundeneEntnahme.name || '',
-            kontakt: gefundeneEntnahme.kontakt || '',
-            benutzer_vorlage_id: gefundeneEntnahme.benutzer_vorlage_id || null,
-            sammelvorlage_id: gefundeneEntnahme.sammelvorlage_id || null
-        };
-
-        // 5. Datenbank aktualisieren
-        if (neueMaterialien.length === 0) {
-            // Entnahme ist jetzt komplett leer -> Protokolleintrag löschen
-            const { error: deleteError } = await dbClient
-                .from(ENTNAHME_PROTOKOLL_TABLE)
-                .delete()
-                .eq('id', gefundeneEntnahme.id);
-            if (deleteError) throw deleteError;
-
-            // Letzte Position dieser Entnahme wurde zurückgegeben -> komplette
-            // (ursprüngliche) Materialliste als "rueckgabe"-Ereignis loggen,
-            // analog zu entnahmeKomplettZurueckgeben() im Admin-Bereich.
-            await entnahmeAuditEintragSchreiben({
-                ...auditBasis,
-                materialien: urspruenglicheMaterialien,
-                ereignis: 'rueckgabe'
-            });
-        } else {
-            // Es sind noch andere Sachen in der Entnahme -> nur updaten
-            const { error: updateError } = await dbClient
-                .from(ENTNAHME_PROTOKOLL_TABLE)
-                .update({ materialien: neueMaterialien })
-                .eq('id', gefundeneEntnahme.id);
-            if (updateError) throw updateError;
-
-            // Teilrückgabe (ein einzelner Artikel von mehreren) loggen.
-            await entnahmeAuditEintragSchreiben({
-                ...auditBasis,
-                materialien: [auditPosition],
-                ereignis: 'teilrueckgabe'
-            });
-        }
-
-        if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ 1x ' + artikelName + ' zurückgebucht!', 'success');
-        if (statusEl) statusEl.innerText = '✅ 1x ' + artikelName + ' gebucht – bereit für nächsten Scan';
-
-        // GUI synchronisieren (Zähler im Hauptfenster aktualisieren sich nun korrekt!)
-        await ladeAlles();
-        await ladeEntnahmeHistorie();
-
-    } catch (err) {
-        console.error(err);
-        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('Fehler bei der Rückgabe: ' + (err.message || err), 'error');
-        if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
-    } finally {
-        // Sperre nach kurzer Zeit aufheben (Schutz vor wilden Doppel-Scans)
-        setTimeout(() => { rueckgabeScanSperre = false; }, 2000);
-    }
-}
-
-/**
- * Öffnet das Kamera-Scanner-Modal und startet html5-qrcode.
- */
-function oeffneRueckgabeKameraModal() {
-    const modal = document.getElementById('rueckgabeKameraModal');
-    const statusEl = document.getElementById('rueckgabe-scanner-status');
-    modal.style.display = 'block';
-    rueckgabeScanSperre = false;
-    if (statusEl) statusEl.innerText = 'Kamera wird gestartet…';
-
-    rueckgabeQrScanner = new Html5Qrcode('rueckgabe-qr-reader');
-    rueckgabeQrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-            if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
-            verarbeiteRueckgabeScan(decodedText);
-        },
-        () => { /* pro Frame kein Treffer - das ist normal, ignorieren */ }
-    ).then(() => {
-        if (statusEl) statusEl.innerText = 'Bereit – Etikett vor die Kamera halten.';
-    }).catch(err => {
-        console.error(err);
-        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
-        schliesseRueckgabeKameraModal();
-    });
-}
-
-/**
- * Stoppt die Kamera sauber und schließt das Modal.
- */
-function schliesseRueckgabeKameraModal() {
-    if (rueckgabeQrScanner) {
-        rueckgabeQrScanner.stop()
-            .then(() => rueckgabeQrScanner.clear())
-            .catch(() => { /* Kamera war evtl. schon gestoppt - ignorieren */ })
-            .finally(() => { rueckgabeQrScanner = null; });
-    }
-    document.getElementById('rueckgabeKameraModal').style.display = 'none';
-}
-
-/**
- * Stoppt einen laufenden NFC-Modus sauber (App-NFC-Listener entfernen bzw.
- * Web-NFC-Scan abbrechen) und räumt die zugehörigen Variablen auf.
- */
-function deaktiviereNfcModus(modus) {
-    if (modus === 'rueckgabe') {
-        if (typeof window.nfc !== 'undefined') {
-            try { window.nfc.removeNdefListener(); } catch (e) { /* war evtl. schon abgehängt */ }
-        }
-        if (rueckgabeNfcAbortController) {
-            rueckgabeNfcAbortController.abort();
-            rueckgabeNfcAbortController = null;
-        }
-        rueckgabeNfcReader = null;
-    } else if (modus === 'ausbuchen') {
-        if (typeof window.nfc !== 'undefined') {
-            try { window.nfc.removeNdefListener(); } catch (e) { /* war evtl. schon abgehängt */ }
-        }
-        if (ausbuchenNfcAbortController) {
-            ausbuchenNfcAbortController.abort();
-            ausbuchenNfcAbortController = null;
-        }
-        ausbuchenNfcReader = null;
-    } else if (modus === 'kisten') {
-        if (typeof window.nfc !== 'undefined') {
-            try { window.nfc.removeNdefListener(); } catch (e) { /* war evtl. schon abgehängt */ }
-        }
-        if (kistenNfcAbortController) {
-            kistenNfcAbortController.abort();
-            kistenNfcAbortController = null;
-        }
-        kistenNfcReader = null;
-    }
-
-    if (aktiverNfcModus === modus) aktiverNfcModus = null;
-    aktualisiereNfcModusUI();
-}
-
-/** Deaktiviert jeden gerade laufenden NFC-Modus, z.B. beim Verlassen der Seite. */
-function deaktiviereAlleNfcModi() {
-    deaktiviereNfcModus('rueckgabe');
-    deaktiviereNfcModus('ausbuchen');
-    deaktiviereNfcModus('kisten');
-}
-
-/** Spiegelt den aktiven NFC-Modus optisch auf den drei NFC-Buttons wider. */
-function aktualisiereNfcModusUI() {
-    const rueckgabeBtn = document.getElementById('rueckgabe-nfc-btn');
-    const ausbuchenBtn = document.getElementById('ausbuchen-nfc-btn');
-    const kistenBtn = document.getElementById('kisten-nfc-btn');
-    if (rueckgabeBtn) {
-        rueckgabeBtn.classList.toggle('nfc-aktiv', aktiverNfcModus === 'rueckgabe');
-        rueckgabeBtn.innerText = aktiverNfcModus === 'rueckgabe' ? '📶 NFC aktiv – antippen zum Stoppen' : '📶 NFC-Scan (Android)';
-    }
-    if (ausbuchenBtn) {
-        ausbuchenBtn.classList.toggle('nfc-aktiv', aktiverNfcModus === 'ausbuchen');
-        ausbuchenBtn.innerText = aktiverNfcModus === 'ausbuchen' ? '📶 NFC aktiv – antippen zum Stoppen' : '📶 NFC-Scan (Android)';
-    }
-    if (kistenBtn) {
-        kistenBtn.classList.toggle('nfc-aktiv', aktiverNfcModus === 'kisten');
-        kistenBtn.innerText = aktiverNfcModus === 'kisten' ? '📶 NFC aktiv – antippen zum Stoppen' : '📶 NFC-Scan (Android)';
-    }
-}
-
-async function starteRueckgabeNfc() {
-    // Läuft der Rückgabe-Modus bereits? Dann fungiert der Button als Stopp-Schalter.
-    if (aktiverNfcModus === 'rueckgabe') {
-        deaktiviereNfcModus('rueckgabe');
-        showToast('📶 NFC-Rückgabe-Modus gestoppt.', 'success');
-        return;
-    }
-
-    // Switch-Verhalten: der jeweils andere Modus wird automatisch deaktiviert,
-    // es kann immer nur ein NFC-Modus gleichzeitig aktiv sein.
-    if (aktiverNfcModus === 'ausbuchen') deaktiviereNfcModus('ausbuchen');
-
-    aktiverNfcModus = 'rueckgabe';
-    aktualisiereNfcModusUI();
-
-    // 1. Prüfen, ob wir in der nativen App (Capacitor/Phonegap) sind
-    if (typeof window.nfc !== 'undefined') {
-        rueckgabeScanSperre = false;
-        showToast('📶 App-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
-
-        window.nfc.addNdefListener((nfcEvent) => {
-            try {
-                // Sicherheitsnetz: Falls ein alter (eigentlich schon per
-                // removeNdefListener() abgemeldeter) Listener trotzdem noch
-                // ein Event feuert, hier hart abbrechen, sobald der Modus
-                // gewechselt wurde. Verhindert, dass "Ausbuchen"-Scans noch
-                // verarbeitet werden, während laut UI "Rückgabe" aktiv ist.
-                if (aktiverNfcModus !== 'rueckgabe') return;
-
-                let record = nfcEvent.tag.ndefMessage[0];
-                let payloadText = "";
-                
-                // Prüfen ob es ein professioneller Web-Link (URI) oder Text ist
-                if (record.tnf === 1 && record.type[0] === 85) { 
-                    payloadText = window.ndef.uriHelper.decodePayload(record.payload);
-                } else if (record.tnf === 1 && record.type[0] === 84) { 
-                    payloadText = window.ndef.textHelper.decodePayload(record.payload);
-                } else {
-                    payloadText = window.nfc.bytesToString(record.payload);
-                }
-
-                verarbeiteRueckgabeScan(payloadText);
-                // Listener bewusst NICHT entfernen: der Modus bleibt aktiv, damit
-                // direkt der nächste Tag gescannt werden kann, ohne den Button
-                // erneut zu drücken. Deaktivierung nur per Moduswechsel/Stopp.
-            } catch (e) {
-                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-            }
-        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
-        return;
-    }
-
-    // 2. Fallback für den normalen Web-Browser (Chrome)
-    if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
-        aktiverNfcModus = null;
-        aktualisiereNfcModusUI();
-        return;
-    }
-    try {
-        rueckgabeScanSperre = false;
-        rueckgabeNfcAbortController = new AbortController();
-        const reader = new NDEFReader();
-        await reader.scan({ signal: rueckgabeNfcAbortController.signal });
-        rueckgabeNfcReader = reader;
-        showToast('📶 Web-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
-
-        reader.onreading = (event) => {
-            try {
-                // Gleiches Sicherheitsnetz wie oben: Browser/Android stoppen
-                // eine laufende Web-NFC-Session nach abort() nicht immer
-                // sofort, daher hier zusätzlich den aktiven Modus prüfen.
-                if (aktiverNfcModus !== 'rueckgabe' || reader !== rueckgabeNfcReader) return;
-
-                let payload = '';
-                for (const record of event.message.records) {
-                    if (record.recordType === 'url' || record.recordType === 'absolute-url') {
-                        payload = new TextDecoder().decode(record.data);
-                    } else if (record.recordType === 'text') {
-                        const decoder = new TextDecoder(record.encoding || 'utf-8');
-                        payload = decoder.decode(record.data);
-                    }
-                    if (payload) break;
-                }
-                if (payload) verarbeiteRueckgabeScan(payload);
-            } catch (e) {
-                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-            }
-        };
-    } catch (err) {
-        if (err && err.name !== 'AbortError') {
-            showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
-        }
-        if (aktiverNfcModus === 'rueckgabe') aktiverNfcModus = null;
-        aktualisiereNfcModusUI();
-    }
-}
-
-// =========================================================================
-// SCHNELL-AUSBUCHEN (Entnahme-Wizard Schritt 3) per QR/NFC-Scan
-// Scan-Format identisch zur Rückgabe: "artikel:<artikel_id>"
-// Fügt den gescannten Artikel mit Menge 1 zur aktuellen Materialliste
-// (entnahmeMaterialien) hinzu, statt direkt die Datenbank zu ändern - die
-// eigentliche Buchung passiert wie gehabt erst beim Abschließen des Wizards.
-// =========================================================================
-
-/**
- * Zentrale Verarbeitung eines gescannten Codes beim AUSBUCHEN (Check-Out im Wizard Schritt 3).
- * Prüft strikt die noch verfügbare Menge (verfuegbar) gegen den Basiswert, bevor +1 gesetzt wird.
- */
-async function verarbeiteAusbuchenScan(rawCode) {
-    if (ausbuchenScanSperre) return;
-
-    const code = String(rawCode || '').trim();
-    const artikelId = extrahiereArtikelIdAusScan(code);
-
-    if (!artikelId) {
-        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('Unbekannter Code: "' + code + '"', 'error');
-        return;
-    }
-
-    ausbuchenScanSperre = true;
-
-    const statusEl = document.getElementById('ausbuchen-scanner-status');
-    if (statusEl) statusEl.innerText = 'Buche aus…';
-
-    try {
-        const artikel = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
-        if (!artikel) {
-            if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-            showToast('Kein Artikel mit dieser ID gefunden.', 'error');
-            return;
-        }
-
-        const artikelName = artikel.name || ('Artikel ' + artikelId);
-        
-        // --- STRIKTE VERFÜGBARKEITS-PRÜFUNG ---
-        const verbleibend = holeVerbleibendeMenge(artikelId);
-
-        if (verbleibend !== '∞' && verbleibend !== '-') {
-            if (verbleibend <= 0) {
-                if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-                showToast('Alles ausgebucht! Keine weiteren Artikel verfügbar.', 'error');
-                if (statusEl) statusEl.innerText = '⚠️ Alles ausgebucht!';
-                return;
-            }
-        }
-        
-        const vorhandenerEintrag = entnahmeMaterialien.find(item => String(item.artikel_id) === String(artikel.id));
-        if (vorhandenerEintrag) {
-            vorhandenerEintrag.menge += 1;
-        } else {
-            entnahmeMaterialien.push({
-                artikel_id: artikel.id,
-                label: artikelName,
-                kategorie: artikel.kategorie || '',
-                einheit: artikel.einheit || 'Stück',
-                menge: 1
-            });
-        }
-
-        renderEntnahmeMaterialien();
-        entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true });
-        entnahmeWizardAktualisieren();
-
-        if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ 1x ' + artikelName + ' zur Entnahme hinzugefügt', 'success');
-        if (statusEl) statusEl.innerText = '✅ 1x ' + artikelName + ' hinzugefügt – bereit für nächsten Scan';
-
-    } catch (err) {
-        console.error(err);
-        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
-        if (statusEl) statusEl.innerText = 'Fehler – bitte erneut versuchen';
-    } finally {
-        setTimeout(() => { ausbuchenScanSperre = false; }, 2000); 
-    }
-}
-
-/**
- * Öffnet das Kamera-Scanner-Modal für das Ausbuchen und startet html5-qrcode.
- */
-function oeffneAusbuchenKameraModal() {
-    const modal = document.getElementById('ausbuchenKameraModal');
-    const statusEl = document.getElementById('ausbuchen-scanner-status');
-    modal.style.display = 'block';
-    ausbuchenScanSperre = false;
-    if (statusEl) statusEl.innerText = 'Kamera wird gestartet…';
-
-    ausbuchenQrScanner = new Html5Qrcode('ausbuchen-qr-reader');
-    ausbuchenQrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-            if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
-            verarbeiteAusbuchenScan(decodedText);
-        },
-        () => { /* pro Frame kein Treffer - das ist normal, ignorieren */ }
-    ).then(() => {
-        if (statusEl) statusEl.innerText = 'Bereit – Etikett vor die Kamera halten.';
-    }).catch(err => {
-        console.error(err);
-        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
-        schliesseAusbuchenKameraModal();
-    });
-}
-
-/**
- * Stoppt die Kamera sauber und schließt das Modal.
- */
-function schliesseAusbuchenKameraModal() {
-    if (ausbuchenQrScanner) {
-        ausbuchenQrScanner.stop()
-            .then(() => ausbuchenQrScanner.clear())
-            .catch(() => { /* Kamera war evtl. schon gestoppt - ignorieren */ })
-            .finally(() => { ausbuchenQrScanner = null; });
-    }
-    document.getElementById('ausbuchenKameraModal').style.display = 'none';
-}
-
-async function starteAusbuchenNfc() {
-    // Läuft der Ausbuchen-Modus bereits? Dann fungiert der Button als Stopp-Schalter.
-    if (aktiverNfcModus === 'ausbuchen') {
-        deaktiviereNfcModus('ausbuchen');
-        showToast('📶 NFC-Ausbuchen-Modus gestoppt.', 'success');
-        return;
-    }
-
-    // Switch-Verhalten: der jeweils andere Modus wird automatisch deaktiviert,
-    // es kann immer nur ein NFC-Modus gleichzeitig aktiv sein.
-    if (aktiverNfcModus === 'rueckgabe') deaktiviereNfcModus('rueckgabe');
-
-    aktiverNfcModus = 'ausbuchen';
-    aktualisiereNfcModusUI();
-
-    // 1. Prüfen, ob wir in der nativen App (Capacitor/Phonegap) sind
-    if (typeof window.nfc !== 'undefined') {
-        ausbuchenScanSperre = false;
-        showToast('📶 App-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
-
-        window.nfc.addNdefListener((nfcEvent) => {
-            try {
-                // Sicherheitsnetz: siehe starteRueckgabeNfc() - verhindert, dass
-                // ein noch nicht sauber abgemeldeter alter Listener nach dem
-                // Wechsel zu "Rückgabe" trotzdem noch Ausbuchen-Scans verarbeitet.
-                if (aktiverNfcModus !== 'ausbuchen') return;
-
-                let record = nfcEvent.tag.ndefMessage[0];
-                let payloadText = "";
-                
-                // Prüfen ob es ein professioneller Web-Link (URI) oder Text ist
-                if (record.tnf === 1 && record.type[0] === 85) { 
-                    payloadText = window.ndef.uriHelper.decodePayload(record.payload);
-                } else if (record.tnf === 1 && record.type[0] === 84) { 
-                    payloadText = window.ndef.textHelper.decodePayload(record.payload);
-                } else {
-                    payloadText = window.nfc.bytesToString(record.payload);
-                }
-
-                verarbeiteAusbuchenScan(payloadText);
-                // Listener bewusst NICHT entfernen: der Modus bleibt aktiv, damit
-                // direkt der nächste Tag gescannt werden kann, ohne den Button
-                // erneut zu drücken. Deaktivierung nur per Moduswechsel/Stopp.
-            } catch (e) {
-                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-            }
-        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
-        return;
-    }
-
-    // 2. Fallback für den normalen Web-Browser
-    if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Browser nicht unterstützt.', 'error');
-        aktiverNfcModus = null;
-        aktualisiereNfcModusUI();
-        return;
-    }
-    try {
-        ausbuchenScanSperre = false;
-        ausbuchenNfcAbortController = new AbortController();
-        const reader = new NDEFReader();
-        await reader.scan({ signal: ausbuchenNfcAbortController.signal });
-        ausbuchenNfcReader = reader;
-        showToast('📶 Web-NFC aktiv – bleibt an, bis du wechselst oder das Protokoll verlässt.', 'success');
-
-        reader.onreading = (event) => {
-            try {
-                // Gleiches Sicherheitsnetz wie in starteRueckgabeNfc().
-                if (aktiverNfcModus !== 'ausbuchen' || reader !== ausbuchenNfcReader) return;
-
-                let payload = '';
-                for (const record of event.message.records) {
-                    if (record.recordType === 'url' || record.recordType === 'absolute-url') {
-                        payload = new TextDecoder().decode(record.data);
-                    } else if (record.recordType === 'text') {
-                        const decoder = new TextDecoder(record.encoding || 'utf-8');
-                        payload = decoder.decode(record.data);
-                    }
-                    if (payload) break;
-                }
-                if (payload) verarbeiteAusbuchenScan(payload);
-            } catch (e) {
-                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-            }
-        };
-    } catch (err) {
-        if (err && err.name !== 'AbortError') {
-            showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
-        }
-        if (aktiverNfcModus === 'ausbuchen') aktiverNfcModus = null;
-        aktualisiereNfcModusUI();
-    }
-}
-
-/**
- * Navigiert von der Hauptseite zum Entnahmeprotokoll (dort liegen jetzt auch
- * die Rückgabe-Buttons). Nutzt denselben Link wie der bestehende Teilen-Link.
- */
-function geheZuEntnahmeprotokoll() {
-    window.location.href = gibEntnahmeLink();
-}
-
-/**
- * Prüft beim Laden der Seite, ob ein ?rueckgabe=ID-Parameter in der URL
- * steckt (z.B. weil ein iPhone einen NFC-Tag oder QR-Code mit der System-
- * Kamera/NFC geöffnet hat) und bucht die Rückgabe automatisch. Entfernt den
- * Parameter danach sofort aus der URL, damit ein Neuladen der Seite nicht
- * versehentlich nochmal bucht.
- */
-function pruefeUndVerarbeiteRueckgabeLink() {
-    const params = new URLSearchParams(window.location.search);
-    const artikelId = params.get('rueckgabe');
-    if (!artikelId) return;
-
-    params.delete('rueckgabe');
-    const restQuery = params.toString();
-    const neueUrl = window.location.pathname + (restQuery ? '?' + restQuery : '') + window.location.hash;
-    window.history.replaceState({}, '', neueUrl);
-
-    verarbeiteRueckgabeScan('artikel:' + artikelId);
-}
-
-/**
- * Prüft beim Laden der Seite, ob ein ?kistencheck=CODE-Parameter in der URL
- * steckt (z.B. weil ein iPhone einen NFC-Tag mit der System-Kamera/NFC
- * geöffnet hat, ohne dass die App gerade im aktiven Scan-Modus war) und
- * öffnet direkt den Inhalt-Editor/Check-Bildschirm des passenden Lagerorts.
- * Wartet auf ladeAlles(), damit alleLagerorte/aktuelleDaten schon da sind.
- */
-async function pruefeUndVerarbeiteKistencheckLink() {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('kistencheck');
-    if (!code) return;
-
-    params.delete('kistencheck');
-    const restQuery = params.toString();
-    const neueUrl = window.location.pathname + (restQuery ? '?' + restQuery : '') + window.location.hash;
-    window.history.replaceState({}, '', neueUrl);
-
-    await ladeAlles();
-    verarbeiteOrtScan(code);
-}
-
-// =========================================================================
-// ARTIKEL-ETIKETTEN (QR-Code & NFC-Tag pro Artikel erzeugen/beschreiben)
-// Aufrufbar über index.html?etiketten=1
-// =========================================================================
-
-/**
- * Öffnet das Etiketten-Tool in einem neuen Tab (analog zum bestehenden
- * QR-Generator-Fenster für Regale).
- */
-function oeffneEtikettenTool() {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set('etiketten', '1');
-    window.open(url.toString(), '_blank', 'noopener');
-}
-
-function gibArtikelRueckgabeLink(artikelId) {
-    const url = new URL('https://trilager.pius-s.de');
-    url.searchParams.set('rueckgabe', artikelId);
-    return url.toString();
-}
-
-async function initEtikettenModus() {
-    const view = document.getElementById('etiketten-ansicht');
-    if (view) view.style.display = 'block';
-
-    const appContainer = document.querySelector('.container');
-    if (appContainer) {
-        appContainer.style.background = 'transparent';
-        appContainer.style.boxShadow = 'none';
-        appContainer.style.maxWidth = '1000px';
-        appContainer.style.padding = '0';
-        Array.from(appContainer.children).forEach(child => {
-            child.style.display = (child.id === 'etiketten-ansicht') ? 'block' : 'none';
-        });
-    }
-
-    const appFooter = document.querySelector('.app-footer');
-    if (appFooter) appFooter.style.display = '';
-
-    const hoverDate = document.getElementById('hover-date-info');
-    const hoverRes = document.getElementById('hover-res-info');
-    if (hoverDate) hoverDate.style.display = 'none';
-    if (hoverRes) hoverRes.style.display = 'none';
-
-    document.title = 'Artikel-Etiketten';
-
-    const localSession = holeLokaleSession();
-    if (!localSession) {
-        const loginOverlay = document.getElementById('login-overlay');
-        if (loginOverlay) loginOverlay.style.display = 'flex';
-        return; // handleLogin() ruft bei ETIKETTEN_MODUS erneut initEtikettenModus() auf
-    }
-
-    setzeAuthToken(localSession.token);
-    const loginOverlay = document.getElementById('login-overlay');
-    if (loginOverlay) loginOverlay.style.display = 'none';
-
-    await ladeLagerorte();
-    await ladeBestand(); // füllt alleArtikelInfos
-    renderArtikelEtikettenListe();
-}
-
-// Merkt sich, welche Artikel-IDs für den Etiketten-Druck ausgewählt sind
-// (bleibt auch beim Filtern/Suchen erhalten).
-let etikettenAuswahlIds = new Set();
-
-function renderArtikelEtikettenListe() {
-    const ziel = document.getElementById('etiketten-liste');
-    if (!ziel) return;
-
-    const suchfeld = document.getElementById('etiketten-suche');
-    const suchtext = (suchfeld?.value || '').trim().toLowerCase();
-
-    const artikelGefiltert = [...alleArtikelInfos]
-        .filter(a => !suchtext
-            || (a.name || '').toLowerCase().includes(suchtext)
-            || (a.kategorie || '').toLowerCase().includes(suchtext))
-        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
-
-    if (artikelGefiltert.length === 0) {
-        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d;">Keine Artikel gefunden.</p>';
-        aktualisiereEtikettenAuswahlUI();
-        return;
-    }
-
-    ziel.innerHTML = '';
-    artikelGefiltert.forEach(art => {
-        const link = gibArtikelRueckgabeLink(art.id);
-        const nameEscaped = escapeHtml(art.name);
-        const nameJs = String(art.name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        const istAusgewaehlt = etikettenAuswahlIds.has(String(art.id));
-
-        const zeile = document.createElement('div');
-        zeile.className = 'etikett-zeile' + (istAusgewaehlt ? ' ist-ausgewaehlt' : '');
-        zeile.innerHTML = `
-            <label class="etikett-checkbox-wrap">
-                <input type="checkbox" class="etikett-checkbox" data-id="${art.id}" ${istAusgewaehlt ? 'checked' : ''} onchange="toggleEtikettAuswahl('${art.id}', this.checked)">
-            </label>
-            <div class="etikett-qr" id="etikett-qr-${art.id}"></div>
-            <div class="etikett-info">
-                <strong>${nameEscaped}</strong>
-                <small>${escapeHtml(art.kategorie || 'Ohne Kategorie')} · ${escapeHtml(formatArtikelId(art.id))}</small>
-            </div>
-            <div class="etikett-aktionen">
-                <button class="btn" style="background:#1f5f8b;" onclick="downloadArtikelQr('${art.id}', '${nameJs}')">⬇️ QR (PNG)</button>
-                <button class="btn" style="background:#2980b9;" onclick="schreibeNfcTagFuerArtikel('${art.id}', '${nameJs}')">📶 NFC schreiben</button>
-            </div>
-        `;
-        ziel.appendChild(zeile);
-
-        new QRCode(zeile.querySelector('.etikett-qr'), {
-            text: link,
-            width: 90,
-            height: 90,
-            colorDark: '#000000',
-            colorLight: '#ffffff',
-            correctLevel: QRCode.CorrectLevel.M
-        });
-    });
-
-    aktualisiereEtikettenAuswahlUI();
-}
-
-/**
- * Formatiert die Artikel-ID einheitlich fürs Etikett (z.B. "#00042").
- * Bei nicht-numerischen IDs (z.B. UUID) wird die ID unverändert angezeigt.
- */
-function formatArtikelId(id) {
-    if (id === null || id === undefined || id === '') return '–';
-    const n = Number(id);
-    if (Number.isFinite(n)) return '#' + String(n).padStart(5, '0');
-    return String(id);
-}
-
-function toggleEtikettAuswahl(artikelId, checked) {
-    const id = String(artikelId);
-    if (checked) etikettenAuswahlIds.add(id);
-    else etikettenAuswahlIds.delete(id);
-
-    const zeile = document.querySelector(`.etikett-checkbox[data-id="${CSS.escape(id)}"]`)?.closest('.etikett-zeile');
-    if (zeile) zeile.classList.toggle('ist-ausgewaehlt', checked);
-
-    aktualisiereEtikettenAuswahlUI();
-}
-
-function toggleAlleEtikettenAuswahl(checked) {
-    document.querySelectorAll('.etikett-checkbox').forEach(cb => {
-        cb.checked = checked;
-        const id = String(cb.dataset.id);
-        if (checked) etikettenAuswahlIds.add(id);
-        else etikettenAuswahlIds.delete(id);
-        cb.closest('.etikett-zeile')?.classList.toggle('ist-ausgewaehlt', checked);
-    });
-    aktualisiereEtikettenAuswahlUI();
-}
-
-function aktualisiereEtikettenAuswahlUI() {
-    const countEl = document.getElementById('etiketten-auswahl-count');
-    const btn = document.getElementById('etiketten-auswahl-drucken-btn');
-    if (countEl) countEl.textContent = etikettenAuswahlIds.size;
-    if (btn) btn.disabled = etikettenAuswahlIds.size === 0;
-
-    const alleCb = document.getElementById('etiketten-alle-auswaehlen');
-    if (alleCb) {
-        const sichtbar = document.querySelectorAll('.etikett-checkbox');
-        alleCb.checked = sichtbar.length > 0 && Array.from(sichtbar).every(cb => cb.checked);
-    }
-}
-
-function downloadArtikelQr(artikelId, artikelName) {
-    const container = document.getElementById('etikett-qr-' + artikelId);
-    const canvas = container ? container.querySelector('canvas') : null;
-    if (!canvas) {
-        showToast('QR-Code konnte nicht erzeugt werden.', 'error');
-        return;
-    }
-
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(canvas, 0, 0);
-
-    const safeName = String(artikelName || 'artikel').replace(/[^a-z0-9-_]+/gi, '_') || 'artikel';
-    const anchor = document.createElement('a');
-    anchor.href = exportCanvas.toDataURL('image/png');
-    anchor.download = `qr_${safeName}.png`;
-    anchor.click();
-}
-
-async function schreibeNfcTagFuerArtikel(artikelId, artikelName) {
-    const link = gibArtikelRueckgabeLink(artikelId);
-
-    // 1. Prüfen, ob wir in der nativen App sind
-    if (typeof window.nfc !== 'undefined') {
-        showToast('📶 App: NFC-Tag jetzt an das Handy halten…', 'success');
-        
-        // Das ist die Aktion, die ausgeführt wird, wenn ein Tag erkannt wird
-        const schreibeAktion = () => {
-            const record = window.ndef.uriRecord(link);
-            window.nfc.write([record], () => {
-                if (navigator.vibrate) navigator.vibrate(200);
-                showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
-                // Zuhörer nach Erfolg wieder abschalten
-                window.nfc.removeNdefListener();
-                window.nfc.removeNdefFormatableListener(); 
-            }, (err) => {
-                showToast('Schreiben fehlgeschlagen: ' + err, 'error');
-                window.nfc.removeNdefListener();
-                window.nfc.removeNdefFormatableListener();
-            });
-        };
-
-        // Zuhörer 1: Für bereits formatierte Tags (die meisten)
-        window.nfc.addNdefListener(schreibeAktion, () => {}, (err) => { console.log(err); });
-        
-        // Zuhörer 2: Für komplett fabrikneue, unformatierte Tags! (Formatiert sie automatisch)
-        window.nfc.addNdefFormatableListener(schreibeAktion, () => {}, (err) => { console.log(err); });
-        
-        return;
-    }
-
-    // 2. Fallback für den normalen Web-Browser
-    if (!('NDEFReader' in window)) {
-        showToast('NFC-Beschreiben wird nicht unterstützt.', 'error');
-        return;
-    }
-    try {
-        const writer = new NDEFReader();
-        showToast('📶 Web-NFC: Leeren NFC-Tag jetzt an das Handy halten…', 'success');
-        await writer.write({ records: [{ recordType: 'url', data: link }] });
-        if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ NFC-Tag für "' + artikelName + '" beschrieben!', 'success');
-    } catch (err) {
-        showToast('Schreiben fehlgeschlagen: ' + err, 'error');
-    }
-}
-
-/**
- * Öffnet ein Druckfenster mit den QR-Codes ALLER Artikel als Etiketten-Bogen.
- */
-function druckeAlleEtiketten() {
-    const artikelListe = [...alleArtikelInfos].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
-    druckeEtiketten(artikelListe);
-}
-
-/**
- * Öffnet ein Druckfenster nur mit den aktuell über die Checkboxen
- * ausgewählten Artikeln.
- */
-function druckeAusgewaehlteEtiketten() {
-    if (etikettenAuswahlIds.size === 0) {
-        showToast('Bitte zuerst Artikel auswählen.', 'warning');
-        return;
-    }
-    const artikelListe = alleArtikelInfos
-        .filter(a => etikettenAuswahlIds.has(String(a.id)))
-        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
-    druckeEtiketten(artikelListe);
-}
-
-/**
- * Öffnet ein Druckfenster mit Etiketten für die übergebene Artikelliste.
- * Layout: QR-Code, darunter Name und Artikel-ID – Textbreite ist auf die
- * Breite des QR-Codes begrenzt, die Schrift schrumpft bei Bedarf automatisch
- * (statt abgeschnitten zu werden), damit alles lesbar bleibt.
- */
-function druckeEtiketten(artikelListe) {
-    if (!artikelListe || artikelListe.length === 0) {
-        showToast('Keine Artikel zum Drucken vorhanden.', 'warning');
-        return;
-    }
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-        showToast('Popup wurde blockiert. Bitte Popups für diese Seite erlauben.', 'error');
-        return;
-    }
-
-    let itemsHtml = '';
-    artikelListe.forEach(art => {
-        const link = gibArtikelRueckgabeLink(art.id);
-        itemsHtml += `<div class="etikett-print-item">
-            <div class="etikett-print-qr" data-link="${escapeHtml(link)}"></div>
-            <div class="etikett-print-text">
-                <div class="etikett-print-name">${escapeHtml(art.name)}</div>
-                <div class="etikett-print-id">${escapeHtml(formatArtikelId(art.id))}</div>
-            </div>
-        </div>`;
-    });
-
-    const html = `<html><head><title>Artikel-Etiketten drucken</title>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
-        <style>
-            * { box-sizing: border-box; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; padding: 10mm; margin: 0; }
-            .etikett-print-toolbar { margin-bottom: 15px; display: flex; align-items: center; gap: 12px; }
-            .etikett-print-toolbar button { padding: 10px 16px; font-size: 14px; cursor: pointer; }
-            .etikett-print-toolbar span { color: #555; font-size: 13px; }
-
-            /* 4 Etiketten pro Reihe auf A4 - Größe passt zu gängigem Etikettenpapier (ca. 45x45mm) */
-            .etikett-print-grid {
-                display: grid;
-                grid-template-columns: repeat(4, 1fr);
-                gap: 6mm 5mm;
-            }
-            .etikett-print-item {
-                width: 42mm;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                padding: 3mm 2mm 2.5mm;
-                border: 1px dashed #bbb;
-                border-radius: 2mm;
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-            .etikett-print-qr {
-                width: 32mm;
-                height: 32mm;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .etikett-print-qr canvas,
-            .etikett-print-qr img {
-                width: 100% !important;
-                height: 100% !important;
-            }
-
-            /* Text darf NIE breiter als der QR-Code werden */
-            .etikett-print-text {
-                width: 32mm;
-                text-align: center;
-                margin-top: 1.5mm;
-            }
-            .etikett-print-name {
-                font-weight: 700;
-                font-size: 12px;
-                line-height: 1.15;
-                word-break: break-word;
-                overflow-wrap: break-word;
-                hyphens: auto;
-                height: 9mm;           /* fixe Höhe = Platz für ca. 2 Zeilen */
-                overflow: hidden;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .etikett-print-id {
-                margin-top: 0.8mm;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 9px;
-                letter-spacing: 0.4px;
-                color: #555;
-            }
-
-            .no-print { margin-bottom: 15px; }
-            @media print {
-                .no-print { display: none; }
-                @page { size: A4; margin: 10mm; }
-                .etikett-print-item { border-color: #ddd; }
-            }
-        </style>
-        </head><body>
-            <div class="no-print etikett-print-toolbar">
-                <button onclick="window.print()">🖨️ Jetzt drucken</button>
-                <span>${artikelListe.length} Etikett${artikelListe.length === 1 ? '' : 'en'}</span>
-            </div>
-            <div class="etikett-print-grid" id="etikett-print-grid">${itemsHtml}</div>
-            <script>
-                window.addEventListener('load', function () {
-                    // QR-Codes in hoher Auflösung erzeugen (werden per CSS auf 32mm skaliert -> scharfer Druck)
-                    document.querySelectorAll('.etikett-print-qr').forEach(function (el) {
-                        new QRCode(el, { text: el.dataset.link, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
-                    });
-
-                    // Schrift automatisch verkleinern, bis der Name in die feste Box passt,
-                    // statt ihn abzuschneiden. Untergrenze verhindert unleserlich kleine Schrift.
-                    function fitText(el, maxFontPx, minFontPx) {
-                        let size = maxFontPx;
-                        el.style.fontSize = size + 'px';
-                        while (el.scrollHeight > el.clientHeight && size > minFontPx) {
-                            size -= 0.5;
-                            el.style.fontSize = size + 'px';
-                        }
-                    }
-
-                    document.querySelectorAll('.etikett-print-name').forEach(function (el) {
-                        fitText(el, 12, 6.5);
-                    });
-                });
-            <\/script>
-        </body></html>`;
-
-    printWindow.document.write(html);
-    printWindow.document.close();
-}
-// =========================================================================
-// NATIVE APP-BRÜCKE (Empfänger für Android-App Signale)
-// =========================================================================
-
-// Wird von der Android-App aufgerufen, wenn ein NFC-Tag gelesen wurde
-window.onNativeNfcRead = function(payload, action) {
-    if (action === 'rueckgabe') {
-        verarbeiteRueckgabeScan(payload);
-    } else if (action === 'ausbuchen') {
-        verarbeiteAusbuchenScan(payload);
-    } else if (action === 'kisten') {
-        verarbeiteOrtScan(payload);
-    }
-};
-
-// Wird von der Android-App aufgerufen, wenn das Schreiben fertig/fehlgeschlagen ist
-window.onNativeNfcWriteResult = function(success, message) {
-    if (success) {
-        if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ NFC-Tag erfolgreich über die App beschrieben!', 'success');
-    } else {
-        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast('App-Schreiben fehlgeschlagen: ' + message, 'error');
-    }
-};
-// =========================================================================
-// KISTEN = LAGERORTE MIT NFC-TAG
-//
-// Es gibt keine eigene "Kisten"-Entität mehr. Jeder Lagerort (egal ob neu
-// angelegt oder schon länger im Einsatz, z.B. "Kiste Banner (Regal C)") kann
-// über "Lagerorte verwalten" optional einen NFC-Code bekommen (Spalte
-// lagerorte.nfc_code). Der Inhalt ist ganz normaler Bestand an diesem
-// Lagerort - Lagerort und Kiste sind ein und dasselbe System.
-// Scan-Format (QR-Code UND NFC-Tag identisch): "ort:<code>"
-// =========================================================================
-
-/** Alle Lagerorte, die per NFC-Tag/QR-Code scanbar sind ("Kisten"). */
-function gibNfcOrte() {
-    return alleLagerorte.filter(o => o.nfc_code);
-}
-
-/** Aktuelle Bestand-Zeilen (Artikel + Menge) an diesem Lagerort. */
-function gibKistenBestand(lagerortId) {
-    return aktuelleDaten
-        .filter(z => String(z.lagerort_id) === String(lagerortId))
-        .slice()
-        .sort((a, b) => String(a.artikel?.name || '').localeCompare(String(b.artikel?.name || ''), 'de'));
-}
-
-/** Aktualisiert die Artikel-Datalist, die im Kisten-Inhalt-Editor zum Hinzufügen genutzt wird. */
-function aktualisiereKistenArtikelDatalist() {
-    const artikelDatalist = document.getElementById('kategorie-artikel-liste');
-    if (!artikelDatalist) return;
-    artikelDatalist.innerHTML = alleArtikelInfos
-        .slice()
-        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'de'))
-        .map(a => `<option value="${escapeHtml(a.name)}">`).join('');
-}
-
-/** Rendert die Übersicht im "🧰 Kisten"-Modus: alle Lagerorte mit NFC-Tag. */
 function renderKistenListe() {
-    const ziel = document.getElementById('kisten-tabelle');
+    const ziel = $('kisten-tabelle');
     if (!ziel) return;
-
     const nfcOrte = gibNfcOrte();
-
-    if (nfcOrte.length === 0) {
-        ziel.innerHTML = `<tr><td colspan="4" style="padding:20px; text-align:center; color:#7f8c8d;">
-            Noch keine Lagerorte mit NFC-Tag. Öffne "⚙️ Lagerorte verwalten", wähle einen (neuen oder
-            bestehenden) Lagerort aus und klicke auf "📶 NFC-Tag beschreiben".
-        </td></tr>`;
+    if (!nfcOrte.length) {
+        ziel.innerHTML = '<tr><td colspan="4" style="padding:20px; text-align:center; color:#7f8c8d;">Noch keine Lagerorte mit NFC-Tag. In "Lagerorte verwalten" NFC-Tag beschreiben.</td></tr>';
         return;
     }
 
-    const filterText = (document.getElementById('kisten-such-filter')?.value || '').toLowerCase().trim();
-
-    const zeilen = nfcOrte
-        .filter(o => !filterText || o.name.toLowerCase().includes(filterText) || String(o.nfc_code).toLowerCase().includes(filterText))
-        .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+    const filter = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
+    ziel.innerHTML = nfcOrte.filter(o => !filter || o.name.toLowerCase().includes(filter) || String(o.nfc_code).toLowerCase().includes(filter))
         .map(o => {
-            const bestandZeilen = gibKistenBestand(o.id);
-            const zugewiesenesEvent = o.zugewiesene_packliste_id
-                ? packlisten.find(pl => String(pl.id) === String(o.zugewiesene_packliste_id))
-                : null;
-            const eventBadge = zugewiesenesEvent
-                ? `<br><span style="color:#8e44ad;">📦 Event: ${escapeHtml(zugewiesenesEvent.name)}</span>`
-                : '';
-
-            let letztePruefung = null;
-            bestandZeilen.forEach(z => {
-                if (z.geprueft_am && (!letztePruefung || new Date(z.geprueft_am) > new Date(letztePruefung))) {
-                    letztePruefung = z.geprueft_am;
-                }
-            });
-
-            const nachkaufCount = bestandZeilen.filter(z => Number(z.menge) === BESTAND_STRICH_NACHKAUF).length;
-
-            let statusBadge = `<span style="color:#7f8c8d;">Noch nie geprüft</span>`;
-            if (letztePruefung) {
-                statusBadge = `<span style="color:#27ae60;">✔️ zuletzt ${new Date(letztePruefung).toLocaleDateString('de-DE')}</span>`;
-            }
-            if (nachkaufCount > 0) {
-                statusBadge += `<br><span style="color:#c0392b;">🔴 ${nachkaufCount}x Nachfüllen nötig</span>`;
-            }
-
+            const bestand = gibKistenBestand(o.id);
+            const pl = o.zugewiesene_packliste_id ? packlisten.find(p => String(p.id) === String(o.zugewiesene_packliste_id)) : null;
+            const nachkauf = bestand.filter(z => Number(z.menge) === BESTAND_STRICH_NACHKAUF).length;
             return `<tr>
-                <td><strong>${escapeHtml(o.name)}</strong><br><span style="font-family:monospace; color:#7f8c8d; font-size:0.85em;">${escapeHtml(o.nfc_code)}</span>${eventBadge}</td>
-                <td>${bestandZeilen.length} Position(en)</td>
-                <td>${statusBadge}</td>
+                <td><strong>${escapeHtml(o.name)}</strong><br><span style="font-family:monospace; color:#7f8c8d; font-size:0.85em;">${escapeHtml(o.nfc_code)}</span>${pl ? `<br><span style="color:#8e44ad;">📦 Event: ${escapeHtml(pl.name)}</span>` : ''}</td>
+                <td>${bestand.length} Position(en)</td>
+                <td>${nachkauf > 0 ? `<span style="color:#c0392b;">🔴 ${nachkauf}x Nachkauf</span>` : '<span style="color:#27ae60;">✔️ Alles da</span>'}</td>
                 <td style="white-space:nowrap;">
-                    <button class="btn" style="background:#16a085; padding:8px 10px; width:auto;" onclick="oeffneKistenCheck(${o.id})" title="Inhalt ansehen/bearbeiten und prüfen">📦 Inhalt / Prüfen</button>
-                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto;" onclick="openOrteVerwalten(${o.id})" title="Umbenennen, löschen oder NFC-Tag verwalten">⚙️ Verwalten</button>
+                    <button class="btn" style="background:#16a085; padding:8px 10px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
+                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto;" onclick="openOrteVerwalten(${o.id})">⚙️ Verwalten</button>
                 </td>
             </tr>`;
-        }).join('');
-
-    ziel.innerHTML = zeilen || `<tr><td colspan="4" style="padding:20px; text-align:center; color:#7f8c8d;">Kein Lagerort passt zum Filter.</td></tr>`;
+        }).join('') || '<tr><td colspan="4" style="padding:20px; text-align:center;">Kein Ort passt zum Filter.</td></tr>';
 }
 
-// --- Prüf-Workflow: Inhalt ansehen/bearbeiten beim Scannen ---------------
-
-/**
- * Extrahiert den NFC-Code aus einem gescannten Code. Unterstützt:
- * 1. Einfacher Text "ort:CODE" (aktuelles Format, klassischer QR-/NFC-Text)
- * 2. Legacy-Format "behaelter:CODE" (alte, schon physisch beschriebene Tags)
- * 3. URL-Parameter ?kistencheck=CODE (funktioniert auch mit normaler
- *    Handy-Kamera-App / NFC-Hintergrund-Lesen, ganz ohne Web-NFC-API)
- */
-function extrahiereOrtCodeAusScan(rawText) {
-    const text = String(rawText || '').trim();
-    if (!text) return null;
-
-    const einfacherMatch = /^(?:ort|behaelter):(.+)$/i.exec(text);
-    if (einfacherMatch) return einfacherMatch[1].trim();
-
-    const urlMatch = /kistencheck=([^&\s]+)/i.exec(text);
-    if (urlMatch) return decodeURIComponent(urlMatch[1].trim());
-
-    return null;
-}
-
-/** Zentrale Verarbeitung eines gescannten Lagerort-Codes: öffnet Inhalt-Check bzw. Event-Zuweisung. */
 async function verarbeiteOrtScan(rawCode) {
-    if (kistenScanSperre) return;
-    kistenScanSperre = true;
-    setTimeout(() => { kistenScanSperre = false; }, 1500);
+    if (scanSperre.kisten) return;
+    scanSperre.kisten = true;
+    setTimeout(() => scanSperre.kisten = false, 1500);
 
     const code = extrahiereOrtCodeAusScan(rawCode) || String(rawCode || '').trim();
     const ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === code.toLowerCase());
-
     if (!ort) {
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-        showToast(`Kein Lagerort mit dem NFC-Code "${code}" gefunden.`, 'error');
-        return;
+        return showToast(`Kein Lagerort mit NFC-Code "${code}" gefunden.`, 'error');
     }
 
     if (navigator.vibrate) navigator.vibrate(120);
     schliesseKistenKameraModal();
-
-    if (kistenScanAktion === 'zuweisen') {
-        await weiseKisteAktuellemEventZu(ort.id);
-    } else {
-        oeffneKistenCheck(ort.id);
-    }
+    if (kistenScanAktion === 'zuweisen') await weiseKisteAktuellemEventZu(ort.id);
+    else oeffneKistenCheck(ort.id);
 }
 
-/**
- * Öffnet den Inhalt-Editor/Prüf-Bildschirm eines Lagerorts. Zeigt den echten
- * Bestand dort - exakt dieselben Mengen-/Ampel-Bedienelemente wie im
- * normalen "Artikel bearbeiten → Lagerorte & Mengen".
- */
-function oeffneKistenCheck(lagerortId) {
-    const ort = alleLagerorte.find(o => String(o.id) === String(lagerortId));
-    if (!ort) { showToast('Lagerort nicht gefunden.', 'error'); return; }
+function oeffneKistenCheck(lid) {
+    const ort = alleLagerorte.find(o => String(o.id) === String(lid));
+    if (!ort) return;
+    kistenCheckAktuelleId = lid;
+    $('kisten-check-titel').innerText = `📦 Inhalt / Prüfen: ${ort.name}`;
+    $('kisten-check-code').innerText = ort.nfc_code ? `NFC-Code: ${ort.nfc_code}` : '';
 
-    kistenCheckAktuelleId = lagerortId;
-    document.getElementById('kisten-check-titel').innerText = `📦 Inhalt / Prüfen: ${ort.name}`;
-    document.getElementById('kisten-check-code').innerText = ort.nfc_code ? `NFC-Code: ${ort.nfc_code}` : '';
-    aktualisiereKistenArtikelDatalist();
+    const datalist = $('kategorie-artikel-liste');
+    if (datalist) datalist.innerHTML = alleArtikelInfos.map(a => `<option value="${escapeHtml(a.name)}">`).join('');
 
-    const wrapper = document.getElementById('kisten-check-liste');
+    const wrapper = $('kisten-check-liste');
     wrapper.innerHTML = '';
-    const bestand = gibKistenBestand(lagerortId);
-    if (bestand.length === 0) {
-        wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel an diesem Lagerort. Über das Feld unten hinzufügen.</p>';
-    } else {
-        bestand.forEach(z => fuegeKistenBestandZeileHinzu(z));
-    }
-
-    document.getElementById('kistenCheckModal').style.display = 'block';
+    const bestand = gibKistenBestand(lid);
+    if (!bestand.length) wrapper.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel an diesem Lagerort.</p>';
+    else bestand.forEach(z => fuegeKistenBestandZeileHinzu(z));
+    openModalById('kistenCheckModal');
 }
 
-function schliesseKistenCheckModal() {
-    document.getElementById('kistenCheckModal').style.display = 'none';
-    kistenCheckAktuelleId = '';
-}
-
-/**
- * Fügt eine Bestand-Zeile (Artikel + Menge/Ampel) zum Inhalt-Editor hinzu.
- * Nutzt bewusst dieselben CSS-Klassen wie addEditOrtRow(), damit die
- * bestehenden Bestand-Helfer (bestandEingabeGeaendert, toggleBestandInf,
- * toggleBestandMinus, toggleNachkaufCheckbox, setzeBestandStatus,
- * leseBestandswertAusZeile) unverändert weiterverwendet werden können.
- */
 function fuegeKistenBestandZeileHinzu(data = null) {
-    const wrapper = document.getElementById('kisten-check-liste');
-    const leerHinweis = wrapper.querySelector('p');
-    if (leerHinweis) leerHinweis.remove();
-
+    const wrapper = $('kisten-check-liste');
+    wrapper.querySelector('p')?.remove();
     const div = document.createElement('div');
     div.className = 'edit-ort-row';
-    div.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
     div.dataset.bestandId = data?.id || '';
     div.dataset.artikelId = data?.artikel_id ?? data?.artikel?.id ?? '';
 
-    let displayVal = '1', hiddenOldVal = '1', statusValue = 'zahl';
-    if (data && data.id) {
-        if (data.menge == -1) displayVal = '∞';
-        else if (data.menge == -2) { displayVal = '-'; statusValue = 'strich-ok'; }
-        else if (data.menge == -3) { displayVal = '-'; statusValue = 'strich-warn'; }
+    let displayVal = '1', status = 'zahl';
+    if (data?.id) {
+        if (data.menge == -1) { displayVal = '∞'; status = 'inf'; }
+        else if (data.menge == -2) { displayVal = '-'; status = 'strich-ok'; }
+        else if (data.menge == -3) { displayVal = '-'; status = 'strich-warn'; }
         else displayVal = data.menge;
-        hiddenOldVal = data.alte_menge !== undefined && data.alte_menge !== null ? data.alte_menge : (data.menge < 0 ? '0' : data.menge);
     }
 
     div.innerHTML = `
-        <div class="bestand-row-stack" style="width: 100%;">
-            <div style="font-weight:bold; padding:4px 2px;">${escapeHtml(data?.artikel?.name || 'Unbekannter Artikel')}</div>
-            <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
-                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${hiddenOldVal}" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
-                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
-                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne genaue Zählung (Ampel: grün = genug da, rot = nachfüllen)" onclick="toggleBestandMinus(this)">-</button>
+        <div class="bestand-row-stack" style="width:100%;">
+            <div style="font-weight:bold; padding:4px 2px;">${escapeHtml(data?.artikel?.name || 'Unbekannt')}</div>
+            <div class="bestand-action-row" style="flex-wrap:nowrap; width:100%;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 1}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;">
+                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background:#95a5a6; padding:10px; width:auto; min-width:68px; font-weight:bold;" onclick="toggleBestandInf(this)">∞</button>
+                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background:#95a5a6; padding:10px; width:auto; min-width:44px; font-weight:bold;" onclick="toggleBestandMinus(this)">-</button>
             </div>
-            <label class="bestand-nachkauf-wrap">
-                <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
-                <span>Auf Nachkaufen setzen (🔴 Nachfüllen nötig)</span>
-            </label>
+            <label class="bestand-nachkauf-wrap"><input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)"><span>Auf Nachkaufen setzen (🔴 Nachfüllen nötig)</span></label>
         </div>
-        <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="entferneKistenBestandZeile(this)" title="Aus diesem Lagerort entfernen">🗑️</button>
-    `;
-    setzeBestandStatus(div, statusValue, statusValue === 'strich-warn');
+        <button type="button" class="btn" style="background:#e74c3c; padding:8px 12px; width:auto;" onclick="entferneKistenBestandZeile(this)">🗑️</button>`;
+    setzeBestandStatus(div, status, status === 'strich-warn');
     wrapper.appendChild(div);
 }
 
-/** Fügt über das Freitext-/Datalist-Feld einen neuen Artikel hinzu (lokal, wird erst beim Speichern angelegt). */
 function kistenCheckArtikelHinzufuegen() {
-    const input = document.getElementById('kisten-check-artikel-input');
-    const name = (input.value || '').trim();
-    if (!name) return;
-
-    const artikel = alleArtikelInfos.find(a => a.name.toLowerCase() === name.toLowerCase());
-    if (!artikel) { showToast(`Artikel "${name}" nicht gefunden.`, 'error'); return; }
-
-    const bereitsDrin = document.querySelector(`#kisten-check-liste .edit-ort-row[data-artikel-id="${artikel.id}"]`);
-    if (bereitsDrin) { showToast('Dieser Artikel ist bereits an diesem Lagerort.', 'warning'); return; }
-
-    fuegeKistenBestandZeileHinzu({ artikel_id: artikel.id, artikel: { name: artikel.name } });
-    input.value = '';
+    const inp = $('kisten-check-artikel-input');
+    const val = inp.value.trim();
+    if (!val) return;
+    const art = alleArtikelInfos.find(a => a.name.toLowerCase() === val.toLowerCase());
+    if (!art) return showToast(`Artikel "${val}" nicht gefunden.`, 'error');
+    if ($(`#kisten-check-liste .edit-ort-row[data-artikel-id="${art.id}"]`)) return showToast('Bereits vorhanden.', 'warning');
+    fuegeKistenBestandZeileHinzu({ artikel_id: art.id, artikel: { name: art.name } });
+    inp.value = '';
 }
 
-/** Entfernt eine Zeile aus dem Editor - ist sie schon gespeichert, wird der Bestand sofort gelöscht. */
 async function entferneKistenBestandZeile(btn) {
     const row = btn.closest('.edit-ort-row');
-    const bestandId = row?.dataset.bestandId;
-    if (bestandId) {
-        const { error } = await dbClient.from('bestand').delete().eq('id', bestandId);
-        if (error) { showToast('Fehler beim Entfernen: ' + error.message, 'error'); return; }
-    }
+    if (row?.dataset.bestandId) await dbClient.from('bestand').delete().eq('id', row.dataset.bestandId);
     row.remove();
-    if (!document.querySelector('#kisten-check-liste .edit-ort-row')) {
-        document.getElementById('kisten-check-liste').innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Noch keine Artikel an diesem Lagerort. Über das Feld unten hinzufügen.</p>';
-    }
 }
 
-/**
- * Speichert alle Zeilen des Inhalt-Editors als Bestand an diesem Lagerort
- * und stempelt "zuletzt geprüft". Da das ganz normaler Bestand ist, greift
- * die bestehende Einkaufsliste (Nachkauf-Markierung) automatisch mit.
- */
 async function speichereKistenCheck() {
-    const lagerortId = kistenCheckAktuelleId;
-    if (!lagerortId) { schliesseKistenCheckModal(); return; }
-
-    const jetzt = new Date().toISOString();
-    const geprueftVon = holeLokaleSession()?.username || 'Unbekannt';
+    if (!kistenCheckAktuelleId) return closeModal('kistenCheckModal');
+    const jetzt = new Date().toISOString(), user = holeLokaleSession()?.username || 'Unbekannt';
     const rows = Array.from(document.querySelectorAll('#kisten-check-liste .edit-ort-row'));
 
-    const aufgaben = rows.map(row => {
-        const artikelId = row.dataset.artikelId;
-        const bestandId = row.dataset.bestandId;
+    const tasks = rows.map(row => {
+        const aid = row.dataset.artikelId, bid = row.dataset.bestandId;
         const menge = leseBestandswertAusZeile(row);
-        const alteMengeAusFeld = werteMengeAus(row.querySelector('input')?.getAttribute('data-old-value') || '0');
-        const alteMenge = menge < 0 ? alteMengeAusFeld : menge;
-        const dbObj = { menge, alte_menge: alteMenge, geprueft_am: jetzt, geprueft_von: geprueftVon };
-
-        if (bestandId) return dbClient.from('bestand').update(dbObj).eq('id', bestandId);
-        return dbClient.from('bestand').insert([{ artikel_id: Number(artikelId), lagerort_id: Number(lagerortId), ...dbObj }]);
+        const oldVal = werteMengeAus(row.querySelector('input')?.getAttribute('data-old-value') || '0');
+        const payload = { menge, alte_menge: menge < 0 ? oldVal : menge, geprueft_am: jetzt, geprueft_von: user };
+        return bid ? dbClient.from('bestand').update(payload).eq('id', bid) : dbClient.from('bestand').insert([{ artikel_id: Number(aid), lagerort_id: Number(kistenCheckAktuelleId), ...payload }]);
     });
 
-    try {
-        await Promise.all(aufgaben);
-        showToast('✅ Inhalt gespeichert!');
-        schliesseKistenCheckModal();
-        await ladeAlles();
-        renderKistenListe();
-    } catch (e) {
-        console.error(e);
-        showToast('Fehler beim Speichern.', 'error');
-    }
+    await Promise.all(tasks);
+    showToast('✅ Inhalt gespeichert!');
+    closeModal('kistenCheckModal');
+    await ladeAlles();
+    renderKistenListe();
 }
 
-// --- Scannen: Kamera (QR) und NFC ----------------------------------------
-
-function oeffneKistenKameraModal() {
-    kistenScanAktion = 'check';
-    oeffneKistenKameraModalOhneReset();
-}
-
-function schliesseKistenKameraModal() {
-    if (kistenQrScanner) {
-        kistenQrScanner.stop()
-            .then(() => kistenQrScanner.clear())
-            .catch(() => { /* Kamera war evtl. schon gestoppt - ignorieren */ })
-            .finally(() => { kistenQrScanner = null; });
-    }
-    const modal = document.getElementById('kistenKameraModal');
-    if (modal) modal.style.display = 'none';
-}
-
-/** Startet/stoppt den NFC-Scan-Modus (analog zu starteRueckgabeNfc). */
-async function starteKistenNfc(aktion = 'check') {
-    kistenScanAktion = aktion;
-    if (aktiverNfcModus === 'kisten') {
-        deaktiviereNfcModus('kisten');
-        showToast('📶 NFC-Scan gestoppt.', 'success');
-        return;
-    }
-
-    if (aktiverNfcModus === 'rueckgabe') deaktiviereNfcModus('rueckgabe');
-    if (aktiverNfcModus === 'ausbuchen') deaktiviereNfcModus('ausbuchen');
-
-    aktiverNfcModus = 'kisten';
-    aktualisiereNfcModusUI();
-
-    if (typeof window.nfc !== 'undefined') {
-        kistenScanSperre = false;
-        showToast('📶 App-NFC aktiv – Tag vor das Handy halten.', 'success');
-
-        window.nfc.addNdefListener((nfcEvent) => {
-            try {
-                if (aktiverNfcModus !== 'kisten') return;
-
-                let record = nfcEvent.tag.ndefMessage[0];
-                let payloadText = "";
-
-                if (record.tnf === 1 && record.type[0] === 85) {
-                    payloadText = window.ndef.uriHelper.decodePayload(record.payload);
-                } else if (record.tnf === 1 && record.type[0] === 84) {
-                    payloadText = window.ndef.textHelper.decodePayload(record.payload);
-                } else {
-                    payloadText = window.nfc.bytesToString(record.payload);
-                }
-
-                verarbeiteOrtScan(payloadText);
-            } catch (e) {
-                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-            }
-        }, () => {}, (err) => { showToast('NFC-Fehler: ' + err, 'error'); });
-        return;
-    }
-
-    if (!('NDEFReader' in window)) {
-        showToast('Web NFC wird von diesem Browser nicht unterstützt. Nutze stattdessen "Kiste scannen (Kamera)".', 'error');
-        aktiverNfcModus = null;
-        aktualisiereNfcModusUI();
-        return;
-    }
-
-    try {
-        kistenNfcAbortController = new AbortController();
-        kistenNfcReader = new NDEFReader();
-        await kistenNfcReader.scan({ signal: kistenNfcAbortController.signal });
-        showToast('📶 Web-NFC aktiv – Tag vor das Handy halten.', 'success');
-
-        kistenNfcReader.onreading = (event) => {
-            if (aktiverNfcModus !== 'kisten') return;
-            try {
-                const record = event.message.records[0];
-                const decoder = new TextDecoder(record.encoding || 'utf-8');
-                verarbeiteOrtScan(decoder.decode(record.data));
-            } catch (e) {
-                showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-            }
-        };
-        kistenNfcReader.onreadingerror = () => showToast('NFC-Tag konnte nicht gelesen werden.', 'error');
-    } catch (err) {
-        showToast('NFC-Scan konnte nicht gestartet werden: ' + err, 'error');
-        aktiverNfcModus = null;
-        aktualisiereNfcModusUI();
-    }
-}
-
-// =========================================================================
-// FLEXIBLE EVENT-ZUORDNUNG VON LAGERORTEN/KISTEN
-//
-// Ein Lagerort mit NFC-Tag kann statt fest im Regal auch einem Event (= einer
-// bestehenden "packlisten"-Zeile) zugewiesen sein - entweder durch Scannen
-// des NFC-Tags direkt ("welches Event bekommt diese Kiste?") oder manuell
-// über ein Dropdown im Event-Modus (praktisch für die Vorab-Planung, wenn
-// man gerade keinen Tag zur Hand hat). Ein Lagerort gehört immer nur zu
-// einem Event gleichzeitig; "Lösen" gibt ihn wieder frei (= zurück im Lager).
-// =========================================================================
-
-/** Öffnet den Kamera-Scanner im "Event-Zuweisen"-Modus statt im "Check"-Modus. */
-function starteEventKistenZuweisungScan() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    if (!listId) { showToast('Bitte zuerst ein Event/eine Packliste auswählen.', 'warning'); return; }
-    kistenScanAktion = 'zuweisen';
-    oeffneKistenKameraModalOhneReset();
-}
-
-/** Startet den Kamera-Scanner, ohne kistenScanAktion zurückzusetzen (wird von beiden Aufrufern oben genutzt). */
-function oeffneKistenKameraModalOhneReset() {
-    const modal = document.getElementById('kistenKameraModal');
-    const statusEl = document.getElementById('kisten-scanner-status');
-    modal.style.display = 'block';
-    kistenScanSperre = false;
-    if (statusEl) statusEl.innerText = 'Kamera wird gestartet…';
-
-    kistenQrScanner = new Html5Qrcode('kisten-qr-reader');
-    kistenQrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-            if (statusEl) statusEl.innerText = 'Erkannt: ' + decodedText;
-            verarbeiteOrtScan(decodedText);
-        },
-        () => { /* pro Frame kein Treffer - normal, ignorieren */ }
-    ).then(() => {
-        if (statusEl) statusEl.innerText = kistenScanAktion === 'zuweisen'
-            ? 'Bereit – Kiste diesem Event zuweisen: NFC-Etikett vor die Kamera halten.'
-            : 'Bereit – NFC-Etikett der Kiste vor die Kamera halten.';
-    }).catch(err => {
-        console.error(err);
-        showToast('Kamera konnte nicht gestartet werden. Berechtigung erteilt?', 'error');
-        schliesseKistenKameraModal();
-    });
-}
-
-/** Weist den gescannten/gewählten Lagerort dem aktuell im Event-Modus ausgewählten Event zu. */
-async function weiseKisteAktuellemEventZu(lagerortId) {
-    const listId = document.getElementById('packlisten-auswahl')?.value;
-    if (!listId) { showToast('Kein Event ausgewählt.', 'error'); return; }
-    await weiseKisteEventZu(lagerortId, listId);
-}
-
-/** Kernfunktion: schreibt die Zuweisung in die DB und aktualisiert Ansichten. */
-async function weiseKisteEventZu(lagerortId, packlisteId) {
-    const ort = alleLagerorte.find(o => String(o.id) === String(lagerortId));
-    const event = packlisten.find(pl => String(pl.id) === String(packlisteId));
-    if (!ort || !event) { showToast('Lagerort oder Event nicht gefunden.', 'error'); return; }
-
-    const { error } = await dbClient.from('lagerorte')
-        .update({ zugewiesene_packliste_id: Number(packlisteId), zugewiesen_am: new Date().toISOString() })
-        .eq('id', lagerortId);
-
-    if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-
-    if (navigator.vibrate) navigator.vibrate(120);
-    showToast(`📦 "${ort.name}" ist jetzt Event "${event.name}" zugeordnet.`);
+// Event-Zuweisung
+async function weiseKisteAktuellemEventZu(lid) {
+    const pid = $('packlisten-auswahl')?.value;
+    if (!pid) return showToast('Kein Event ausgewählt.', 'error');
+    await dbClient.from('lagerorte').update({ zugewiesene_packliste_id: Number(pid), zugewiesen_am: new Date().toISOString() }).eq('id', lid);
+    showToast('📦 Kiste zugeordnet.');
     await ladeAlles();
     renderKistenListe();
     renderEventKistenListe();
 }
-
-/** Löst die Event-Zuordnung eines Lagerorts (gilt wieder als "im Lager"). */
-async function entferneKisteVonEvent(lagerortId) {
-    const ort = alleLagerorte.find(o => String(o.id) === String(lagerortId));
-    const { error } = await dbClient.from('lagerorte')
-        .update({ zugewiesene_packliste_id: null, zugewiesen_am: null })
-        .eq('id', lagerortId);
-
-    if (error) { showToast('Fehler: ' + error.message, 'error'); return; }
-    showToast(`"${ort?.name || 'Lagerort'}" wieder freigegeben (kein Event mehr zugeordnet).`);
+async function entferneKisteVonEvent(lid) {
+    await dbClient.from('lagerorte').update({ zugewiesene_packliste_id: null, zugewiesen_am: null }).eq('id', lid);
+    showToast('Kiste freigegeben.');
     await ladeAlles();
     renderKistenListe();
     renderEventKistenListe();
 }
-
-/** Manuelle Zuweisung per Dropdown im Event-Modus (ohne Scan, für die Vorab-Planung). */
 function eventKisteManuellZuweisen() {
-    const listId = document.getElementById('packlisten-auswahl').value;
-    const select = document.getElementById('event-kiste-manuell-auswahl');
-    const lagerortId = select?.value;
-    if (!listId || !lagerortId) return;
-    weiseKisteEventZu(lagerortId, listId);
-    select.value = '';
+    const s = $('event-kiste-manuell-auswahl');
+    if (s?.value) { weiseKisteAktuellemEventZu(s.value); s.value = ''; }
+}
+function renderEventKistenListe() {
+    const ziel = $('event-kisten-liste'), select = $('event-kiste-manuell-auswahl'), pid = $('packlisten-auswahl')?.value;
+    if (!ziel || !pid) return;
+    const zugeordnet = gibNfcOrte().filter(o => String(o.zugewiesene_packliste_id) === String(pid));
+    ziel.innerHTML = zugeordnet.map(o => `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #eee; border-radius:8px; margin-bottom:6px;">
+            <div><strong>${escapeHtml(o.name)}</strong> <span style="color:#7f8c8d; font-size:0.85em;">(${escapeHtml(o.nfc_code)})</span></div>
+            <div style="display:flex; gap:6px;">
+                <button class="btn" style="background:#16a085; padding:6px 10px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Prüfen</button>
+                <button class="btn" style="background:#c0392b; padding:6px 10px; width:auto;" onclick="entferneKisteVonEvent(${o.id})">Lösen</button>
+            </div>
+        </div>`).join('') || '<p style="color:#7f8c8d; font-size:0.9em;">Diesem Event ist noch keine Kiste zugeordnet.</p>';
+
+    if (select) {
+        populateSelect(select, gibNfcOrte().filter(o => !o.zugewiesene_packliste_id), { defaultOption: '-- Kiste manuell zuweisen --', formatLabel: o => `${o.name} (${o.nfc_code})` });
+    }
 }
 
-/**
- * Rendert im Event-Modus zwei Dinge:
- * 1. Die Lagerorte/Kisten, die dem aktuell ausgewählten Event bereits zugeordnet sind.
- * 2. Ein Dropdown mit allen noch freien (nicht zugeordneten) NFC-Lagerorten zur
- *    manuellen Zuweisung.
- */
-function renderEventKistenListe() {
-    const ziel = document.getElementById('event-kisten-liste');
-    const auswahl = document.getElementById('event-kiste-manuell-auswahl');
-    if (!ziel) return;
+// =========================================================================
+// 8. ENTNAHME-PROTOKOLL & WIZARD
+// =========================================================================
+function holeVerbleibendeMenge(artikelId, ignoriereWizardIndex = -1) {
+    const bestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
+    const maxVerfuegbar = berechneArtikelVerfuegbarkeit(artikelId, bestaende);
+    if (maxVerfuegbar === '∞' || maxVerfuegbar === '-') return maxVerfuegbar;
 
-    const currentId = document.getElementById('packlisten-auswahl')?.value;
-    if (!currentId) { ziel.innerHTML = ''; if (auswahl) auswahl.innerHTML = ''; return; }
+    let wizardMenge = 0;
+    entnahmeMaterialien.forEach((item, idx) => {
+        if (String(item.artikel_id) === String(artikelId) && idx !== ignoriereWizardIndex) wizardMenge += Number(item.menge) || 0;
+    });
+    return Math.max(0, Number(maxVerfuegbar) - wizardMenge);
+}
 
-    const nfcOrte = gibNfcOrte();
-    const zugeordnet = nfcOrte.filter(o => String(o.zugewiesene_packliste_id) === String(currentId));
+function berechneArtikelVerfuegbarkeit(artId, bestaende = []) {
+    let gesamt = 0, inf = false, strich = false;
+    bestaende.forEach(b => {
+        const m = Number(b.menge);
+        if (m === -1) inf = true; else if (m === -2) strich = true; else if (m >= 0) gesamt += m;
+    });
+    if (inf) return '∞';
+    if (strich && gesamt === 0) return '-';
+    return Math.max(0, gesamt - Number(entnahmeVerbrauchProArtikel[String(artId)] || 0));
+}
 
-    if (zugeordnet.length === 0) {
-        ziel.innerHTML = '<p style="color:#7f8c8d; font-size:0.9em;">Diesem Event ist noch keine Kiste zugeordnet.</p>';
+async function ladeAktuelleEntnahmeVerbraeuche() {
+    const { data } = await dbClient.from(TABLES.ENTNAHME).select('materialien');
+    const vMap = {};
+    (data || []).forEach(e => {
+        (Array.isArray(e.materialien) ? e.materialien : []).forEach(m => {
+            if (m?.artikel_id && Number(m.menge) > 0) vMap[String(m.artikel_id)] = (vMap[String(m.artikel_id)] || 0) + Number(m.menge);
+        });
+    });
+    entnahmeVerbrauchProArtikel = vMap;
+}
+
+function entnahmeWizardZuSchritt(step) {
+    entnahmeWizardStep = Math.min(3, Math.max(1, Number(step) || 1));
+    document.querySelectorAll('[data-entnahme-step-panel]').forEach(p => p.style.display = Number(p.getAttribute('data-entnahme-step-panel')) === entnahmeWizardStep ? 'block' : 'none');
+    document.querySelectorAll('[data-entnahme-step-indicator]').forEach(b => {
+        const s = Number(b.getAttribute('data-entnahme-step-indicator'));
+        b.classList.toggle('active', s === entnahmeWizardStep);
+        b.classList.toggle('complete', s < entnahmeWizardStep);
+    });
+    entnahmeAktualisiereZusammenfassung();
+    entnahmeSpeichereDraftLokal();
+}
+function entnahmeWizardZurueck() { entnahmeWizardZuSchritt(entnahmeWizardStep - 1); }
+function entnahmeWizardWeiter() { entnahmeWizardZuSchritt(entnahmeWizardStep + 1); }
+
+function entnahmeAktualisiereZusammenfassung() {
+    const u = entnahmeBenutzerVorlagen.find(i => String(i.id) === String(entnahmeAuswahlBenutzerId));
+    const s = entnahmeSammelvorlagen.find(i => String(i.id) === String(entnahmeAuswahlSammelId));
+    if ($('entnahme-summary-benutzer')) $('entnahme-summary-benutzer').textContent = u?.name || $('entnahme-name')?.value.trim() || 'Noch kein Benutzer';
+    if ($('entnahme-summary-sammel')) $('entnahme-summary-sammel').textContent = s?.name || $('entnahme-sammelvorlagenname')?.value.trim() || 'Noch keine Vorlage';
+    if ($('entnahme-summary-materialien')) $('entnahme-summary-materialien').textContent = entnahmeMaterialien.length ? `${entnahmeMaterialien.length} Positionen` : 'Noch keine Materialien';
+}
+
+function renderEntnahmeMaterialien() {
+    const rows = entnahmeMaterialien.length ? entnahmeMaterialien.map((item, idx) => `
+        <tr>
+            <td><strong>${escapeHtml(item.label)}</strong><br><small style="color:#666;">${escapeHtml(item.einheit || 'Stück')}</small></td>
+            <td style="width:120px;"><input type="text" value="${escapeHtml(item.menge)}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; text-align:center;" onchange="entnahmeMaterialMengeAendern(${idx}, this.value)"></td>
+            <td style="width:70px; text-align:right;"><button class="btn" style="background:#e74c3c; padding:8px 10px; width:auto;" onclick="entnahmeMaterialLoeschen(${idx})">🗑️</button></td>
+        </tr>`).join('') : '<tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>';
+    document.querySelectorAll('.entnahme-material-liste-target').forEach(t => t.innerHTML = rows);
+}
+
+function entnahmeMaterialHinzufuegen(inpId = 'entnahme-artikel-input', mengeId = 'entnahme-artikel-menge') {
+    const inp = $(inpId), mInp = $(mengeId);
+    if (!inp || !mInp) return;
+    const label = inp.value.trim();
+    const art = alleArtikelInfos.find(i => ((i.kategorie ? i.kategorie + ' > ' : '') + i.name) === label);
+    if (!art) return showToast('Artikel aus der Liste auswählen!', 'warning');
+    const menge = werteMengeAus(mInp.value);
+    if (menge <= 0) return showToast('Menge größer 0 eingeben.', 'warning');
+
+    const frei = holeVerbleibendeMenge(art.id);
+    if (!['∞', '-'].includes(frei) && menge > frei) return showToast(`Fehler: Nur noch ${frei} verfügbar!`, 'error');
+
+    const exist = entnahmeMaterialien.find(i => String(i.artikel_id) === String(art.id));
+    if (exist) exist.menge += menge;
+    else entnahmeMaterialien.push({ artikel_id: art.id, label, kategorie: art.kategorie || '', einheit: art.einheit || 'Stück', menge });
+
+    inp.value = ''; mInp.value = '1';
+    renderEntnahmeMaterialien();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+}
+
+function entnahmeModalMaterialHinzufuegen() { entnahmeMaterialHinzufuegen('entnahme-modal-artikel-input', 'entnahme-modal-artikel-menge'); }
+
+function entnahmeMaterialMengeAendern(idx, val) {
+    if (!entnahmeMaterialien[idx]) return;
+    let m = werteMengeAus(val);
+    if (m <= 0) entnahmeMaterialien.splice(idx, 1);
+    else {
+        const frei = holeVerbleibendeMenge(entnahmeMaterialien[idx].artikel_id, idx);
+        if (!['∞', '-'].includes(frei) && m > frei) {
+            showToast(`Maximal ${frei} verfügbar!`, 'warning');
+            m = frei;
+        }
+        entnahmeMaterialien[idx].menge = m;
+    }
+    renderEntnahmeMaterialien();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+}
+function entnahmeMaterialLoeschen(idx) { entnahmeMaterialien.splice(idx, 1); renderEntnahmeMaterialien(); entnahmeMarkiereAutoSaveAlsErforderlich(); }
+
+function entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave = false } = {}) {
+    if (entnahmeMarkiereTimer) clearTimeout(entnahmeMarkiereTimer);
+    entnahmeMarkiereTimer = setTimeout(() => {
+        entnahmeSpeichereDraftLokal();
+        entnahmeAktualisiereZusammenfassung();
+    }, 200);
+}
+
+function entnahmeSpeichereDraftLokal() {
+    try {
+        const st = {
+            step: entnahmeWizardStep, benutzerVorlageId: entnahmeAuswahlBenutzerId, sammelVorlageId: entnahmeAuswahlSammelId,
+            name: $('entnahme-name')?.value.trim() || '', kontakt: $('entnahme-kontakt')?.value.trim() || '', materialien: entnahmeMaterialien
+        };
+        window.localStorage.setItem(STORAGE_KEYS.ENTNAHME_DRAFT, JSON.stringify(st));
+    } catch {}
+}
+function entnahmeLadeDraftLokal() { try { return JSON.parse(window.localStorage.getItem(STORAGE_KEYS.ENTNAHME_DRAFT)); } catch { return null; } }
+function entnahmeLoescheDraftLokal() { window.localStorage.removeItem(STORAGE_KEYS.ENTNAHME_DRAFT); }
+
+async function verarbeiteAusbuchenScan(rawCode) {
+    if (scanSperre.ausbuchen) return;
+    const aid = extrahiereArtikelIdAusScan(rawCode);
+    if (!aid) return showToast('Unbekannter Code.', 'error');
+    scanSperre.ausbuchen = true;
+    setTimeout(() => scanSperre.ausbuchen = false, 2000);
+
+    const art = alleArtikelInfos.find(a => String(a.id) === String(aid));
+    if (!art) return showToast('Artikel nicht gefunden.', 'error');
+
+    const frei = holeVerbleibendeMenge(aid);
+    if (!['∞', '-'].includes(frei) && frei <= 0) return showToast('Alles ausgebucht!', 'error');
+
+    const exist = entnahmeMaterialien.find(i => String(i.artikel_id) === String(aid));
+    if (exist) exist.menge += 1;
+    else entnahmeMaterialien.push({ artikel_id: art.id, label: art.name, kategorie: art.kategorie || '', einheit: art.einheit || 'Stück', menge: 1 });
+
+    renderEntnahmeMaterialien();
+    entnahmeMarkiereAutoSaveAlsErforderlich();
+    if (navigator.vibrate) navigator.vibrate(200);
+    showToast(`✅ 1x ${art.name} hinzugefügt!`);
+}
+
+async function verarbeiteRueckgabeScan(rawCode) {
+    if (scanSperre.rueckgabe) return;
+    const aid = extrahiereArtikelIdAusScan(rawCode);
+    if (!aid) return showToast('Unbekannter Code.', 'error');
+    scanSperre.rueckgabe = true;
+    setTimeout(() => scanSperre.rueckgabe = false, 2000);
+
+    try {
+        const { data: art } = await dbClient.from('artikel').select('name').eq('id', aid).single();
+        const aName = art?.name || 'Artikel ' + aid;
+        const { data: entnahmen } = await dbClient.from(TABLES.ENTNAHME).select('*').order('created_at', { ascending: true });
+
+        let matchE = null, mIdx = -1;
+        for (const e of (entnahmen || [])) {
+            const mats = Array.isArray(e.materialien) ? e.materialien : [];
+            const idx = mats.findIndex(m => String(m.artikel_id) === String(aid) && Number(m.menge) > 0);
+            if (idx !== -1) { matchE = e; mIdx = idx; break; }
+        }
+
+        if (!matchE) return showToast('Artikel ist bereits vollzählig im Lager!', 'warning');
+
+        const neueMats = [...matchE.materialien];
+        neueMats[mIdx].menge -= 1;
+        const istLeer = neueMats[mIdx].menge <= 0;
+        if (istLeer) neueMats.splice(mIdx, 1);
+
+        const audit = { entnahme_id: String(matchE.id), name: matchE.name, kontakt: matchE.kontakt, ereignis: neueMats.length ? 'teilrueckgabe' : 'rueckgabe' };
+
+        if (!neueMats.length) await dbClient.from(TABLES.ENTNAHME).delete().eq('id', matchE.id);
+        else await dbClient.from(TABLES.ENTNAHME).update({ materialien: neueMats }).eq('id', matchE.id);
+
+        await dbClient.from(TABLES.AUDIT).insert([{ ...audit, materialien: [{ artikel_id: aid, label: aName, menge: 1 }] }]);
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast(`✅ 1x ${aName} zurückgebucht!`);
+        await ladeAlles();
+        await ladeEntnahmeHistorie();
+    } catch (e) { showToast('Fehler bei Rückgabe: ' + e.message, 'error'); }
+}
+
+async function entnahmeProtokollSpeichern() {
+    const name = $('entnahme-name')?.value.trim();
+    if (!name || !entnahmeMaterialien.length) return showToast('Name und mindestens 1 Material erforderlich!', 'warning');
+
+    const payload = {
+        name, kontakt: $('entnahme-kontakt')?.value.trim() || '',
+        materialien: entnahmeMaterialien, benutzer_vorlage_id: entnahmeAuswahlBenutzerId || null,
+        sammelvorlage_id: entnahmeAuswahlSammelId?.startsWith('pack:') ? null : (entnahmeAuswahlSammelId || null)
+    };
+
+    const { data, error } = await dbClient.from(TABLES.ENTNAHME).insert([payload]).select();
+    if (error) return showToast('Fehler: ' + error.message, 'error');
+
+    await dbClient.from(TABLES.AUDIT).insert([{ ...payload, entnahme_id: data?.[0]?.id, ereignis: 'entnahme' }]);
+    showToast('Entnahme erfolgreich abgeschlossen!');
+    entnahmeLoescheDraftLokal();
+    entnahmeFormularZuruecksetzen();
+    await ladeAlles();
+    await ladeEntnahmeHistorie();
+}
+
+function entnahmeAbschliessen() { return entnahmeProtokollSpeichern(); }
+
+function entnahmeFormularZuruecksetzen() {
+    if ($('entnahme-name')) $('entnahme-name').value = '';
+    if ($('entnahme-kontakt')) $('entnahme-kontakt').value = '';
+    entnahmeMaterialien = []; entnahmeAuswahlBenutzerId = ''; entnahmeAuswahlSammelId = '';
+    renderEntnahmeMaterialien();
+    entnahmeWizardZuSchritt(1);
+}
+
+// Vorlagen Overlay & CRUD
+function oeffneVorlagenOverlay() { entnahmeVorlagenBearbeiten = true; fillEntnahmeVorlagenDropdowns(); openModalById('vorlagenModal'); }
+function schliesseVorlagenOverlay() { closeModal('vorlagenModal'); entnahmeVorlagenBearbeiten = false; }
+
+function fillEntnahmeVorlagenDropdowns() {
+    populateSelect($('entnahme-benutzer-vorlage'), entnahmeBenutzerVorlagen, { defaultOption: '-- Benutzer auswählen --' });
+    populateSelect($('entnahme-benutzer-vorlage-bearbeiten'), entnahmeBenutzerVorlagen, { defaultOption: '-- Neuer Benutzer --' });
+
+    const sSelect = $('entnahme-sammelvorlage');
+    if (sSelect) {
+        populateSelect(sSelect, entnahmeSammelvorlagen, { defaultOption: '-- Keine Vorlage --' });
+        if (packlisten.length) {
+            sSelect.add(new Option('──────── Packlisten ────────', '', undefined, true));
+            packlisten.forEach(p => sSelect.add(new Option('Packliste: ' + p.name, 'pack:' + p.id)));
+        }
+    }
+    populateSelect($('entnahme-sammelvorlage-bearbeiten'), entnahmeSammelvorlagen, { defaultOption: '-- Vorlage bearbeiten --' });
+}
+
+async function ladeEntnahmeVorlagen() {
+    const [bRes, sRes] = await Promise.all([dbClient.from(TABLES.BENUTZER_VORLAGEN).select('*').order('name'), dbClient.from(TABLES.SAMMEL_VORLAGEN).select('*').order('name')]);
+    entnahmeBenutzerVorlagen = bRes.data || [];
+    entnahmeSammelvorlagen = sRes.data || [];
+    fillEntnahmeVorlagenDropdowns();
+}
+
+function entnahmeBenutzerVorlageAuswaehlen() {
+    const id = $('entnahme-benutzer-vorlage')?.value;
+    entnahmeAuswahlBenutzerId = id;
+    const u = entnahmeBenutzerVorlagen.find(i => String(i.id) === String(id));
+    if ($('entnahme-name')) $('entnahme-name').value = u?.name || '';
+    if ($('entnahme-kontakt')) $('entnahme-kontakt').value = u?.kontakt || '';
+    entnahmeAktualisiereZusammenfassung();
+    if (id) setTimeout(() => entnahmeWizardZuSchritt(2), 180);
+}
+
+function entnahmeSammelvorlageAuswaehlen() {
+    const val = $('entnahme-sammelvorlage')?.value;
+    entnahmeAuswahlSammelId = val;
+    if (val?.startsWith('pack:')) {
+        const pid = val.split(':')[1];
+        const pos = packlistenPositionen.filter(p => String(p.packliste_id) === String(pid));
+        entnahmeMaterialien = pos.map(p => ({ artikel_id: p.artikel_id, label: p.artikel?.name || p.eigener_name, menge: Number(p.menge) || 0 }));
     } else {
-        ziel.innerHTML = zugeordnet.map(o => {
-            const bestandZeilen = gibKistenBestand(o.id);
-            const nieGeprueft = bestandZeilen.filter(z => !z.geprueft_am).length;
-            return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #eee; border-radius:8px; margin-bottom:6px;">
-                <div>
-                    <strong>${escapeHtml(o.name)}</strong>
-                    <span style="color:#7f8c8d; font-size:0.85em;"> (${escapeHtml(o.nfc_code)}) – ${bestandZeilen.length} Position(en)${nieGeprueft ? `, ${nieGeprueft} noch nie geprüft` : ''}</span>
+        const s = entnahmeSammelvorlagen.find(i => String(i.id) === String(val));
+        entnahmeMaterialien = s?.materialien ? JSON.parse(JSON.stringify(s.materialien)) : [];
+    }
+    renderEntnahmeMaterialien();
+    entnahmeAktualisiereZusammenfassung();
+    if (val) setTimeout(() => entnahmeWizardZuSchritt(3), 180);
+}
+
+function entnahmeBenutzerVorlageNeu() { entnahmeAuswahlBenutzerId = ''; $('entnahme-name').value = ''; $('entnahme-kontakt').value = ''; }
+function entnahmeSammelvorlageNeu() { entnahmeAuswahlSammelId = ''; $('entnahme-sammelvorlagenname').value = ''; entnahmeMaterialien = []; renderEntnahmeMaterialien(); }
+
+async function entnahmeBenutzerVorlageSpeichern() {
+    const name = $('entnahme-name')?.value.trim(), kontakt = $('entnahme-kontakt')?.value.trim() || '';
+    if (!name) return showToast('Name eingeben!', 'warning');
+    const id = entnahmeAuswahlBenutzerId;
+    const res = id ? await dbClient.from(TABLES.BENUTZER_VORLAGEN).update({ name, kontakt }).eq('id', id) : await dbClient.from(TABLES.BENUTZER_VORLAGEN).insert([{ name, kontakt }]);
+    if (res.error) showToast('Fehler beim Speichern.', 'error');
+    else { showToast('Benutzer-Vorlage gespeichert!'); await ladeEntnahmeVorlagen(); }
+}
+async function entnahmeBenutzerVorlageLoeschen() {
+    if (!entnahmeAuswahlBenutzerId || !confirm('Vorlage löschen?')) return;
+    await dbClient.from(TABLES.BENUTZER_VORLAGEN).delete().eq('id', entnahmeAuswahlBenutzerId);
+    showToast('Gelöscht.'); await ladeEntnahmeVorlagen(); entnahmeBenutzerVorlageNeu();
+}
+async function entnahmeSammelvorlageSpeichern() {
+    const name = $('entnahme-sammelvorlagenname')?.value.trim();
+    if (!name || !entnahmeMaterialien.length) return showToast('Name & Materialien erforderlich!', 'warning');
+    const id = entnahmeAuswahlSammelId?.startsWith('pack:') ? '' : entnahmeAuswahlSammelId;
+    const payload = { name, materialien: entnahmeMaterialien };
+    const res = id ? await dbClient.from(TABLES.SAMMEL_VORLAGEN).update(payload).eq('id', id) : await dbClient.from(TABLES.SAMMEL_VORLAGEN).insert([payload]);
+    if (res.error) showToast('Fehler: ' + res.error.message, 'error');
+    else { showToast('Sammel-Vorlage gespeichert!'); await ladeEntnahmeVorlagen(); }
+}
+async function entnahmeSammelvorlageLoeschen() {
+    if (!entnahmeAuswahlSammelId || !confirm('Sammel-Vorlage löschen?')) return;
+    await dbClient.from(TABLES.SAMMEL_VORLAGEN).delete().eq('id', entnahmeAuswahlSammelId);
+    showToast('Gelöscht.'); await ladeEntnahmeVorlagen(); entnahmeSammelvorlageNeu();
+}
+
+// Entnahme Historie & Rückgabe-Log
+async function ladeEntnahmeHistorie() {
+    const { data } = await dbClient.from(TABLES.ENTNAHME).select('*').order('created_at', { ascending: false }).limit(50);
+    entnahmeHistorie = data || [];
+    renderEntnahmeHistorie();
+}
+function renderEntnahmeHistorie() {
+    const c = $('entnahme-historie-liste');
+    if (!c) return;
+    c.innerHTML = entnahmeHistorie.map(e => `
+        <details class="entnahme-history-item" ${entnahmeHistorieGeoeffnet.has(String(e.id)) ? 'open' : ''} ontoggle="entnahmeHistorieGeoeffnet.${this?.open ? 'add' : 'delete'}('${e.id}')">
+            <summary>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <span>${escapeHtml(e.name)}</span>
+                    <small style="color:#5f6b77;">${new Date(e.created_at).toLocaleDateString('de-DE')} · ${(e.materialien || []).length} Positionen</small>
                 </div>
-                <div style="display:flex; gap:6px;">
-                    <button class="btn" style="background:#16a085; padding:6px 10px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
-                    <button class="btn" style="background:#c0392b; padding:6px 10px; width:auto;" onclick="entferneKisteVonEvent(${o.id})">Lösen</button>
+            </summary>
+            <div class="entnahme-history-materials">
+                ${(e.materialien || []).map((m, idx) => `
+                    <div class="entnahme-return-row" data-index="${idx}" data-max-qty="${m.menge}">
+                        <span>• ${m.menge}x ${escapeHtml(m.label)}</span>
+                        <div class="entnahme-return-stepper">
+                            <button onclick="entnahmeRueckgabeMengeAendern('${e.id}', ${idx}, -1)">−</button>
+                            <input type="text" data-role="return-qty" value="${m.menge}" readonly>
+                            <button onclick="entnahmeRueckgabeMengeAendern('${e.id}', ${idx}, 1)">+</button>
+                        </div>
+                    </div>`).join('')}
+                <div class="entnahme-history-actions">
+                    <button class="btn" style="background:#1f5f8b;" onclick="entnahmeHistorieLaden('${e.id}')">Laden</button>
+                    <button class="btn" style="background:#34495e;" onclick="entnahmeTeilRueckgabeSpeichern('${e.id}')">Teilrückgabe speichern</button>
+                    <button class="btn" style="background:#c0392b;" onclick="entnahmeKomplettZurueckgeben('${e.id}')">Komplett zurückgeben</button>
+                </div>
+            </div>
+        </details>`).join('') || '<p style="color:#666;">Keine offenen Entnahmen.</p>';
+}
+
+function entnahmeRueckgabeMengeAendern(eid, idx, delta) {
+    const row = document.querySelector(`details[ontoggle*="${eid}"] .entnahme-return-row[data-index="${idx}"]`);
+    const inp = row?.querySelector('[data-role="return-qty"]');
+    if (!inp) return;
+    const max = Number(row.dataset.maxQty) || 0;
+    inp.value = Math.min(max, Math.max(0, Number(inp.value) + delta));
+}
+async function entnahmeKomplettZurueckgeben(eid) {
+    if (!confirm('Komplett zurückgeben?')) return;
+    const e = entnahmeHistorie.find(i => String(i.id) === String(eid));
+    await dbClient.from(TABLES.ENTNAHME).delete().eq('id', eid);
+    await dbClient.from(TABLES.AUDIT).insert([{ entnahme_id: eid, name: e?.name, materialien: e?.materialien, ereignis: 'rueckgabe' }]);
+    showToast('Zurückgegeben.'); await ladeAlles(); await ladeEntnahmeHistorie();
+}
+async function entnahmeTeilRueckgabeSpeichern(eid) {
+    const e = entnahmeHistorie.find(i => String(i.id) === String(eid));
+    if (!e) return;
+    const rows = document.querySelectorAll(`details[ontoggle*="${eid}"] .entnahme-return-row`);
+    const neueMats = [];
+    rows.forEach(r => {
+        const idx = Number(r.dataset.index);
+        const qty = Number(r.querySelector('[data-role="return-qty"]')?.value) || 0;
+        if (qty > 0 && e.materialien[idx]) neueMats.push({ ...e.materialien[idx], menge: qty });
+    });
+    if (!neueMats.length) return entnahmeKomplettZurueckgeben(eid);
+    await dbClient.from(TABLES.ENTNAHME).update({ materialien: neueMats }).eq('id', eid);
+    showToast('Teilrückgabe gespeichert.'); await ladeAlles(); await ladeEntnahmeHistorie();
+}
+function entnahmeHistorieLaden(eid) {
+    const e = entnahmeHistorie.find(i => String(i.id) === String(eid));
+    if (!e) return;
+    $('entnahme-name').value = e.name || ''; $('entnahme-kontakt').value = e.kontakt || '';
+    entnahmeMaterialien = JSON.parse(JSON.stringify(e.materialien || []));
+    renderEntnahmeMaterialien(); entnahmeWizardZuSchritt(3);
+}
+
+async function oeffneEntnahmeLog() { openModalById('entnahmeLogModal'); await ladeEntnahmeLog(); }
+function schliesseEntnahmeLog() { closeModal('entnahmeLogModal'); }
+async function ladeEntnahmeLog() {
+    const { data } = await dbClient.from(TABLES.AUDIT).select('*').in('ereignis', ['rueckgabe', 'teilrueckgabe']).order('created_at', { ascending: false }).limit(200);
+    $('entnahme-log-liste').innerHTML = (data || []).map(e => `
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px;">
+            <strong>${escapeHtml(e.name)}</strong> · <small>${new Date(e.created_at).toLocaleString('de-DE')}</small>
+            <div>${e.ereignis === 'rueckgabe' ? '✅ Vollständig zurück' : '↩️ Teilrückgabe'}</div>
+            <ul style="margin:4px 0 0; padding-left:18px;">${(e.materialien || []).map(m => `<li>${m.menge}x ${escapeHtml(m.label)}</li>`).join('')}</ul>
+        </div>`).join('') || '<p style="color:#666;">Noch keine Rückgaben protokolliert.</p>';
+}
+
+// =========================================================================
+// 9. ARTIKEL-ETIKETTEN & REGAL-QR WERKZEUG
+// =========================================================================
+function oeffneEtikettenTool() {
+    const url = new URL(window.location.href);
+    url.search = ''; url.searchParams.set('etiketten', '1');
+    window.open(url.toString(), '_blank', 'noopener');
+}
+function oeffneQrGeneratorFenster() {
+    const url = new URL(window.location.href);
+    url.search = ''; url.searchParams.set('qrgen', '1');
+    window.open(url.toString(), '_blank', 'noopener');
+}
+
+function renderArtikelEtikettenListe() {
+    const ziel = $('etiketten-liste');
+    if (!ziel) return;
+    const filter = ($('etiketten-suche')?.value || '').toLowerCase().trim();
+    const liste = alleArtikelInfos.filter(a => !filter || a.name.toLowerCase().includes(filter) || (a.kategorie || '').toLowerCase().includes(filter));
+
+    ziel.innerHTML = liste.map(art => {
+        const link = `https://trilager.pius-s.de?rueckgabe=${art.id}`;
+        const chk = etikettenAuswahlIds.has(String(art.id));
+        return `
+            <div class="etikett-zeile ${chk ? 'ist-ausgewaehlt' : ''}">
+                <label class="etikett-checkbox-wrap"><input type="checkbox" class="etikett-checkbox" data-id="${art.id}" ${chk ? 'checked' : ''} onchange="toggleEtikettAuswahl('${art.id}', this.checked)"></label>
+                <div class="etikett-qr" id="etikett-qr-${art.id}"></div>
+                <div class="etikett-info"><strong>${escapeHtml(art.name)}</strong><small>${escapeHtml(art.kategorie || 'Ohne Kategorie')} · ${formatArtikelId(art.id)}</small></div>
+                <div class="etikett-aktionen">
+                    <button class="btn" style="background:#1f5f8b;" onclick="downloadArtikelQr('${art.id}', '${escapeHtml(art.name)}')">⬇️ QR</button>
+                    <button class="btn" style="background:#2980b9;" onclick="schreibeNfcTagFuerArtikel('${art.id}', '${escapeHtml(art.name)}')">📶 NFC schreiben</button>
                 </div>
             </div>`;
-        }).join('');
-    }
+    }).join('') || '<p style="text-align:center;">Keine Artikel gefunden.</p>';
 
-    if (auswahl) {
-        const freieOrte = nfcOrte.filter(o => !o.zugewiesene_packliste_id || String(o.zugewiesene_packliste_id) === String(currentId));
-        auswahl.innerHTML = '<option value="">-- Kiste manuell zuweisen --</option>' +
-            freieOrte
-                .filter(o => String(o.zugewiesene_packliste_id) !== String(currentId))
-                .map(o => `<option value="${o.id}">${escapeHtml(o.name)} (${escapeHtml(o.nfc_code)})</option>`).join('');
+    liste.forEach(art => {
+        const c = $(`etikett-qr-${art.id}`);
+        if (c) new QRCode(c, { text: `https://trilager.pius-s.de?rueckgabe=${art.id}`, width: 90, height: 90 });
+    });
+    aktualisiereEtikettenAuswahlUI();
+}
+
+function toggleEtikettAuswahl(id, chk) {
+    if (chk) etikettenAuswahlIds.add(String(id)); else etikettenAuswahlIds.delete(String(id));
+    aktualisiereEtikettenAuswahlUI();
+}
+function toggleAlleEtikettenAuswahl(chk) {
+    document.querySelectorAll('.etikett-checkbox').forEach(cb => { cb.checked = chk; toggleEtikettAuswahl(cb.dataset.id, chk); });
+}
+function aktualisiereEtikettenAuswahlUI() {
+    if ($('etiketten-auswahl-count')) $('etiketten-auswahl-count').textContent = etikettenAuswahlIds.size;
+    if ($('etiketten-auswahl-drucken-btn')) $('etiketten-auswahl-drucken-btn').disabled = !etikettenAuswahlIds.size;
+}
+
+function downloadArtikelQr(aid, name) {
+    const canvas = $(`etikett-qr-${aid}`)?.querySelector('canvas');
+    if (!canvas) return;
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `qr_${name.replace(/[^a-z0-9-_]+/gi, '_')}.png`;
+    a.click();
+}
+async function schreibeNfcTagFuerArtikel(aid, name) {
+    await schreibeNfcUrlTag(`https://trilager.pius-s.de?rueckgabe=${aid}`, name);
+}
+
+function druckeAusgewaehlteEtiketten() {
+    druckeEtiketten(alleArtikelInfos.filter(a => etikettenAuswahlIds.has(String(a.id))));
+}
+function druckeAlleEtiketten() { druckeEtiketten(alleArtikelInfos); }
+
+function druckeEtiketten(liste) {
+    const win = window.open('', '_blank');
+    const items = liste.map(a => `
+        <div class="etikett-print-item">
+            <div class="etikett-print-qr" data-link="https://trilager.pius-s.de?rueckgabe=${a.id}"></div>
+            <div class="etikett-print-text">
+                <div class="etikett-print-name">${escapeHtml(a.name)}</div>
+                <div class="etikett-print-id">${formatArtikelId(a.id)}</div>
+            </div>
+        </div>`).join('');
+
+    win.document.write(`
+        <html><head><title>Etiketten drucken</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+        <style>
+            * { box-sizing:border-box; } body { font-family:sans-serif; padding:10mm; margin:0; }
+            .etikett-print-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:6mm 5mm; }
+            .etikett-print-item { width:42mm; display:flex; flex-direction:column; align-items:center; padding:3mm; border:1px dashed #bbb; border-radius:2mm; page-break-inside:avoid; }
+            .etikett-print-qr { width:32mm; height:32mm; }
+            .etikett-print-text { width:32mm; text-align:center; margin-top:2mm; font-size:11px; }
+            .etikett-print-name { font-weight:bold; height:9mm; overflow:hidden; }
+            @media print { .no-print { display:none; } }
+        </style></head><body>
+            <button class="no-print" onclick="window.print()" style="padding:10px 16px; margin-bottom:15px; cursor:pointer;">🖨️ Drucken</button>
+            <div class="etikett-print-grid">${items}</div>
+            <script>
+                window.onload = function() {
+                    document.querySelectorAll('.etikett-print-qr').forEach(el => new QRCode(el, { text: el.dataset.link, width: 240, height: 240 }));
+                };
+            <\/script>
+        </body></html>`);
+    win.document.close();
+}
+
+function aktualisiereRegalQrVorschau() {
+    const inp = $('regal-qr-input'), prev = $('regal-qr-preview'), link = $('regal-qr-link');
+    if (!inp || !prev || !link) return;
+    const rName = extrahiereRegalName(inp.value.trim());
+    if (!rName) { prev.style.display = 'none'; link.innerText = ''; return; }
+    const url = `https://trilager.pius-s.de?regal=${encodeURIComponent(rName)}`;
+    prev.innerHTML = '';
+    new QRCode(prev, { text: url, width: 220, height: 220 });
+    prev.style.display = 'flex'; link.href = url; link.innerText = url;
+}
+function downloadRegalQrDatei(fmt = 'png') {
+    const c = $('regal-qr-preview')?.querySelector('canvas');
+    if (!c) return showToast('Kein QR-Code vorhanden.', 'error');
+    const a = document.createElement('a');
+    a.href = c.toDataURL(fmt === 'jpg' ? 'image/jpeg' : 'image/png');
+    a.download = `qr_${extrahiereRegalName($('regal-qr-input').value)}.${fmt}`;
+    a.click();
+}
+
+// =========================================================================
+// 10. FEEDBACK / FORMULAR MODUS
+// =========================================================================
+async function formularAntwortSpeichern() {
+    const name = $('formular-name')?.value.trim() || 'Anonym';
+    const frage1 = $('formular-frage1')?.value.trim() || '';
+    const frage2 = $('formular-frage2')?.value.trim() || '';
+    if (!frage1 && !frage2) return showToast('Bitte mindestens eine Frage beantworten.', 'warning');
+    const { error } = await dbClient.from(TABLES.FORMULAR).insert([{ name, frage1, frage2 }]);
+    if (error) showToast('Speichern fehlgeschlagen.', 'error');
+    else { showToast('Danke für dein Feedback!'); $('formular-frage1').value = ''; $('formular-frage2').value = ''; }
+}
+async function formularAntwortenLaden() {
+    const ziel = $('formular-antworten');
+    const { data, error } = await dbClient.from(TABLES.FORMULAR).select('*').order('created_at', { ascending: false });
+    if (error || !ziel) return;
+    ziel.style.display = 'block';
+    ziel.innerHTML = (data || []).map((e, idx) => `
+        <div class="survey-answer-item">
+            <h4>Antwort ${idx + 1} - ${new Date(e.created_at).toLocaleString('de-DE')}</h4>
+            <p><strong>Name:</strong> ${escapeHtml(e.name)}</p>
+            <p><strong>Frage 1:</strong> ${escapeHtml(e.frage1)}</p>
+            <p><strong>Frage 2:</strong> ${escapeHtml(e.frage2)}</p>
+        </div>`).join('') || '<p>Noch keine Antworten.</p>';
+}
+
+// =========================================================================
+// 11. INITIALISIERUNG & NAVIGATION
+// =========================================================================
+function wechsleModus(modus) {
+    aktuellerModus = modus;
+    ['lager', 'event', 'kisten'].forEach(m => {
+        const v = $(`ansicht-${m}`), t = $(`tab-${m}`);
+        if (v) v.style.display = m === modus ? 'block' : 'none';
+        if (t) t.className = m === modus ? 'btn btn-modus active' : 'btn btn-modus';
+    });
+    if (modus === 'event') ladeEventDaten();
+    if (modus === 'kisten') renderKistenListe();
+    else if (aktiverNfcModus === 'kisten') deaktiviereNfcModus('kisten');
+}
+
+function zurueckZurHauptseite() {
+    deaktiviereAlleNfcModi();
+    const url = new URL(window.location.href);
+    url.search = '';
+    window.location.href = url.toString();
+}
+function zurHauptseiteZurueck() { zurueckZurHauptseite(); }
+function geheZuEntnahmeprotokoll() { window.location.href = 'https://trilager.pius-s.de?entnahme=1'; }
+
+function pruefeUndVerarbeiteRueckgabeLink() {
+    const p = new URLSearchParams(window.location.search), id = p.get('rueckgabe');
+    if (!id) return;
+    p.delete('rueckgabe');
+    window.history.replaceState({}, '', window.location.pathname + (p.toString() ? '?' + p.toString() : ''));
+    verarbeiteRueckgabeScan('artikel:' + id);
+}
+async function pruefeUndVerarbeiteKistencheckLink() {
+    const p = new URLSearchParams(window.location.search), code = p.get('kistencheck');
+    if (!code) return;
+    p.delete('kistencheck');
+    window.history.replaceState({}, '', window.location.pathname + (p.toString() ? '?' + p.toString() : ''));
+    await ladeAlles();
+    verarbeiteOrtScan(code);
+}
+
+function pruefeUndZeigeOnboarding() {
+    if (!window.localStorage.getItem(STORAGE_KEYS.ONBOARDING)) oeffneOnboarding();
+}
+function oeffneOnboarding() { openModalById('onboardingModal'); }
+function schliesseOnboarding() { closeModal('onboardingModal'); window.localStorage.setItem(STORAGE_KEYS.ONBOARDING, '1'); }
+function openRechtliches(e, mid) { e.preventDefault(); openModalById(mid); }
+
+// Tooltip- / Hover-Events
+window.hoverWasLongPress = false;
+let hoverTimer = null;
+window.handleMouseEnter = (e) => {
+    const t = e.currentTarget;
+    if (t.dataset.hoverType === 'date') { $('hover-date-text').innerHTML = t.dataset.hoverContent; $('hover-date-info').style.display = 'block'; }
+    if (t.dataset.hoverType === 'res') { $('hover-res-text').innerHTML = t.dataset.hoverContent; $('hover-res-info').style.display = 'block'; }
+};
+window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
+window.handleTouchStart = (e) => {
+    window.hoverWasLongPress = false;
+    hoverTimer = setTimeout(() => { window.hoverWasLongPress = true; window.handleMouseEnter(e); }, 400);
+};
+window.handleTouchMove = () => clearTimeout(hoverTimer);
+window.handleTouchEnd = () => { clearTimeout(hoverTimer); setTimeout(window.handleMouseLeave, 2500); };
+
+// DOMContentLoaded Handler
+document.addEventListener('DOMContentLoaded', async () => {
+    // Sanfte Modal-Animationen überwachen
+    document.querySelectorAll('.modal').forEach(modal => {
+        new MutationObserver(() => {
+            const open = getComputedStyle(modal).display !== 'none';
+            if (open) requestAnimationFrame(() => requestAnimationFrame(() => modal.classList.add('modal-visible')));
+            else modal.classList.remove('modal-visible');
+        }).observe(modal, { attributes: true, attributeFilter: ['style'] });
+    });
+
+    if (QRGEN_MODUS) {
+        $('qrgen-ansicht').style.display = 'block';
+        $('login-overlay').style.display = 'none';
+        document.querySelector('.container').style.display = 'none';
+        aktualisiereRegalQrVorschau();
+        return;
     }
+    if (FORMULAR_MODUS) {
+        $('formular-ansicht').style.display = 'block';
+        $('login-overlay').style.display = 'none';
+        document.querySelector('.container').style.display = 'none';
+        return;
+    }
+    if (ENTNAHME_MODUS) return initEntnahmeModus();
+    if (ETIKETTEN_MODUS) return initEtikettenModus();
+
+    const session = holeLokaleSession();
+    if (session) {
+        setzeAuthToken(session.token);
+        $('login-overlay').style.display = 'none';
+        await ladeAlles();
+        pruefeUndZeigeOnboarding();
+        pruefeUndVerarbeiteRueckgabeLink();
+        pruefeUndVerarbeiteKistencheckLink();
+    } else {
+        $('login-overlay').style.display = 'flex';
+    }
+});
+
+async function initEntnahmeModus() {
+    $('entnahme-ansicht').style.display = 'block';
+    document.querySelector('.container').style.display = 'none';
+    const s = holeLokaleSession();
+    if (!s) { $('login-overlay').style.display = 'flex'; return; }
+    setzeAuthToken(s.token);
+    $('login-overlay').style.display = 'none';
+    await ladeAlles();
+    await ladeEntnahmeVorlagen();
+    await ladeEntnahmeHistorie();
+    const draft = entnahmeLadeDraftLokal();
+    if (draft?.materialien) {
+        entnahmeMaterialien = draft.materialien;
+        entnahmeWizardZuSchritt(draft.step || 1);
+        renderEntnahmeMaterialien();
+    }
+}
+
+async function initEtikettenModus() {
+    $('etiketten-ansicht').style.display = 'block';
+    document.querySelector('.container').style.display = 'none';
+    const s = holeLokaleSession();
+    if (!s) { $('login-overlay').style.display = 'flex'; return; }
+    setzeAuthToken(s.token);
+    $('login-overlay').style.display = 'none';
+    await ladeLagerorte();
+    await ladeBestand();
+    renderArtikelEtikettenListe();
 }
