@@ -184,7 +184,6 @@
 
 <div id="toast-container"></div>
 
-<!-- TOOLTIPS -->
 <div id="hover-date-info" style="display: none; position: fixed; bottom: 20px; left: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
     <span style="font-size: 1.2em; vertical-align: middle; margin-right: 5px;">📅</span> 
     <span style="vertical-align: middle;">Letzte Änderung: <strong id="hover-date-text"></strong></span>
@@ -194,7 +193,6 @@
     <span style="vertical-align: top; display: inline-block;" id="hover-res-text"></span>
 </div>
 
-<!-- SUBVIEW: FEEDBACK PORTAL -->
 <div id="formular-ansicht" style="display:none; padding: 30px 0;">
     <div class="subview-backbar">
         <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
@@ -223,7 +221,6 @@
     </div>
 </div>
 
-<!-- SUBVIEW: REGAL QR-CODE GENERATOR -->
 <div id="qrgen-ansicht" style="display:none; padding: 30px 0;">
     <div class="subview-backbar">
         <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
@@ -253,7 +250,6 @@
     </div>
 </div>
 
-<!-- SUBVIEW: ARTIKEL-ETIKETTEN -->
 <div id="etiketten-ansicht" style="display:none; padding: 30px 0;">
     <div class="subview-backbar">
         <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
@@ -273,7 +269,6 @@
     </div>
 </div>
 
-<!-- LOGIN OVERLAY -->
 <div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; flex-direction: column; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
         <h2 style="margin-top:0; color:#2c3e50;">🔐 Lager-Zugang</h2>
@@ -292,7 +287,6 @@
     </div>
 </div>
 
-<!-- ONBOARDING & HILFE MODAL -->
 <div id="onboardingModal" class="modal">
     <div class="modal-content" style="max-width: 580px;">
         <button type="button" class="modal-close-x" onclick="schliesseOnboarding()" title="Schließen">✕</button>
@@ -350,7 +344,6 @@
     </div>
 </div>
 
-<!-- HAUPTCONTAINER -->
 <div class="container">
     <h1>
         <span>📦 Lager-Verwaltung</span>
@@ -372,7 +365,6 @@
         <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Packlisten</button>
     </div>
 
-    <!-- ANSICHT 1: LAGER-MODUS -->
     <div id="ansicht-lager">
         <p class="subtitle">
             Beachte das Änderungsdatum der Artikel. Bitte auf Ordnung im Lager achten!
@@ -423,7 +415,6 @@
         </div>
     </div>
 
-    <!-- ANSICHT 2: KISTEN & LAGERORTE -->
     <div id="ansicht-kisten" style="display: none;">
         <p class="subtitle">
             Jede Kiste ist ein Lagerort mit festem Soll-Inhalt. Scanne den NFC-Tag oder QR-Code, um den Inhalt zu prüfen,
@@ -448,7 +439,6 @@
         </div>
     </div>
 
-    <!-- ANSICHT 3: EVENT-MODUS -->
     <div id="ansicht-event" style="display: none;">
         <p class="subtitle">Packlisten für Veranstaltungen und Resorts. Die Verfügbarkeit berechnet sich automatisch.</p>
         <div class="action-bar">
@@ -486,14 +476,12 @@
      MODALS
      ========================================================================= -->
 
-<!-- MODAL: KISTEN CHECK / INHALT (ENTNEHMEN & ZURÜCKBUCHEN) -->
 <div id="kistenCheckModal" class="modal" onclick="if (event.target === this) schliesseKistenCheckModal()">
     <div class="modal-content" style="max-width: 680px;">
         <button type="button" class="modal-close-x" onclick="schliesseKistenCheckModal()" title="Schließen">✕</button>
         <h2 id="kisten-check-titel" style="margin-top:0; color:#2c3e50;">📦 Kisteninhalt</h2>
         <p style="font-family:monospace; color:#7f8c8d; margin-top:-8px;" id="kisten-check-code"></p>
 
-        <!-- Schnellaktionen für die gesamte Kiste -->
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:16px;">
             <button class="btn" style="background:#c0392b;" onclick="ganzeKisteAusbuchen()">
                 📤 Ganze Kiste entnehmen
@@ -528,7 +516,6 @@
     </div>
 </div>
 
-<!-- MODAL: WO GEHÖRT DAS HIN? / RÜCKGABE OHNE CODE -->
 <div id="artikelFinderModal" class="modal" onclick="if (event.target === this) closeModal('artikelFinderModal')">
     <div class="modal-content" style="max-width: 650px;">
         <button type="button" class="modal-close-x" onclick="closeModal('artikelFinderModal')">✕</button>
@@ -554,7 +541,6 @@
     </div>
 </div>
 
-<!-- KAMERA SCANNER MODAL -->
 <div id="kistenKameraModal" class="modal" onclick="if (event.target === this) schliesseKistenKameraModal()">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="schliesseKistenKameraModal()">✕</button>
@@ -568,7 +554,6 @@
     </div>
 </div>
 
-<!-- MODAL: NEUER ARTIKEL (MIT ORIGINAL-MENGENSYSTEM & ∞ / - BUTTONS) -->
 <div id="artikelModal" class="modal" onclick="if (event.target === this) closeModal('artikelModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('artikelModal')">✕</button>
@@ -634,7 +619,6 @@
     </div>
 </div>
 
-<!-- MODAL: ARTIKEL BEARBEITEN (MIT ORIGINAL-MENGENSYSTEM & ∞ / - BUTTONS) -->
 <div id="editModal" class="modal" onclick="if (event.target === this) closeModal('editModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('editModal')">✕</button>

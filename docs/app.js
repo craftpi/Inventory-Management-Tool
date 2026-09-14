@@ -27,7 +27,7 @@ let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // App-Datenzustände
 let aktuelleDaten = [], packlisten = [], packlistenPositionen = [], alleArtikelInfos = [], alleLagerorte = [];
 let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
-let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true;
+let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
 let aktiverRegalFilter = '';
 let finderFilterModus = 'fehlend';
 let etikettenAuswahlIds = new Set();
@@ -139,6 +139,29 @@ function extrahiereRegalName(text) {
     const raw = String(text || '').trim();
     const m = raw.match(/\(([^)]+)\)\s*$/);
     return m ? m[1].trim() : raw;
+}
+
+function normalisiereRegalText(text) {
+    return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function vergleicheRegalNamen(a, b, sortFactor = 1) {
+    const aN = extrahiereRegalName(a), bN = extrahiereRegalName(b);
+    return aN.localeCompare(bN, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
+}
+
+function textEnthaeltRegal(text, regalName) {
+    const nReg = normalisiereRegalText(regalName), nTxt = normalisiereRegalText(text);
+    if (!nReg || !nTxt) return false;
+    if (nTxt.includes(`(${nReg})`)) return true;
+    const match = [...String(text).matchAll(/\(([^)]+)\)/g)].some(m => normalisiereRegalText(m[1]) === nReg);
+    if (match) return true;
+    return new RegExp(`(^|[^a-z0-9])${nReg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(nTxt) || (nReg.length > 3 && nTxt.includes(nReg));
+}
+
+function ermittleRegalSchluessel(bestaende) {
+    const r = (bestaende || []).map(b => extrahiereRegalName(b.lagerorte?.name || '')).filter(Boolean).sort((a, b) => vergleicheRegalNamen(a, b));
+    return r[0] || '';
 }
 
 function formatArtikelId(id) {
@@ -318,7 +341,7 @@ async function ladeBestand() {
 
     let { data } = await dbClient.from('bestand').select(`
         id, menge, alte_menge, created_at, artikel_id, lagerort_id, 
-        artikel (id, name, kategorie, einheit, kommentar, wichtig), 
+        artikel (id, name, kategorie, einheit, kommentar, wichtig, typ), 
         lagerorte (id, name, nfc_code)
     `).order('id');
 
@@ -345,7 +368,7 @@ function aktualisiereFilterDropdown(daten) {
     if (comboDropdown) {
         comboDropdown.innerHTML = '<option value="">Alle Orte</option>';
         alleLagerorte.forEach(o => comboDropdown.add(new Option('📍 ' + o.name, 'ort:' + o.id)));
-        Array.from(regale).sort().forEach(r => comboDropdown.add(new Option('🏷️ Regal: ' + r, 'regal:' + r)));
+        Array.from(regale).sort(vergleicheRegalNamen).forEach(r => comboDropdown.add(new Option('🏷️ Regal: ' + r, 'regal:' + r)));
     }
     if (datalist) datalist.innerHTML = Array.from(kategorien).sort().map(k => `<option value="${escapeHtml(k)}">`).join('');
     if (artikelDatalist) artikelDatalist.innerHTML = alleArtikelInfos.map(a => `<option value="${escapeHtml(a.name)}">`).join('');
@@ -464,7 +487,7 @@ async function ganzeKisteZurueckbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// Einzelnen Artikel in Kiste schrittweise anpassen (+1 / -1)
+// Einzelnen Artikel in Kiste anpassen (+1 / -1)
 async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
@@ -698,7 +721,6 @@ async function verarbeiteUniversalScan(rawCode) {
 
     const raw = String(rawCode || '').trim();
 
-    // Kisten-Scan prüfen
     let ortCode = null;
     const mKisteUrl = /kistencheck=([^&\s]+)/i.exec(raw);
     const mKistePref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
@@ -714,7 +736,6 @@ async function verarbeiteUniversalScan(rawCode) {
         return;
     }
 
-    // Artikel-Scan prüfen
     let artikelId = null;
     const mArtUrl = /rueckgabe=([^&\s]+)/i.exec(raw);
     const mArtPref = /^artikel:(.+)$/i.exec(raw);
@@ -824,7 +845,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE & BESTANDSSPEICHERUNG)
+// 8. LAGER-MODUS (TABELLE, PREFIX-GRUPPIERUNG & SICHTBARKEIT)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -835,7 +856,8 @@ function wendeFilterAn() {
     let ortFilter = 'ALLE', regalTemp = '';
     if (comboFilter.startsWith('ort:')) ortFilter = comboFilter.substring(4);
     else if (comboFilter.startsWith('regal:')) regalTemp = comboFilter.substring(6);
-    aktiverRegalFilter = regalTemp;
+
+    aktiverRegalFilter = regalTemp || (comboFilter === '' ? '' : aktiverRegalFilter);
 
     let gefiltert = aktuelleDaten.filter(z => {
         if (suchText) {
@@ -843,7 +865,7 @@ function wendeFilterAn() {
                 .some(field => (field || '').toLowerCase().includes(suchText));
             if (!matches) return false;
         }
-        if (aktiverRegalFilter && !(z.lagerorte?.name || '').toLowerCase().includes(aktiverRegalFilter.toLowerCase())) return false;
+        if (aktiverRegalFilter && ![z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name].some(t => textEnthaeltRegal(t, aktiverRegalFilter))) return false;
         if (katFilter !== 'ALLE' && z.artikel?.kategorie !== katFilter) return false;
         if (ortFilter !== 'ALLE' && String(z.lagerort_id) !== String(ortFilter)) return false;
         return true;
@@ -852,7 +874,15 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefiltert);
 }
 
-function ortComboChanged() { wendeFilterAn(); }
+function ortComboChanged() {
+    const val = $('ort-filter-combo')?.value || '';
+    if (val.startsWith('regal:')) {
+        aktiverRegalFilter = val.substring(6);
+    } else {
+        aktiverRegalFilter = '';
+    }
+    wendeFilterAn();
+}
 
 function toggleSortierung() {
     sortAscending = !sortAscending;
@@ -870,12 +900,20 @@ function toggleAlleGruppen() {
     if (isAllOpen) aktuelleDaten.forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
     wendeFilterAn();
 }
+function toggleAlleArtikelSichtbarkeit() {
+    zeigeAlleArtikel = !zeigeAlleArtikel;
+    wendeFilterAn();
+}
 
 function tabelleAktualisieren(daten) {
     const tbody = $('lager-tabelle');
     if (!tbody) return;
     tbody.innerHTML = '';
 
+    const suchText = $('such-filter')?.value.trim() || '';
+    const isSearching = suchText.length > 0 || aktiverRegalFilter !== '';
+
+    // Reservierungen aus Packlisten berechnen
     const resMap = {};
     packlistenPositionen.forEach(p => {
         if (!p.artikel_id) return;
@@ -886,24 +924,32 @@ function tabelleAktualisieren(daten) {
         resMap[p.artikel_id].listen[plName] = (resMap[p.artikel_id].listen[plName] || 0) + Number(p.menge);
     });
 
+    // Markierte vs. Alle Artikel filtern
+    const anzeigeDaten = (zeigeAlleArtikel || isSearching) ? daten : daten.filter(z => z.artikel?.wichtig);
+
     const gruppen = {};
-    daten.forEach(z => {
+    anzeigeDaten.forEach(z => {
         if (!z.artikel) return;
         const kat = z.artikel.kategorie || 'Ohne Kategorie';
         if (!gruppen[kat]) gruppen[kat] = [];
         gruppen[kat].push(z);
     });
 
-    const sortedKategorien = Object.keys(gruppen).sort((a, b) => a.localeCompare(b, 'de') * (sortAscending ? 1 : -1));
+    const sortFactor = sortAscending ? 1 : -1;
+    const sortedKategorien = Object.keys(gruppen).sort((a, b) => {
+        if (a === 'Ohne Kategorie') return 1;
+        if (b === 'Ohne Kategorie') return -1;
+        return a.localeCompare(b, 'de') * sortFactor;
+    });
 
-    if (sortedKategorien.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:25px; color:#666;">Keine Artikel gefunden.</td></tr>';
+    if (anzeigeDaten.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; padding:25px; color:#666;">${zeigeAlleArtikel ? 'Keine Artikel vorhanden.' : 'Keine markierten Artikel vorhanden.'}</td></tr>`;
         return;
     }
 
     sortedKategorien.forEach(katName => {
         const zeilen = gruppen[katName];
-        const isOpen = offeneGruppen.has(katName);
+        const isOpen = offeneGruppen.has(katName) || isSearching;
 
         let ordnerSumme = 0, hatUnendlich = false;
         zeilen.forEach(z => {
@@ -925,23 +971,69 @@ function tabelleAktualisieren(daten) {
         tbody.appendChild(headerTr);
         if (!isOpen) return;
 
+        // Prefix-Gruppierung vorbereiten
+        const prefixCounts = {}, prefixSums = {}, prefixInf = {};
+        zeilen.forEach(z => {
+            const parts = z.artikel.name.trim().split(' ');
+            if (parts.length > 1) {
+                const pref = parts[0];
+                prefixCounts[pref] = (prefixCounts[pref] || 0) + 1;
+                if (Number(z.menge) === -1) prefixInf[pref] = true;
+                else if (Number(z.menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(z.menge);
+            }
+        });
+
+        // Nach Artikel gruppieren
         const artMap = new Map();
         zeilen.forEach(z => {
             if (!artMap.has(z.artikel_id)) artMap.set(z.artikel_id, { artikel: z.artikel, bestaende: [] });
             artMap.get(z.artikel_id).bestaende.push(z);
         });
 
-        artMap.forEach((grp, artId) => {
+        const sortierteArtikel = Array.from(artMap.entries()).map(([artId, grp]) => ({
+            artId, grp,
+            sortRegal: ermittleRegalSchluessel(grp.bestaende),
+            sortName: grp.artikel.name.trim()
+        })).sort((a, b) => {
+            const regalCmp = vergleicheRegalNamen(a.sortRegal, b.sortRegal, sortFactor);
+            return regalCmp !== 0 ? regalCmp : a.sortName.localeCompare(b.sortName, 'de', { numeric: true }) * sortFactor;
+        });
+
+        let currentPrefix = null;
+        sortierteArtikel.forEach(({ grp, artId }) => {
+            grp.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
+            const parts = grp.artikel.name.trim().split(' ');
+            const isGrp = parts.length > 1 && prefixCounts[parts[0]] > 1;
+            const pref = isGrp ? parts[0] : null;
+
+            // Prefix-Zwischenüberschrift einfügen
+            if (isGrp && currentPrefix !== pref) {
+                const pSum = prefixSums[pref] || 0;
+                const pInf = prefixInf[pref];
+                const pText = pInf ? (pSum > 0 ? `${pSum} + ∞` : '∞') : pSum;
+                const subTr = document.createElement('tr');
+                subTr.innerHTML = `
+                    <td colspan="3" style="padding-left:25px; background:#fafafa; color:#7f8c8d; font-size:0.85em; font-weight:bold; border-bottom:1px dashed #ddd; user-select:none;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>🏷️ ${escapeHtml(pref)}</span>
+                            <span class="sub-sum-badge">Gesamt: ${pText}</span>
+                        </div>
+                    </td>`;
+                tbody.appendChild(subTr);
+                currentPrefix = pref;
+            } else if (!isGrp) currentPrefix = null;
+
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? 'pointer' : 'default';
             tr.onclick = (e) => {
                 if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
             };
 
+            const displayName = isGrp ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
             const wichtigBadge = grp.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
             const hatKommentar = Boolean(grp.artikel.kommentar?.trim());
             const kommentarIcon = isEditMode ? `
-                <span onclick="openKommentarModal('${artId}', event)" style="cursor:pointer; margin-left:8px; vertical-align:middle; opacity:${hatKommentar ? '1' : '0.5'};" title="Kommentar bearbeiten">
+                <span onclick="openKommentarModal('${artId}', event)" style="cursor:pointer; margin-left:8px; vertical-align:middle; opacity:${hatKommentar ? '1' : '0.5'};" title="Notiz bearbeiten">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="${hatKommentar ? '#3498db' : 'none'}" stroke="${hatKommentar ? '#3498db' : '#bdc3c7'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
                 </span>` : '';
             const kommentarAnzeige = !isEditMode && hatKommentar ? `
@@ -978,8 +1070,8 @@ function tabelleAktualisieren(daten) {
             const dateStr = latestDate ? latestDate.toLocaleDateString('de-DE') + ' ' + latestDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : 'Unbekannt';
 
             tr.innerHTML = `
-                <td style="padding-left:25px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
-                    <strong>${escapeHtml(grp.artikel.name)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
+                <td style="padding-left:${isGrp ? 45 : 25}px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
+                    ${isGrp ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
                     <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(grp.artikel.id)}</div>
                     ${resHtml ? `<div style="margin-top:3px;">${resHtml}</div>` : ''}
                 </td>
@@ -987,6 +1079,19 @@ function tabelleAktualisieren(daten) {
             tbody.appendChild(tr);
         });
     });
+
+    // Button für mehr/weniger Artikel
+    const hiddenCount = aktuelleDaten.filter(z => z.artikel && !z.artikel.wichtig).length;
+    if (hiddenCount > 0 && !isSearching) {
+        const footTr = document.createElement('tr');
+        footTr.innerHTML = `
+            <td colspan="3" style="padding:14px; text-align:center; background:#f8fafc; border-top:1px solid #dfe6e9;">
+                <button class="btn" onclick="toggleAlleArtikelSichtbarkeit()" style="background:#34495e; width:auto; min-width:220px;">
+                    ${zeigeAlleArtikel ? 'Weniger anzeigen' : `Mehr anzeigen (${hiddenCount} weitere)`}
+                </button>
+            </td>`;
+        tbody.appendChild(footTr);
+    }
 }
 
 // Speichert das Mengenfeld (inkl. Rechner & Strich-Unterstützung)
@@ -1093,7 +1198,7 @@ async function entferneNfcVonOrt() {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN (MIT DEM ORIGINALEN MENGEN-SYSTEM)
+// 10. ARTIKEL ANLEGEN & BEARBEITEN (MIT ORIGINAL-MENGENSYSTEM)
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
