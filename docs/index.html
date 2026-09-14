@@ -1571,6 +1571,16 @@
             <button class="btn btn-cancel" onclick="closeModal('orteModal')">Abbrechen</button>
         </div>
         <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="loescheOrt()">🗑️ Lagerort löschen</button>
+
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+        <p style="font-weight: bold; margin-bottom: 6px;">📶 NFC-Tag für diesen Lagerort</p>
+        <p id="manage-ort-nfc-status" style="font-size: 0.85em; color: #666; margin-bottom: 10px;"></p>
+        <button type="button" class="btn" style="background-color: #16a085; width: 100%;" onclick="schreibeNfcTagFuerOrt()">📶 NFC-Tag beschreiben</button>
+        <button type="button" id="manage-ort-nfc-entfernen-btn" class="btn" style="background-color: #95a5a6; width: 100%; margin-top: 8px; display:none;" onclick="entferneNfcVonOrt()">🔌 NFC-Zuordnung entfernen</button>
+        <p style="font-size: 0.8em; color: #9ca3af; margin-top: 8px;">
+            Damit lässt sich jeder Lagerort - egal ob neu oder schon länger im Einsatz wie "Kiste Banner (Regal C)" -
+            mit einem physischen NFC-Tag verknüpfen. Tag scannen → Inhalt dieses Lagerorts öffnet sich direkt zum Prüfen.
+        </p>
     </div>
 </div>
 
