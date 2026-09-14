@@ -9,15 +9,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
-        /* ==========================================================
-           RESPONSIVE GRUNDLAGE
-           - box-sizing:border-box überall, damit Padding/Border nie
-             zu horizontalem Überlauf auf schmalen Handys führt
-           - fließende Basis-Schriftgröße: skaliert sanft zwischen
-             kleinen Handys (~360px) und sehr großen Monitoren (~2200px+),
-             alle em-Angaben im restlichen CSS skalieren automatisch mit
-           - Bilder/Canvas/SVG dürfen nie breiter als ihr Container werden
-           ========================================================== */
         *, *::before, *::after { box-sizing: border-box; }
         html { scroll-behavior: smooth; font-size: clamp(15px, 0.55vw + 13px, 18.5px); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: hidden; }
         img, svg, canvas { max-width: 100%; height: auto; }
@@ -44,12 +35,6 @@
         
         .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; min-width: 500px; }
-        /* Feste Pixel-Spaltenbreiten (früher 120px/100px) skalierten nicht mit,
-           als der Container breiter wurde - dadurch wurde der Lagerort/Menge-
-           Bereich immer schmaler im Verhältnis. table-layout:fixed + Prozent-
-           Breiten sorgen dafür, dass diese Spalte mit dem Container mitwächst
-           und der Lagerort-Text mehr Platz bekommt, ohne die Namensspalte zu
-           berühren. */
         .lager-table { table-layout: fixed; }
         .lager-table .lager-th-ort { width: 34%; }
         .lager-table .lager-th-menge { width: 20%; }
@@ -78,9 +63,6 @@
         .summen-badge { font-size: 0.85em; background: #3498db; color: white; padding: 4px 10px; border-radius: 12px; font-weight: normal; white-space: nowrap; }
         .sub-sum-badge { font-size: 0.75em; background: #7f8c8d; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 10px; font-weight: normal; }
 
-        /* Lagerort/Menge-Zeile je Bestandseintrag: flex-wrap sorgt dafür, dass
-           lange Lagerort-Namen sauber umbrechen statt in eine zu schmale
-           Spalte gequetscht zu werden oder über den Rand zu laufen. */
         .badge-markiert { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #f39c12; color: #fff; font-size: 0.75em; font-weight: bold; vertical-align: middle; }
         .bestand-ort-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; border-bottom: 1px solid #f0f0f0; padding-bottom: 4px; }
         .bestand-ort-name { font-size: 0.9em; color: #666; flex: 1 1 180px; min-width: 0; word-break: break-word; }
@@ -109,9 +91,6 @@
             transition: opacity 0.2s ease;
         }
         .modal.modal-visible { opacity: 1; }
-        /* Bestätigungsdialog muss immer über allen anderen Modals liegen,
-           auch wenn er (wie beim Löschen einer Vorlage) aus einem bereits
-           offenen Modal heraus geöffnet wird. */
         #bestaetigungModal { z-index: 10050; }
         .modal-content {
             background-color: white;
@@ -130,48 +109,8 @@
             transition: opacity 0.25s cubic-bezier(0.16,1,0.3,1), transform 0.25s cubic-bezier(0.16,1,0.3,1);
         }
         .modal.modal-visible .modal-content { opacity: 1; transform: translateY(0) scale(1); }
-        #vorlagenModal .modal-content {
-            overflow: visible;
-        }
-        #vorlagenModal.modal-visible .modal-content {
-            transform: none;
-        }
-        #vorlagenModal .vorlagen-modal-scroll {
-            max-height: calc(90vh - 190px);
-            overflow-y: auto;
-            overflow-x: hidden;
-            overscroll-behavior: contain;
-            padding-right: 4px;
-        }
-        #vorlagenModal .vorlagen-modal-scroll > * {
-            min-width: 0;
-        }
-        #vorlagenModal select {
-            max-width: 100%;
-        }
         .modal-close-x { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border: none; border-radius: 50%; background: #f1f2f6; color: #555; font-size: 1.1em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background-color 0.15s ease, color 0.15s ease; }
         .modal-close-x:hover { background: #e74c3c; color: white; }
-        .modal-content::-webkit-scrollbar {
-            width: 10px;
-        }
-        .modal-content::-webkit-scrollbar-track {
-            background: #f4f4f9; 
-            border-radius: 0 12px 12px 0; 
-        }
-        .modal-content::-webkit-scrollbar-thumb {
-            background: #bdc3c7; 
-            border-radius: 10px;
-            border: 2px solid #f4f4f9; 
-        }
-
-        .onboarding-step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 22px; text-align: left; }
-        .onboarding-icon { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8em; background: #eef4fb; box-shadow: inset 0 0 0 2px #d6e6f7; }
-        .onboarding-text h4 { margin: 0 0 4px 0; color: #2c3e50; }
-        .onboarding-text p { margin: 0; color: #555; line-height: 1.45; font-size: 0.95em; }
-        .onboarding-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-        .onboarding-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 0.85em; font-weight: bold; }
-        .onboarding-dots { display: flex; justify-content: center; gap: 6px; margin: 4px 0 18px; }
-        .onboarding-dots span { width: 8px; height: 8px; border-radius: 50%; background: #dfe6e9; }
 
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
@@ -181,686 +120,73 @@
         .btn-save { background-color: #27ae60; flex: 2; }
         .btn-cancel { background-color: #e74c3c; flex: 1; }
 
-        /* Toasts müssen immer über allen Modals sichtbar sein, auch über dem
-           Vorlagen- oder Bestätigungsdialog, aus dem heraus sie ausgelöst werden. */
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 10100; display: flex; flex-direction: column; gap: 10px; }
         .toast { background: #333; color: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transform: translateY(20px); transition: opacity 0.3s, transform 0.3s; font-weight: bold; }
         .toast.show { opacity: 1; transform: translateY(0); }
-
-        .view-fade-in { animation: viewFadeIn 0.3s ease both; }
-        @keyframes viewFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-
-        .ladespinner-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; color: #7f8c8d; }
-        .ladespinner { width: 18px; height: 18px; border: 3px solid #dfe6e9; border-top-color: #3498db; border-radius: 50%; animation: ladespinnerDrehen 0.7s linear infinite; }
-        @keyframes ladespinnerDrehen { to { transform: rotate(360deg); } }
         .toast.success { background: #27ae60; }
         .toast.error { background: #e74c3c; }
         .toast.warning { background: #f39c12; }
 
         .app-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
-        .app-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
+        .app-footer a { color: white; font-weight: bold; text-decoration: underline; }
         .app-footer a:hover { color: #f1c40f; text-decoration: none; }
 
-        .login-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
-        .login-footer a { color: white; font-weight: bold; text-decoration: underline; transition: 0.2s; }
-        .login-footer a:hover { color: #f1c40f; text-decoration: none; }
-        .login-footer footer { margin-top: 10px; font-size: 0.85em; color: rgba(255, 255, 255, 0.6); }
+        .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
-        .no-select {
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            user-select: none;
+        .btn.nfc-aktiv {
+            background:#e67e22 !important;
+            box-shadow: 0 0 0 3px rgba(230, 126, 34, 0.35);
+            animation: nfcPulse 1.4s ease-in-out infinite;
         }
+        @keyframes nfcPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.75; } }
 
-        .share-link-wrap {
-            text-align: center;
-            margin: 0 0 16px 0;
-            font-size: 0.92em;
-            color: #58616b;
-        }
-        .share-link-wrap a {
-            color: #1f5f8b;
-            text-decoration: underline;
-            word-break: break-all;
-        }
-        .share-link-actions {
+        /* Kisten-Item Zeilen im Modal */
+        .kiste-item-card {
             display: flex;
-            gap: 8px;
-            justify-content: center;
-            margin-top: 8px;
-            flex-wrap: wrap;
-        }
-        .share-link-actions .btn { width: auto; }
-
-        .regal-qr-tool {
-            margin: 0 0 18px 0;
-            padding: 14px;
-            border: 1px solid #d9e3ec;
-            border-radius: 12px;
-            background: linear-gradient(180deg, #fbfdff 0%, #f4f8fb 100%);
-        }
-        .regal-qr-tool h3 {
-            margin: 0 0 10px 0;
-            color: #2c3e50;
-            font-size: 1.02em;
-        }
-        .regal-qr-grid {
-            display: grid;
-            grid-template-columns: 1.4fr 0.9fr;
-            gap: 14px;
-            align-items: start;
-        }
-        .regal-qr-preview-wrap {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-            padding: 12px;
-            background: white;
-            border: 1px dashed #c9d5df;
-            border-radius: 10px;
-        }
-        .regal-qr-preview-wrap #regal-qr-preview {
-            width: 220px;
-            height: 220px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: white;
-        }
-        .regal-qr-preview-wrap #regal-qr-preview canvas,
-        .regal-qr-preview-wrap #regal-qr-preview table {
-            display: block;
-        }
-        .regal-qr-preview-wrap small {
-            text-align: center;
-            color: #5f6b77;
-            line-height: 1.35;
-        }
-
-        .etiketten-toolbar {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
             justify-content: space-between;
-            margin-bottom: 16px;
-        }
-        .etiketten-liste {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .etikett-zeile {
-            display: flex;
             align-items: center;
-            gap: 14px;
+            gap: 10px;
             padding: 10px 12px;
-            border: 1px solid #d9e3ec;
-            border-radius: 10px;
-            background: #fbfdff;
-            flex-wrap: wrap;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            background: #fff;
         }
-        .etikett-zeile.ist-ausgewaehlt {
-            border-color: #27ae60;
-            background: #f2fbf5;
+        .kiste-item-card.fehlend {
+            border-color: #fca5a5;
+            background: #fef2f2;
         }
-        .etikett-checkbox-wrap {
-            display: flex;
-            align-items: center;
-            flex-shrink: 0;
-        }
-        .etikett-checkbox-wrap input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
+        .stepper-btn {
+            background: #e2e8f0;
+            color: #2c3e50;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.2em;
+            font-weight: bold;
+            width: 38px;
+            height: 38px;
             cursor: pointer;
-        }
-        .etiketten-toolbar label.etiketten-select-all {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.9em;
-            color: #34495e;
-            cursor: pointer;
-            white-space: nowrap;
-        }
-        .etikett-qr {
-            width: 90px;
-            height: 90px;
-            flex-shrink: 0;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: white;
-            border: 1px dashed #c9d5df;
-            border-radius: 8px;
         }
-        .etikett-info {
-            flex: 1;
-            min-width: 140px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-        .etikett-info small { color: #7f8c8d; }
-        .etikett-aktionen {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .etikett-aktionen .btn { padding: 8px 12px; font-size: 0.85em; }
+        .stepper-btn:hover { background: #cbd5e1; }
 
-        .survey-page {
-            max-width: min(860px, 90vw);
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
-        }
-        .survey-page h1 {
-            margin-bottom: 10px;
-        }
-        .survey-note {
-            color: #5f6b77;
-            margin-bottom: 18px;
-        }
-        .survey-answer-list {
-            margin-top: 16px;
-            border-top: 1px solid #e3e8ed;
-            padding-top: 12px;
-            max-height: 360px;
-            overflow-y: auto;
-        }
-        .survey-answer-item {
-            border: 1px solid #dbe3ea;
-            border-radius: 8px;
-            background: #f9fbfd;
-            padding: 12px;
-            margin-bottom: 10px;
-        }
-        .survey-answer-item h4 {
-            margin: 0 0 8px 0;
-            color: #2c3e50;
-            font-size: 0.95em;
-        }
-        .survey-answer-item p {
-            margin: 6px 0;
-            white-space: pre-wrap;
-            line-height: 1.4;
-        }
-
-        .entnahme-page {
-            max-width: min(1200px, 92vw);
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
-        }
-        .entnahme-hero {
-            padding: 18px 18px 16px 18px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, #1f5f8b 0%, #2d84bb 52%, #e9f4fb 100%);
-            color: #fff;
-            box-shadow: 0 10px 28px rgba(31, 95, 139, 0.22);
-            margin-bottom: 16px;
-        }
-        .entnahme-hero h1 {
-            color: #fff;
-            margin-bottom: 6px;
-        }
-        .entnahme-hero .survey-note {
-            color: rgba(255,255,255,0.9);
-            margin-bottom: 0;
-        }
-        .entnahme-hero-line {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 12px;
-        }
-        .entnahme-hero-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            border-radius: 999px;
-            padding: 7px 12px;
-            background: rgba(255,255,255,0.16);
-            border: 1px solid rgba(255,255,255,0.28);
-            color: #fff;
-            font-size: 0.9em;
-            font-weight: bold;
-            backdrop-filter: blur(6px);
-        }
-        .entnahme-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 14px;
-        }
-        /* Ohne min-width:0 zwingen breite Inhalte (Tabellen, Inputs) ihre
-           Grid-Spalte über die verfügbare Breite hinaus, wodurch Listen/Felder
-           am Rand des Fensters bzw. des Modals überlaufen. */
-        .entnahme-grid > * { min-width: 0; }
-        .entnahme-card { min-width: 0; }
-        .entnahme-card .form-group input,
-        .entnahme-card .form-group select,
-        .entnahme-card input,
-        .entnahme-card select,
-        .entnahme-card textarea { max-width: 100%; box-sizing: border-box; }
-        .entnahme-card {
-            border: 1px solid #dbe3ea;
-            border-radius: 12px;
-            padding: 14px;
-            background: #f9fbfd;
-        }
-        .entnahme-summary-card {
-            border: 1px solid #dbe3ea;
-            border-radius: 14px;
-            padding: 14px;
-            background: linear-gradient(180deg, #ffffff 0%, #f6f9fc 100%);
-            box-shadow: 0 8px 24px rgba(44, 62, 80, 0.05);
-        }
-        .entnahme-summary-grid {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 12px;
-        }
-        .entnahme-summary-tile {
-            border: 1px solid #dbe3ea;
-            border-radius: 12px;
-            background: #ffffff;
-            padding: 12px;
-            min-height: 86px;
-        }
-        .entnahme-summary-tile small {
-            display: block;
-            color: #6b7c8f;
-            margin-bottom: 8px;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            font-size: 0.75em;
-        }
-        .entnahme-summary-value {
-            color: #24415a;
-            line-height: 1.4;
-            word-break: break-word;
-        }
-        .entnahme-wizard-shell {
-            display: grid;
-            gap: 14px;
-        }
-        .entnahme-wizard-steps {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin: 0 0 14px 0;
-        }
-        .entnahme-step-chip {
-            border: 1px solid #dbe3ea;
-            background: #fff;
-            color: #49637d;
-            border-radius: 999px;
-            padding: 8px 12px;
-            width: auto;
-            font-size: 0.92em;
-            font-weight: bold;
-        }
-        .entnahme-step-chip.active {
-            background: linear-gradient(180deg, #1f5f8b 0%, #174b6e 100%);
-            border-color: #1f5f8b;
-            color: #fff;
-            box-shadow: 0 6px 16px rgba(31, 95, 139, 0.22);
-        }
-        .entnahme-step-chip.complete {
-            background: #eaf4fb;
-            border-color: #b9d6ea;
-            color: #1f5f8b;
-        }
-        .entnahme-step-panel {
-            display: none;
-        }
-        .entnahme-step-panel.active {
-            display: block;
-            border-color: #b9d6ea;
-            box-shadow: 0 10px 22px rgba(31, 95, 139, 0.08);
-        }
-        .entnahme-step-nav {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 14px;
-            padding-top: 14px;
-            border-top: 1px solid #dbe3ea;
-        }
-        .entnahme-step-nav .btn {
-            width: auto;
-        }
-        .entnahme-accordion {
-            border: 1px solid #dbe3ea;
-            border-radius: 12px;
-            background: #f9fbfd;
-            overflow: hidden;
-        }
-        #entnahme-historie-panel {
-            border: 2px solid #9fb8cd;
-            background: linear-gradient(180deg, #ffffff 0%, #eef5fa 100%);
-            box-shadow: 0 10px 22px rgba(36, 65, 90, 0.10);
-        }
-        .entnahme-accordion summary {
-            list-style: none;
-            cursor: pointer;
-            padding: 14px 16px;
-            font-weight: bold;
-            color: #2c3e50;
-            background: linear-gradient(180deg, #ffffff 0%, #f2f6fa 100%);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-        }
-        .entnahme-accordion summary::-webkit-details-marker { display: none; }
-        .entnahme-accordion summary::after {
-            content: '▾';
-            color: #7f8c8d;
-            transition: transform 0.2s ease;
-        }
-        .entnahme-accordion[open] summary::after {
-            transform: rotate(180deg);
-        }
-        .entnahme-accordion-body {
-            padding: 14px;
-            border-top: 1px solid #dbe3ea;
-        }
-        .entnahme-history-item {
-            border: 1px solid #dbe3ea;
-            border-radius: 10px;
-            background: #ffffff;
-            padding: 12px;
-            margin-bottom: 10px;
-        }
-        .entnahme-history-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            align-items: flex-start;
-            flex-wrap: wrap;
-        }
-        .entnahme-history-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 10px;
-        }
-        .entnahme-history-materials {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px dashed #dbe3ea;
-        }
-        .entnahme-history-materials label {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            margin: 6px 0;
-            font-weight: normal;
-        }
-        .entnahme-return-row {
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        .entnahme-return-stepper {
-            display: inline-flex;
-            align-items: stretch;
-            border: 1px solid #cfd9e3;
-            border-radius: 8px;
-            overflow: hidden;
-            background: #fff;
-            min-width: 120px;
-        }
-        .entnahme-return-stepper button {
-            width: 34px;
-            min-width: 34px;
-            padding: 0;
-            border: 0;
-            border-radius: 0;
-            background: #f1f5f9;
-            color: #2c3e50;
-            cursor: pointer;
-            font-size: 1.05em;
-            font-weight: bold;
-        }
-        .entnahme-return-stepper button:hover {
-            background: #e2e8f0;
-        }
-        .entnahme-return-stepper input {
-            width: 48px;
-            border: 0;
-            border-left: 1px solid #cfd9e3;
-            border-right: 1px solid #cfd9e3;
-            text-align: center;
-            font-size: 0.98em;
-            padding: 8px 4px;
-            outline: none;
-            appearance: textfield;
-            -moz-appearance: textfield;
-        }
-        .entnahme-return-stepper input::-webkit-outer-spin-button,
-        .entnahme-return-stepper input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        .entnahme-lock {
-            border: 1px solid #f1c7c7;
-            background: #fff3f3;
-            color: #8a1f1f;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 16px;
-        }
-        .entnahme-material-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .entnahme-material-table th,
-        .entnahme-material-table td {
-            padding: 10px;
-            border-bottom: 1px solid #dbe3ea;
-            vertical-align: middle;
-        }
-
-        /* ===== TABLET (601–960px): Breite Grids etwas enger fassen, ===== 
-           ===== bevor sie beim <600px-Breakpoint ganz umbrechen.      ===== */
-        @media (min-width: 601px) and (max-width: 960px) {
-            .container { max-width: 92vw; padding: 24px; }
-            .survey-page, .entnahme-page { max-width: 94vw; padding: 24px 20px; }
-            .entnahme-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .regal-qr-grid { grid-template-columns: 1fr; }
-            .regal-qr-preview-wrap #regal-qr-preview { width: 200px; height: 200px; margin: 0 auto; }
-            .modal-content { max-width: 88vw; }
-        }
-
-        /* ===== HANDY (≤600px) ===== */
         @media (max-width: 600px) {
-            /* Der äußere "Rand" um die weiße Karte kostet auf kleinen Screens
-               wertvollen Platz. Der Container nutzt hier daher fast die volle
-               Breite - der rote Verlauf bleibt als Farbe erhalten, ist aber
-               kaum noch sichtbar, weil außenrum kein Platz mehr verschenkt wird. */
             body { padding: 8px 4px; }
             .container { padding: 15px 10px; max-width: 100%; border-radius: 10px; }
             .action-bar, .action-group { flex-direction: column; align-items: stretch; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
-
-            /* Lagerort/Menge/Verfügbar-Zeilen: auf dem Handy deutlich größer und
-               damit besser lesbar; auf großen Bildschirmen unverändert kompakt. */
-            .bestand-ort-name { font-size: 1em; }
-            .bestand-einheit { font-size: 0.9em; }
-            .bestand-extra-row { font-size: 0.95em; }
-            .bestand-kommentar-anzeige { font-size: 0.92em; }
-            .bestand-reserviert-info { font-size: 0.9em; }
-            .bestand-nachkauf-hinweis { font-size: 0.92em; }
-            .badge-markiert { font-size: 0.8em; padding: 3px 10px; }
-            .sub-sum-badge { font-size: 0.8em; }
-            .packlisten-wrapper { flex-direction: row; flex-wrap: wrap; }
-            .packlisten-wrapper select { flex: 1 1 100% !important; margin-bottom: 5px; width: 100%; }
-            .packlisten-wrapper button { flex: 1; width: auto; }
-            .flex-buttons { flex-direction: column; }
-            .modal-content { padding: 15px; margin: 2vh auto; max-height: 95vh; width: 94%; }
-            .survey-page { padding: 18px 12px; }
-            .regal-qr-grid { grid-template-columns: 1fr; }
-            .regal-qr-preview-wrap #regal-qr-preview { width: 180px; height: 180px; }
-
-            /* Mobile-specific adjustments for the Entnahme / Protokoll view */
-            .entnahme-page { padding: 18px 12px; max-width: 100%; }
-            .entnahme-grid { grid-template-columns: 1fr !important; }
-
-            .entnahme-summary-grid { grid-template-columns: 1fr; }
-            .entnahme-step-nav { flex-direction: column; align-items: stretch; }
-            .entnahme-step-nav .btn { width: 100%; }
-
-            /* Allow info boxes and labels to wrap nicely */
-            #entnahme-benutzer-info, #entnahme-sammel-info { word-break: break-word; white-space: normal; }
-
-            /* h1-Kopfzeile (Titel + Hilfe/Abmelden-Buttons) auf schmalen Handys
-               untereinander statt nebeneinander gequetscht */
-            h1 { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .modal-content { padding: 16px; width: 95%; }
+            h1 { flex-direction: column; align-items: flex-start; }
             h1 > span:last-child { width: 100%; }
-            h1 > span:last-child .btn { width: auto; flex: 1; }
-
-            /* Kauflisten-Modal: Name/Menge-Zeile bricht sauber um statt zu quetschen */
-            #manuell-kauf-name { flex: 1 1 100% !important; }
-            #manuell-kauf-menge { flex: 1 1 70px !important; }
-
-            /* Etiketten- und Regal-QR-Werkzeuge: Aktionen volle Breite für leichteres Tippen */
-            .etikett-aktionen .btn, .etiketten-toolbar .btn { width: auto; }
-            .etiketten-toolbar { flex-direction: column; align-items: stretch; }
-            .etiketten-toolbar > * { width: 100%; }
         }
-
-        /* ===== SEHR KLEINE HANDYS (≤400px, z.B. iPhone SE) ===== */
-        @media (max-width: 400px) {
-            body { padding: 6px 4px; }
-            .container { padding: 12px 8px; border-radius: 8px; }
-            h1 { font-size: 1.25em; }
-            .survey-page, .entnahme-page { padding: 14px 10px; border-radius: 8px; }
-            .entnahme-hero { padding: 14px 12px; }
-            .entnahme-hero-pill { font-size: 0.82em; padding: 6px 10px; }
-            .modal-content { padding: 12px; width: 96%; }
-            th, td { padding: 8px 4px; font-size: 0.85em; }
-            .onboarding-icon { width: 44px; height: 44px; font-size: 1.4em; }
-            .onboarding-step { gap: 10px; }
-            .entnahme-return-stepper { min-width: 104px; }
-            .entnahme-return-stepper button { width: 30px; min-width: 30px; }
-            #login-overlay > div { padding: 28px 18px; }
-        }
-
-        /* ===== GROSSE BILDSCHIRME (≥1400px) ===== */
-        @media (min-width: 1400px) {
-            body { padding: 60px 20px; }
-            .container { padding: 40px 44px; }
-            .survey-page { padding: 40px; }
-            .entnahme-page { padding: 40px; }
-            th, td { padding: 14px 16px; }
-            .entnahme-material-table th, .entnahme-material-table td { padding: 12px 14px; }
-            .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { padding: 12px; }
-            .modal-content { max-width: 720px; }
-            #vorlagenModal .modal-content, .entnahme-page .modal-content { max-width: 860px; }
-        }
-
-        /* ===== SEHR GROSSE / ULTRAWIDE BILDSCHIRME (≥1900px) ===== */
-        @media (min-width: 1900px) {
-            .container { max-width: min(1500px, 78vw); }
-            .survey-page { max-width: min(960px, 78vw); }
-            .entnahme-page { max-width: min(1500px, 82vw); }
-            html { font-size: 18.5px; }
-        }
-
-        /* "Zurück zur Hauptseite"-Leiste für Unteransichten (Entnahme-Protokoll,
-           QR-Generator, Etiketten-Tool, Anforderungs-Formular). Diese Ansichten
-           werden über eigene URLs (?entnahme=1, ?qrgen=1, ...) geöffnet - in der
-           Android-App gibt es dort sonst keine Möglichkeit, zur Hauptseite
-           zurückzukehren. */
-        .subview-backbar {
-            max-width: 900px;
-            margin: 0 auto 16px auto;
-            padding: 0 20px;
-        }
-        .subview-back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: #34495e;
-            color: #fff;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-size: 0.95em;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-        }
-        .subview-back-btn:hover { background: #2c3e50; }
-        @media (max-width: 700px) {
-            .subview-backbar { padding: 0 12px; }
-            .subview-back-btn { width: 100%; justify-content: center; padding: 12px 16px; }
-        }
-    .btn.nfc-aktiv {
-        background:#e67e22 !important;
-        box-shadow: 0 0 0 3px rgba(230, 126, 34, 0.35);
-        animation: nfcPulse 1.4s ease-in-out infinite;
-    }
-    @keyframes nfcPulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.75; }
-    }
     </style>
 </head>
 <body>
 
 <div id="toast-container"></div>
-
-<div id="formular-ansicht" style="display:none; padding: 30px 0;">
-    <div class="subview-backbar">
-        <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
-    </div>
-    <div class="survey-page">
-        <h1><span>📝Lager-Feedbackportal</span></h1>
-        <p class="survey-note">Bitte beantworte die beiden Fragen mit Freitext. Danke!</p>
-
-        <div class="form-group">
-            <label for="formular-name">Wie lautet dein Name und falls vorhanden das Resort für Rückfragen?</label>
-            <textarea id="formular-name" rows="1" style="width:50%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; resize:vertical;"></textarea>
-        </div>
-
-        <div class="form-group">
-            <label for="formular-frage1">Frage 1: Welche Anforderungen an die Lagerverwaltung werden benötigt?</label>
-            <textarea id="formular-frage1" rows="5" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; resize:vertical;"></textarea>
-        </div>
-
-        <div class="form-group">
-            <label for="formular-frage2">Frage 2: Welche Materialien sollten zentral verwaltet werden bzw. auf ausreichend Verfügbarkeit geachtet werden?</label>
-            <textarea id="formular-frage2" rows="5" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; resize:vertical;"></textarea>
-        </div>
-
-        <div class="form-group">
-            <label for="formular-frage3">Frage 3: Gibt es weitere Kommentare oder Vorschläge zur Verbesserung des Lagers?</label>
-            <textarea id="formular-frage3" rows="5" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; resize:vertical;"></textarea>
-        </div>
-
-        <div class="flex-buttons" style="margin-top: 18px;">
-            <button class="btn btn-save" onclick="formularAntwortSpeichern()">Antwort absenden</button>
-            <button class="btn" style="background:#34495e;" onclick="formularAntwortenLaden()">Alle Antworten anzeigen</button>
-        </div>
-
-        <div id="formular-antworten" class="survey-answer-list" style="display:none;"></div>
-    </div>
-</div>
 
 <div id="hover-date-info" style="display: none; position: fixed; bottom: 20px; left: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
     <span style="font-size: 1.2em; vertical-align: middle; margin-right: 5px;">📅</span> 
@@ -872,8 +198,8 @@
     <span style="vertical-align: top; display: inline-block;" id="hover-res-text"></span>
 </div>
 
+<!-- LOGIN OVERLAY -->
 <div id="login-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#e3000f; z-index:9999; display:flex; flex-direction: column; align-items:center; justify-content:center; padding: 15px; box-sizing: border-box;">
-    
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
         <h2 style="margin-top:0; color:#2c3e50;">🔐 Lager-Zugang</h2>
         <p style="color:#666; margin-bottom: 25px;">Bitte gib das Vereins-Passwort ein.</p>
@@ -881,435 +207,48 @@
         <button class="btn" onclick="handleLogin()" style="width:100%; padding:12px; font-size:1.1em;">🔓 Entsperren</button>
         <p id="login-error" style="color:red; display:none; margin-top:15px; font-weight:bold;">Falsches Passwort!</p>
     </div>
-
-    <div class="login-footer">
-        Bugs gefunden oder Verbesserungsvorschläge?<br>
-        <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melden Sie sich hier!</a>
-        <p style="margin-top: 15px;">
-            <a href="https://trisport-erding.de/verein/impressum" target="_blank" style="margin-right: 15px; text-decoration: none;">Impressum</a>
-            <a href="https://trisport-erding.de/verein/datenschutz" target="_blank" style="margin-right: 15px; text-decoration: none;">Datenschutz</a>
-            <a href="#" onclick="openRechtliches(event, 'technikModal')" style="text-decoration: none;">Technik-Info</a>
-        </p>
-        <footer style="margin-top: 10px; font-size: 0.85em; color: rgba(255, 255, 255, 0.6);">&copy; 2026 Trisport Erding. Alle Rechte vorbehalten.</footer>
-    </div>
 </div>
 
-<div id="onboardingModal" class="modal">
-    <div class="modal-content" style="max-width: 560px;">
-        <h2 style="margin-top:0; color:#2c3e50; text-align:center;">👋 Kurz erklärt: So funktioniert das Lager-Tool</h2>
-
-        <div class="onboarding-step">
-            <div class="onboarding-icon" style="background:#fdecea;">📦</div>
-            <div class="onboarding-text">
-                <h4>Lager-Modus</h4>
-                <p>Hier siehst du auf einen Blick, was im Lager vorhanden ist , nach Kategorien sortiert. Mit der Suche oben findest du Artikel, Orte, IDs oder Kategorien sofort.</p>
-            </div>
-        </div>
-
-        <div class="onboarding-step">
-            <div class="onboarding-icon" style="background:#fef5e7;">📅</div>
-            <div class="onboarding-text">
-                <h4>Event-Modus</h4>
-                <p>Hier stellst du Packlisten für Resorts oder Veranstaltungen zusammen und siehst, ob im Lager genug Material für die Liste vorhanden ist.</p>
-            </div>
-        </div>
-
-        <div class="onboarding-step">
-            <div class="onboarding-icon" style="background:#eef4fb;">🔢</div>
-            <div class="onboarding-text">
-                <h4>Was die Mengen-Symbole bedeuten</h4>
-                <p>Nicht jede Menge ist eine genaue Zahl – manchmal reicht ein grober Überblick:</p>
-                <div class="onboarding-legend">
-                    <span class="onboarding-pill" style="background:#eef4fb; color:#2c3e50;">5 = genaue Menge</span>
-                    <span class="onboarding-pill" style="background:#edf8f0; color:#1f7a37;">∞ = unbegrenzt vorhanden</span>
-                    <span class="onboarding-pill bestand-status-pill ok">- = ausreichend (grob geschätzt)</span>
-                    <span class="onboarding-pill bestand-status-pill warn">- = bald nachbestellen</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="onboarding-step">
-            <div class="onboarding-icon" style="background:#f4ecf7;">✏️</div>
-            <div class="onboarding-text">
-                <h4>Bearbeiten-Modus</h4>
-                <p>Über den Schalter „✏️ Bearbeiten" oben kannst du Mengen ändern, neue Artikel/Orte anlegen oder Kommentare hinzufügen. Ohne diesen Schalter kannst du nur ansehen, nichts kaputt machen.</p>
-            </div>
-        </div>
-
-        <div class="onboarding-step">
-            <div class="onboarding-icon" style="background:#eafaf1;">📋</div>
-            <div class="onboarding-text">
-                <h4>Entnahme-Protokoll</h4>
-                <p>Nimmt jemand Material mit, wird das hier festgehalten: wer, was und wie viel – damit der Lagerbestand nachvollziehbar bleibt. Achtung es sind nicht alle Artikel per NFC Tag oder QR-Code erfassbar!</p>
-            </div>
-        </div>
-
-        <div class="flex-buttons" style="margin-top: 10px;">
-            <button class="btn" style="width:100%; padding:12px; font-size:1.05em;" onclick="schliesseOnboarding()">Alles klar, los geht's! 🚀</button>
-        </div>
-    </div>
-</div>
-
+<!-- HAUPTCONTAINER -->
 <div class="container">
     <h1>
         <span>📦 Lager-Verwaltung</span>
         <span style="display:flex; gap:8px;">
-            <button class="btn" style="background-color: #7f8c8d; font-size: 0.8em; width: auto;" onclick="oeffneOnboarding()" title="Kurzanleitung anzeigen">❓ Hilfe</button>
-            <button class="btn" style="background-color: #e74c3c; font-size: 0.8em; width: auto;" onclick="handleLogout()">🔒 Abmelden</button>
+            <button class="btn" style="background-color: #27ae60; font-size: 0.85em; width: auto;" onclick="oeffneKistenKameraModal()">📷 Kiste scannen</button>
+            <button class="btn" style="background-color: #e74c3c; font-size: 0.85em; width: auto;" onclick="handleLogout()">🔒 Abmelden</button>
         </span>
     </h1>
 
-    <div class="share-link-wrap">
-        <div class="share-link-actions">
-            <button class="btn" style="background:#1f5f8b;" onclick="oeffneQrGeneratorFenster()">QR-Generator öffnen</button>
-            <button class="btn" style="background:#d29c09;" onclick="window.open('?formular=1', '_blank')">Feedback</button>
-        </div>
-    </div>
-
-    <div id="entnahme-ansicht" style="display:none; padding: 30px 0;">
-        <div class="subview-backbar">
-            <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
-        </div>
-        <div class="entnahme-page">
-            <div class="entnahme-hero">
-                <h1>📋 Entnahme anlegen</h1>
-                <p class="survey-note">Diese drei Schritte legen ein Entnahme-Protokoll an.</p>
-                <div class="entnahme-hero-line">
-                    <span class="entnahme-hero-pill">1. Person wählen</span>
-                    <span class="entnahme-hero-pill">2. Vorlage wählen</span>
-                    <span class="entnahme-hero-pill">3. Material hinzufügen</span>
-                </div>
-            </div>
-
-            <div id="entnahme-lock" class="entnahme-lock" style="display:none;">
-                <strong>Geschützt:</strong> Diese Seite ist nur mit aktiver Sitzung aus dem Hauptbereich erreichbar. Bitte zuerst auf der Hauptseite anmelden.
-                <div style="margin-top: 12px;">
-                    <a class="btn" href="#" onclick="zurHauptseiteZurueck(); return false;" style="display:inline-block; text-decoration:none; background:#34495e; width:auto;">Zur Hauptseite</a>
-                </div>
-            </div>
-
-            <div id="entnahme-content">
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:14px;">
-                    <button class="btn" style="background:#f39c12; width:auto;" onclick="oeffneVorlagenOverlay()">✏️ Vorlagen verwalten</button>
-                    <button class="btn" style="background:#34495e; width:auto;" onclick="zurHauptseiteZurueck()">Zur Hauptseite</button>
-                </div>
-
-                <div style="text-align:right; margin: -6px 0 14px;">
-                    <a href="#" onclick="oeffneEntnahmeLog(); return false;" style="font-size:0.8em; color:#8a97a3; text-decoration:underline;">Rückgabe-Log (Admin)</a>
-                </div>
-
-                <div class="entnahme-summary-card" style="margin-bottom:14px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                        <div>
-                            <strong>🔄 Schnell-Rückgabe</strong>
-                            <p style="margin:4px 0 0; color:#5f6b77; font-size:0.9em;">Für Helfer beim Abbau: Artikel-Etikett scannen, der Lagerbestand wird automatisch um +1 erhöht.</p>
-                        </div>
-                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                            <button class="btn" style="background:#16a085; width:auto;" onclick="oeffneRueckgabeKameraModal()">📷 Kamera-Scan</button>
-                            <button id="rueckgabe-nfc-btn" class="btn" style="background:#2980b9; width:auto;" onclick="starteRueckgabeNfc()">📶 NFC-Scan (Android)</button>
-                        </div>
-                    </div>
-                    <p style="margin:10px 0 0; font-size:0.8em; color:#8a97a3;">iPhone: NFC-Tag oder QR-Etikett einfach mit der normalen Kamera/NFC des Handys antippen bzw. scannen – die Rückgabe wird automatisch gebucht, sobald die Seite sich öffnet.</p>
-                </div>
-
-                <details class="entnahme-accordion" style="margin-bottom: 14px;" id="entnahme-historie-panel">
-                    <summary>Aktuelle Entnahmen</summary>
-                    <div class="entnahme-accordion-body">
-                        <p style="margin-top: 0; color:#5f6b77;">Hier kannst du frühere Entnahmen laden, einzelne Positionen zurückgeben oder einen Vorgang ganz entfernen.</p>
-                        <div id="entnahme-historie-liste"></div>
-                    </div>
-                </details>
-
-                <div class="entnahme-summary-card" style="margin-bottom:14px;">
-                    <div class="entnahme-summary-grid">
-                        <div class="entnahme-summary-tile">
-                            <small>Benutzer</small>
-                            <div class="entnahme-summary-value" id="entnahme-summary-benutzer">Noch kein Benutzer</div>
-                        </div>
-                        <div class="entnahme-summary-tile">
-                            <small>Sammel-Vorlage</small>
-                            <div class="entnahme-summary-value" id="entnahme-summary-sammel">Noch keine Sammel-Vorlage</div>
-                        </div>
-                        <div class="entnahme-summary-tile">
-                            <small>Materialien</small>
-                            <div class="entnahme-summary-value" id="entnahme-summary-materialien">Noch keine Materialien</div>
-                        </div>                        
-                    </div>
-                </div>
-
-                <div class="entnahme-wizard-steps" aria-label="Entnahme-Schritte">
-                    <button class="entnahme-step-chip" type="button" data-entnahme-step-indicator="1" onclick="entnahmeWizardZuSchritt(1)">1. Person</button>
-                    <button class="entnahme-step-chip" type="button" data-entnahme-step-indicator="2" onclick="entnahmeWizardZuSchritt(2)">2. Vorlage</button>
-                    <button class="entnahme-step-chip" type="button" data-entnahme-step-indicator="3" onclick="entnahmeWizardZuSchritt(3)">3. Material</button>
-                </div>
-
-                <div class="entnahme-wizard-shell">
-                    <section class="entnahme-card entnahme-step-panel active" data-entnahme-step-panel="1">
-                        <h3 style="margin-top: 0;">Schritt 1 von 3: Wer war da?</h3>
-                        <p style="margin-top:0; color:#5f6b77;">Nur eine Benutzer-Vorlage auswählen, dann weiter.</p>
-                        <div class="form-group">
-                            <label for="entnahme-benutzer-vorlage">Benutzer-Vorlage auswählen</label>
-                            <select id="entnahme-benutzer-vorlage" onchange="entnahmeBenutzerVorlageAuswaehlen()"></select>
-                        </div>
-                        <div id="entnahme-benutzer-info" style="margin: 0 0 10px 0; padding: 10px 12px; background:#eef7ff; border:1px solid #d6eaf8; border-radius:8px; color:#24415a; line-height:1.4; font-size:0.92em;">Keine Benutzer-Vorlage ausgewählt.</div>
-                        <p style="margin:0; color:#5f6b77; font-size:0.92em;">Neue Personen legst du über <strong>Vorlagen verwalten</strong> an.</p>
-                        <div class="entnahme-step-nav">
-                            <button class="btn" style="background:#cfd9e3; color:#2c3e50; width:auto;" onclick="entnahmeWizardZurueck()" disabled>Zurück</button>
-                            <button class="btn" style="background:#1f5f8b; width:auto;" onclick="entnahmeWizardWeiter()">Weiter</button>
-                        </div>
-                    </section>
-
-                    <section class="entnahme-card entnahme-step-panel" data-entnahme-step-panel="2">
-                        <h3 style="margin-top: 0;">Schritt 2 von 3: Welche Vorlage?</h3>
-                        <p style="margin-top:0; color:#5f6b77;">Vorlage auswählen, dann weiter. Neue und bestehende Vorlagen bearbeitest du im Overlay.</p>
-                        <div class="form-group">
-                            <label for="entnahme-sammelvorlage">Sammel-Vorlage auswählen</label>
-                            <select id="entnahme-sammelvorlage" onchange="entnahmeSammelvorlageAuswaehlen()"></select>
-                        </div>
-                        <div id="entnahme-sammel-info" style="margin: 0 0 10px 0; padding: 10px 12px; background:#f4ecff; border:1px solid #e6d9fb; border-radius:8px; color:#4a2c73; line-height:1.4; font-size:0.92em;">Keine Sammel-Vorlage ausgewählt.</div>
-                        <div class="entnahme-step-nav">
-                            <button class="btn" style="background:#cfd9e3; color:#2c3e50; width:auto;" onclick="entnahmeWizardZurueck()">Zurück</button>
-                            <button class="btn" style="background:#1f5f8b; width:auto;" onclick="entnahmeWizardWeiter()">Weiter</button>
-                        </div>
-                    </section>
-
-                    <section class="entnahme-card entnahme-step-panel" data-entnahme-step-panel="3">
-                        <h3 style="margin-top: 0;">Schritt 3 von 3: Material hinzufügen</h3>
-                        <p style="margin-top:0; color:#5f6b77;">Material suchen, Menge setzen und direkt hinzufügen.</p>
-
-                        <div class="entnahme-summary-card" style="margin-bottom:14px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                                <div>
-                                    <strong>📤 Schnell-Ausbuchen</strong>
-                                    <p style="margin:4px 0 0; color:#5f6b77; font-size:0.9em;">Artikel-Etikett scannen, der Artikel wird automatisch mit Menge 1 zur Liste unten hinzugefügt.</p>
-                                </div>
-                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                                    <button class="btn" style="background:#c0392b; width:auto;" onclick="oeffneAusbuchenKameraModal()">📷 Kamera-Scan</button>
-                                    <button id="ausbuchen-nfc-btn" class="btn" style="background:#2980b9; width:auto;" onclick="starteAusbuchenNfc()">📶 NFC-Scan (Android)</button>
-                                </div>
-                            </div>
-                            <p style="margin:10px 0 0; font-size:0.8em; color:#8a97a3;">iPhone: für NFC-Tags die Kamera-Scan-Funktion nutzen (QR-Etikett) – Web-NFC im Browser gibt es auf iOS nicht.</p>
-                        </div>
-
-                        <div class="entnahme-grid" style="grid-template-columns: 1.5fr 0.45fr auto; align-items: end;">
-                            <div class="form-group" style="margin-bottom:0;">
-                                <label for="entnahme-artikel-input">Material</label>
-                                <input type="text" id="entnahme-artikel-input" list="entnahme-artikel-datalist" placeholder="Artikel suchen..." autocomplete="off">
-                                <datalist id="entnahme-artikel-datalist"></datalist>
-                            </div>
-                            <div class="form-group" style="margin-bottom:0;">
-                                <label for="entnahme-artikel-menge">Menge</label>
-                                <input type="text" id="entnahme-artikel-menge" value="1">
-                            </div>
-                            <button class="btn" style="background:#27ae60; width:auto; height: 42px;" onclick="entnahmeMaterialHinzufuegen()">+ Hinzufügen</button>
-                        </div>
-
-                        <div style="margin-top: 14px; overflow-x:auto;">
-                            <table class="entnahme-material-table">
-                                <thead>
-                                    <tr><th>Artikel</th><th>Menge</th><th></th></tr>
-                                </thead>
-                                <tbody id="entnahme-material-liste" class="entnahme-material-liste-target">
-                                    <tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div class="entnahme-step-nav">
-                            <button class="btn" style="background:#cfd9e3; color:#2c3e50; width:auto;" onclick="entnahmeWizardZurueck()">Zurück</button>
-                            <button class="btn" style="background:#27ae60; width:auto;" onclick="entnahmeAbschliessen()">Abschließen</button>
-                        </div>
-                    </section>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="bestaetigungModal" class="modal" onclick="if (event.target === this) bestaetigungAbbrechen()">
-        <div class="modal-content" style="max-width: 420px; text-align:center;">
-            <div id="bestaetigung-icon" style="font-size:2.6em; margin-bottom:4px;">⚠️</div>
-            <h3 id="bestaetigung-titel" style="margin: 0 0 10px 0; color:#2c3e50;">Bist du sicher?</h3>
-            <p id="bestaetigung-text" style="margin:0 0 22px 0; color:#5f6b77; line-height:1.5;"></p>
-            <div class="flex-buttons" style="margin-top:0; justify-content:center;">
-                <button class="btn btn-cancel" type="button" style="flex:1;" onclick="bestaetigungAbbrechen()">Abbrechen</button>
-                <button id="bestaetigung-ok-btn" class="btn" type="button" style="flex:1; background:#e74c3c;" onclick="bestaetigungBestaetigen()">Löschen</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="vorlagenModal" class="modal" onclick="if (event.target === this) schliesseVorlagenOverlay()">
-        <div class="modal-content" style="max-width: 780px;">
-            <h2 style="margin-top:0; color:#2c3e50;">Vorlagen verwalten</h2>
-            <p style="margin-top:0; color:#5f6b77;">Die Auswahl erfolgt im Entnahme-Wizard. Hier erstellst oder bearbeitest du die gespeicherten Vorlagen.</p>
-
-            <div class="vorlagen-modal-scroll">
-            <div class="entnahme-grid" style="grid-template-columns: 1fr; gap: 16px;">
-                <section class="entnahme-card entnahme-vorlagen-form">
-                    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 12px;">
-                        <h3 style="margin:0; color:#2c3e50;">Benutzer-Vorlage</h3>
-                        <button class="btn" style="width:auto; background:#1f5f8b;" onclick="entnahmeBenutzerVorlageNeu()">Neue Benutzer-Vorlage</button>
-                    </div>
-                    <div class="form-group">
-                        <label for="entnahme-benutzer-vorlage-bearbeiten">Bestehende Vorlage bearbeiten</label>
-                        <select id="entnahme-benutzer-vorlage-bearbeiten" onchange="entnahmeBenutzerVorlageZumBearbeitenAuswaehlen()"></select>
-                    </div>
-                    <div class="form-group">
-                        <label for="entnahme-name">Name</label>
-                        <input type="text" id="entnahme-name" placeholder="Vor- und Nachname" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
-                    </div>
-                    <div class="form-group">
-                        <label for="entnahme-kontakt">Kontakt optional</label>
-                        <input type="text" id="entnahme-kontakt" placeholder="Telefon, E-Mail oder Hinweis" oninput="entnahmeMarkiereAutoSaveAlsErforderlich()">
-                    </div>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
-                        <button class="btn" style="background:#e74c3c; width:auto;" onclick="entnahmeBenutzerVorlageLoeschen()">🗑️ Löschen</button>
-                        <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeBenutzerVorlageSpeichern()">Speichern</button>
-                    </div>
-                </section>
-
-                <section class="entnahme-card" id="entnahme-sammel-packliste-hinweis" style="display:none;">
-                    <h3 style="margin:0 0 8px 0; color:#2c3e50;">Sammel-Vorlage</h3>
-                    <p style="margin:0; color:#5f6b77;">Aktuell ist eine <strong>Packliste</strong> als Entnahme ausgewählt. Packlisten werden im Event-Modus verwaltet und können hier nicht bearbeitet, umbenannt oder gelöscht werden. Wähle im Entnahme-Wizard eine andere Vorlage (oder keine), um hier eine normale Sammel-Vorlage zu erstellen oder zu bearbeiten.</p>
-                </section>
-
-                <section class="entnahme-card entnahme-vorlagen-form" id="entnahme-sammel-panel" style="display:none;">
-                    <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 12px;">
-                        <h3 style="margin:0; color:#2c3e50;">Sammel-Vorlage</h3>
-                        <button class="btn" style="width:auto; background:#1f5f8b;" onclick="entnahmeSammelvorlageNeu()">Neue Sammel-Vorlage</button>
-                    </div>
-                    <div class="form-group">
-                        <label for="entnahme-sammelvorlage-bearbeiten">Bestehende Vorlage bearbeiten</label>
-                        <select id="entnahme-sammelvorlage-bearbeiten" onchange="entnahmeSammelvorlageZumBearbeitenAuswaehlen()"></select>
-                    </div>
-                    <div class="form-group">
-                        <label for="entnahme-sammelvorlagenname">Sammel-Vorlage benennen</label>
-                        <input type="text" id="entnahme-sammelvorlagenname" placeholder="z.B. Standard-Entnahme Lagerdienst" oninput="entnahmeMarkiereAutoSaveAlsErforderlich({ sammelAutoSave: true })">
-                    </div>
-
-                    <div class="entnahme-grid" style="grid-template-columns: 1.5fr 0.45fr auto; align-items: end; margin-top:14px;">
-                        <div class="form-group" style="margin-bottom:0;">
-                            <label for="entnahme-modal-artikel-input">Material</label>
-                            <input type="text" id="entnahme-modal-artikel-input" list="entnahme-artikel-datalist" placeholder="Artikel suchen..." autocomplete="off">
-                        </div>
-                        <div class="form-group" style="margin-bottom:0;">
-                            <label for="entnahme-modal-artikel-menge">Menge</label>
-                            <input type="text" id="entnahme-modal-artikel-menge" value="1">
-                        </div>
-                        <button class="btn" style="background:#27ae60; width:auto; height: 42px;" onclick="entnahmeModalMaterialHinzufuegen()">+ Hinzufügen</button>
-                    </div>
-
-                    <div style="margin-top: 14px; overflow-x:auto;">
-                        <table class="entnahme-material-table">
-                            <thead>
-                                <tr><th>Artikel</th><th>Menge</th><th></th></tr>
-                            </thead>
-                            <tbody id="entnahme-modal-material-liste" class="entnahme-material-liste-target">
-                                <tr><td colspan="3" style="text-align:center; color:#666; padding:18px;">Noch keine Materialien ausgewählt.</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; margin-top:14px;">
-                        <button class="btn" style="background:#e74c3c; width:auto;" onclick="entnahmeSammelvorlageLoeschen()">🗑️ Löschen</button>
-                        <button class="btn" style="background:#34495e; width:auto;" onclick="entnahmeSammelvorlageSpeichern()">Speichern</button>
-                    </div>
-                </section>
-            </div>
-            </div>
-
-            <div class="flex-buttons" style="justify-content:flex-end; margin-top: 18px;">
-                <button class="btn btn-cancel" type="button" style="width:auto;" onclick="schliesseVorlagenOverlay()">Schließen</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="qrgen-ansicht" style="display:none; padding: 30px 0;">
-        <div class="subview-backbar">
-            <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
-        </div>
-        <div class="survey-page" style="max-width: 900px;">
-            <h1>QR-Code für Regal-Beschriftungen</h1>
-            <p class="survey-note">Dieses Fenster erzeugt einen QR-Code, der das Lager direkt auf das Regal aus der Klammer filtert.</p>
-            <div class="regal-qr-tool" style="margin-bottom:0;">
-                <h3>QR-Code erzeugen</h3>
-                <div class="regal-qr-grid">
-                    <div>
-                        <div class="form-group">
-                            <label for="regal-qr-input">Beschriftung eingeben</label>
-                            <input type="text" id="regal-qr-input" placeholder="z.B. Fach Briefumschläge (Regal A)" oninput="aktualisiereRegalQrVorschau()">
-                        </div>
-                        <p id="regal-qr-hinweis" style="margin:0 0 10px 0; color:#5f6b77; line-height:1.4;">QR-Text eingeben, zum Beispiel: Fach Briefumschläge (Regal A)</p>
-                        <div class="flex-buttons" style="margin-top: 12px; flex-wrap: wrap;">
-                            <button class="btn" style="background:#34495e; flex:1; min-width: 180px;" onclick="navigator.clipboard?.writeText(document.getElementById('regal-qr-link').innerText || '')">Link kopieren</button>
-                            <button class="btn" style="background:#1f5f8b; flex:1; min-width: 180px;" onclick="downloadRegalQrDatei('png')">PNG herunterladen</button>
-                        </div>
-                        <p style="margin:10px 0 0 0; font-size:0.9em; color:#5f6b77; word-break:break-all;"><a id="regal-qr-link" href="#" target="_blank" rel="noopener"></a></p>
-                    </div>
-                    <div class="regal-qr-preview-wrap">
-                        <div id="regal-qr-preview"></div>
-                        <small>Der QR-Code öffnet das Lagertool direkt mit Regal-Filter.</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="etiketten-ansicht" style="display:none; padding: 30px 0;">
-        <div class="subview-backbar">
-            <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
-        </div>
-        <div class="survey-page" style="max-width: 900px;">
-            <h1>🏷️ Artikel-Etiketten</h1>
-            <p class="survey-note">Erzeugt für jeden Artikel einen QR-Code (öffnet automatisch die Schnell-Rückgabe). Auf Android können damit auch direkt leere NFC-Tags beschrieben werden.</p>
-
-            <div class="etiketten-toolbar">
-                <input type="text" id="etiketten-suche" placeholder="🔍 Artikel suchen…" oninput="renderArtikelEtikettenListe()" style="flex:1; min-width:200px; padding:10px; border:2px solid #3498db; border-radius:8px; box-sizing:border-box;">
-                <label class="etiketten-select-all">
-                    <input type="checkbox" id="etiketten-alle-auswaehlen" onchange="toggleAlleEtikettenAuswahl(this.checked)">
-                    Alle auswählen
-                </label>
-                <button class="btn" style="background:#27ae60; width:auto;" id="etiketten-auswahl-drucken-btn" onclick="druckeAusgewaehlteEtiketten()" disabled>🖨️ Auswahl drucken (<span id="etiketten-auswahl-count">0</span>)</button>
-                <button class="btn" style="background:#1f5f8b; width:auto;" onclick="druckeAlleEtiketten()">🖨️ Alle drucken</button>
-            </div>
-
-            <div id="etiketten-liste" class="etiketten-liste">
-                <p style="text-align:center; color:#7f8c8d;">Lade Artikel…</p>
-            </div>
-        </div>
-    </div>
-
     <div class="modus-switch">
         <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Lager-Modus</button>
-        <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Modus</button>
-        <button class="btn btn-modus" id="tab-kisten" onclick="wechsleModus('kisten')">🧰 Kisten-Check</button>
+        <button class="btn btn-modus" id="tab-kisten" onclick="wechsleModus('kisten')">🧰 Kisten &amp; Lagerorte</button>
+        <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Packlisten</button>
     </div>
 
+    <!-- ANSICHT 1: LAGER-MODUS -->
     <div id="ansicht-lager">
-        <p class="subtitle">
-            Beachte das Änderungsdatum der Artikel, sie könnten veraltet sein.<br>
-            Achtet bitte auf Ordnung im Lager !!
-            Feedback bitte an pius.schwarzenboeck@trisport-erding.de
-        </p>
-        
         <div class="action-bar">
             <input type="text" id="such-filter" placeholder="🔍 Artikel, Ort, IDs oder Kategorie suchen..." onkeyup="wendeFilterAn()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
             
             <div class="action-group">
+                <button class="btn" style="background-color: #2980b9;" onclick="oeffneWoGehoertDasHinModal()">🔍 Wo gehört das hin? / Rückgabe</button>
+                <button class="btn" id="kisten-nfc-btn-lager" style="background-color: #16a085;" onclick="starteKistenNfc()">📶 Kiste scannen (NFC)</button>
+                
                 <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Kategorien</option>
                 </select>
-                    <select id="ort-filter-combo" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="ortComboChanged()">
-                        <option value="">Alle Orte</option>
-                    </select>
+                <select id="ort-filter-combo" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="ortComboChanged()">
+                    <option value="">Alle Orte</option>
+                </select>
 
                 <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 <button class="btn lager-edit-only" style="display:none;" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
-                <button class="btn" style="background-color: #16a085;" onclick="geheZuEntnahmeprotokoll()">🔄 Entnahmeprotokoll &amp; Rückgabe</button>
             </div>
         </div>
+
         <div class="table-responsive">
             <table class="lager-table">
                 <thead>
@@ -1317,8 +256,8 @@
                         <th style="vertical-align: middle;">
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <span style="display: flex; gap: 5px;">
-                                    <button onclick="toggleAlleGruppen()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="Alle Ordner auf-/zuklappen">↕️</button>
-                                    <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em; transition: 0.2s;" title="A-Z / Z-A Sortierung">A-Z</button>
+                                    <button onclick="toggleAlleGruppen()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em;" title="Alle Ordner auf-/zuklappen">↕️</button>
+                                    <button id="btn-sort" onclick="toggleSortierung()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px; color: white; cursor: pointer; padding: 2px 6px; font-size: 0.85em;" title="A-Z / Z-A Sortierung">A-Z</button>
                                 </span>
                                 <span>Kategorie / Artikel</span>
                             </div>
@@ -1327,13 +266,41 @@
                         <th style="vertical-align: middle;" class="lager-th-menge">Menge</th>
                     </tr>
                 </thead>
-                <tbody id="lager-tabelle"><tr><td colspan="3" style="padding:30px;"><div class="ladespinner-wrap"><span class="ladespinner"></span> Lade Daten...</div></td></tr></tbody>
+                <tbody id="lager-tabelle">
+                    <tr><td colspan="3" style="padding:30px; text-align:center;">Lade Daten...</td></tr>
+                </tbody>
             </table>
         </div>
     </div>
 
+    <!-- ANSICHT 2: KISTEN & LAGERORTE -->
+    <div id="ansicht-kisten" style="display: none;">
+        <p class="subtitle">
+            Jede Kiste ist ein Lagerort mit festem Soll-Inhalt. Scanne den NFC-Tag oder QR-Code, um den Inhalt zu prüfen,
+            die Kiste komplett auszubuchen oder zurückzugeben.
+        </p>
+        <div class="action-bar">
+            <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste oder Code suchen..." onkeyup="renderKistenListe()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
+            <div class="action-group">
+                <button class="btn" style="background-color: #8e44ad;" onclick="oeffneKistenKameraModal()">📷 Kiste scannen (Kamera)</button>
+                <button class="btn" id="kisten-nfc-btn" style="background-color: #16a085;" onclick="starteKistenNfc()">📶 NFC-Scan (Android)</button>
+                <button class="btn" style="background-color: #2980b9;" onclick="oeffneWoGehoertDasHinModal()">🔍 Einzel-Rückgabe ohne Scan</button>
+                <button class="btn" style="background-color: #27ae60;" onclick="openOrteVerwalten()">⚙️ Lagerorte / NFC verwalten</button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead style="background-color: #2c3e50;">
+                    <tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status</th><th>Aktionen</th></tr>
+                </thead>
+                <tbody id="kisten-tabelle"><tr><td colspan="4" style="padding:30px; text-align:center;">Lade Kisten...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ANSICHT 3: EVENT-MODUS -->
     <div id="ansicht-event" style="display: none;">
-        <p class="subtitle">Packlisten für Resorts. Die Verfügbarkeit berechnet sich automatisch aus dem Lagerbestand.</p>
+        <p class="subtitle">Packlisten für Veranstaltungen und Resorts. Die Verfügbarkeit berechnet sich automatisch.</p>
         <div class="action-bar">
             <div class="action-group">
                 <button class="btn" id="btn-event-edit" style="background-color: #f39c12;" onclick="toggleEventEditMode()">✏️ Bearbeiten: AUS</button>
@@ -1341,10 +308,9 @@
                     <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 1; min-width: 0;" onchange="zeigePackliste()">
                         <option value="">-- Wähle Resort / Packliste --</option>
                     </select>
-                    <button class="btn event-edit-only" style="display:none; background-color: #95a5a6; padding: 10px; width: auto;" onclick="umbenennePackliste()" title="Packliste umbenennen">✏️</button>
-                    <button class="btn event-edit-only" style="display:none; background-color: #c0392b; padding: 10px; width: auto;" onclick="loeschePackliste()" title="Packliste löschen">🗑️</button>
+                    <button class="btn event-edit-only" style="display:none; background-color: #95a5a6; padding: 10px; width: auto;" onclick="umbenennePackliste()">✏️</button>
+                    <button class="btn event-edit-only" style="display:none; background-color: #c0392b; padding: 10px; width: auto;" onclick="loeschePackliste()">🗑️</button>
                 </div>
-                
                 <button class="btn" style="background-color: #8e44ad;" onclick="startEinkaufsliste()">🛒 Einkaufsliste</button>
                 <button class="btn event-edit-only" style="display:none; background-color: #27ae60;" onclick="neuePacklisteAnlegen()">+ Neue Liste</button>
             </div>
@@ -1362,127 +328,129 @@
                     <tbody id="event-tabelle"></tbody>
                 </table>
             </div>
-
-            <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-            <p style="font-weight: bold; margin-bottom: 10px;">📦 Kisten für dieses Event:</p>
-            <div style="display:flex; gap:10px; margin-bottom: 12px; flex-wrap: wrap;">
-                <button class="btn" style="background-color: #8e44ad; width:auto;" onclick="starteEventKistenZuweisungScan()">📷 Kiste zuweisen (Scan)</button>
-                <select id="event-kiste-manuell-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex:1; min-width: 200px;" onchange="eventKisteManuellZuweisen()">
-                    <option value="">-- Kiste manuell zuweisen --</option>
-                </select>
-            </div>
-            <div id="event-kisten-liste"></div>
         </div>
     </div>
+</div>
 
-    <div id="ansicht-kisten" style="display: none;">
-        <p class="subtitle">
-            Lagerorte mit NFC-Tag ("Kisten"). Es gibt kein separates Kisten-System mehr - jeder Lagerort,
-            egal ob neu oder schon länger im Einsatz (z.B. "Kiste Banner (Regal C)"), kann über
-            "⚙️ Lagerorte verwalten" einen NFC-Tag bekommen. Tag scannen → Inhalt öffnet sich direkt zum Prüfen.
+<!-- =========================================================================
+     MODALS
+     ========================================================================= -->
+
+<!-- MODAL: KISTEN CHECK / INHALT (ENTNEHMEN & ZURÜCKBUCHEN) -->
+<div id="kistenCheckModal" class="modal" onclick="if (event.target === this) schliesseKistenCheckModal()">
+    <div class="modal-content" style="max-width: 680px;">
+        <button type="button" class="modal-close-x" onclick="schliesseKistenCheckModal()" title="Schließen">✕</button>
+        <h2 id="kisten-check-titel" style="margin-top:0; color:#2c3e50;">📦 Kisteninhalt</h2>
+        <p style="font-family:monospace; color:#7f8c8d; margin-top:-8px;" id="kisten-check-code"></p>
+
+        <!-- Schnellaktionen für die gesamte Kiste -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:16px;">
+            <button class="btn" style="background:#c0392b;" onclick="ganzeKisteAusbuchen()">
+                📤 Ganze Kiste entnehmen
+            </button>
+            <button class="btn" style="background:#27ae60;" onclick="ganzeKisteZurueckbuchen()">
+                📥 Ganze Kiste voll zurück
+            </button>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <strong style="color:#2c3e50;">Inhalt der Kiste:</strong>
+            <button type="button" id="kiste-edit-toggle-btn" class="btn" style="background:#95a5a6; padding:6px 10px; font-size:0.8em; width:auto; min-height:32px;" onclick="toggleKistenEditForm()">
+                ⚙️ Inhalt bearbeiten
+            </button>
+        </div>
+
+        <!-- Schnell-Übersicht mit -1 / +1 Buttons -->
+        <div id="kisten-check-schnellansicht" style="max-height: 48vh; overflow-y: auto;">
+            <div id="kisten-check-liste"></div>
+        </div>
+
+        <!-- Bearbeitungs-Ansicht (nur wenn aktiviert) -->
+        <div id="kisten-check-edit-bereich" style="display:none; border-top:1px solid #ddd; padding-top:12px; margin-top:12px;">
+            <p style="font-size:0.85em; color:#666;">Artikel zu dieser Kiste als Stamm-Lagerort hinzufügen:</p>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="kisten-check-artikel-input" list="kategorie-artikel-liste" placeholder="Artikel suchen..." style="flex:1; padding:10px; border-radius:6px; border:1px solid #ccc;">
+                <button type="button" class="btn" style="background:#3498db; width:auto;" onclick="kistenCheckArtikelHinzufuegen()">➕ Hinzufügen</button>
+            </div>
+        </div>
+
+        <div class="flex-buttons" style="margin-top: 18px;">
+            <button class="btn btn-save" onclick="schliesseKistenCheckModal()">Fertig</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: WO GEHÖRT DAS HIN? / RÜCKGABE OHNE CODE -->
+<div id="artikelFinderModal" class="modal" onclick="if (event.target === this) closeModal('artikelFinderModal')">
+    <div class="modal-content" style="max-width: 650px;">
+        <button type="button" class="modal-close-x" onclick="closeModal('artikelFinderModal')">✕</button>
+        <h2 style="margin-top:0; color:#2c3e50;">🔍 Wo gehört das hin?</h2>
+        <p style="font-size:0.9em; color:#666; margin-bottom:12px;">
+            Artikel suchen, um zu sehen, in welche Kiste er gehört – oder sofort fehlende Teile mit <strong>+1</strong> zurückbuchen:
         </p>
-        <div class="action-bar">
-            <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste oder Code suchen..." onkeyup="renderKistenListe()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
-            <div class="action-group">
-                <button class="btn" style="background-color: #27ae60;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten / NFC beschreiben</button>
-                <button class="btn" style="background-color: #8e44ad;" onclick="oeffneKistenKameraModal()">📷 Kiste scannen (Kamera)</button>
-                <button class="btn" id="kisten-nfc-btn" style="background-color: #16a085;" onclick="starteKistenNfc()">📶 NFC-Scan (Android)</button>
-            </div>
-        </div>
-        <div class="table-responsive">
-            <table>
-                <thead style="background-color: #2c3e50;">
-                    <tr><th>Kiste / Code</th><th>Positionen</th><th>Status</th><th>Aktionen</th></tr>
-                </thead>
-                <tbody id="kisten-tabelle"><tr><td colspan="4" style="padding:30px;"><div class="ladespinner-wrap"><span class="ladespinner"></span> Lade Kisten...</div></td></tr></tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<div id="technikModal" class="modal">
-    <div class="modal-content" style="line-height: 1.5; color: #333;">
-        <h2 style="color: #e3000f; margin-top: 0;">Zusätzliche Datenschutz-Infos</h2>
-        <p>Dieses interne Verwaltungstool nutzt spezialisierte technische Dienstleister, um die Funktionalität zu gewährleisten:</p>
         
-        <p><strong>1. Supabase (Datenbank & Login)</strong><br>
-        Wir nutzen Supabase (Supabase, Inc., USA) zur Speicherung der Bestandsdaten und für die Benutzeranmeldung. Hierbei wird technisch bedingt Ihre IP-Adresse übertragen und ein Authentifizierungs-Token im lokalen Speicher Ihres Browsers abgelegt. <br>
-        Details: <a href="https://supabase.com/privacy" target="_blank" style="color: #3498db;">Supabase Privacy Policy</a></p>
+        <input type="text" id="artikel-finder-input" placeholder="🔍 z.B. Flaschenöffner, Zewa, Messer, Stifte..." 
+               oninput="aktualisiereArtikelFinderListe(this.value)" 
+               style="width:100%; padding:12px; border:2px solid #3498db; border-radius:8px; font-size:1em; box-sizing:border-box; margin-bottom:14px;">
 
-        <p><strong>2. GitHub (Hosting)</strong><br>
-        Die Bereitstellung der Website-Dateien (HTML/JS) erfolgt über GitHub Pages (GitHub, Inc., USA). GitHub kann Protokolldaten über Zugriffe (IP-Adresse, Browser-Typ) erheben, um den Dienst sicher und zuverlässig bereitzustellen.<br>
-        Details: <a href="https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement" target="_blank" style="color: #3498db;">GitHub Privacy Statement</a></p>
+        <div style="display:flex; gap:10px; margin-bottom:12px; font-size:0.85em;">
+            <button type="button" class="btn" id="finder-filter-fehlend" style="background:#e74c3c; padding:6px 12px; width:auto; min-height:34px;" onclick="setzeFinderFilter('fehlend')">Nur Fehlteile zeigen</button>
+            <button type="button" class="btn" id="finder-filter-alle" style="background:#95a5a6; padding:6px 12px; width:auto; min-height:34px;" onclick="setzeFinderFilter('alle')">Alle Artikel</button>
+        </div>
 
-        <p><strong>Rechtsgrundlage:</strong><br>
-        Die Nutzung dieser Dienste erfolgt auf Grundlage unseres berechtigten Interesses an einer effizienten Vereinsverwaltung (Art. 6 Abs. 1 lit. f DSGVO).</p>
+        <div id="artikel-finder-ergebnisse" style="max-height:50vh; overflow-y:auto;"></div>
 
-        <div class="flex-buttons" style="margin-top: 30px;">
-            <button class="btn btn-cancel" style="width: 100%; background-color: #34495e;" onclick="closeModal('technikModal')">Schließen</button>
+        <div class="flex-buttons" style="margin-top:15px;">
+            <button class="btn btn-cancel" onclick="closeModal('artikelFinderModal')">Schließen</button>
         </div>
     </div>
 </div>
 
-<datalist id="kategorie-liste"></datalist>
+<!-- KAMERA SCANNER MODAL -->
+<div id="kistenKameraModal" class="modal" onclick="if (event.target === this) schliesseKistenKameraModal()">
+    <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="schliesseKistenKameraModal()">✕</button>
+        <h2>📷 Kiste / Artikel scannen</h2>
+        <p style="font-size: 0.85em; color: #666;">QR-Code oder Barcode der Kiste bzw. des Artikels vor die Kamera halten.</p>
+        <div id="kisten-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
+        <p id="kisten-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
+        <div class="flex-buttons">
+            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseKistenKameraModal()">Schließen</button>
+        </div>
+    </div>
+</div>
 
+<!-- WEITERE STANDARD-MODALS -->
 <div id="artikelModal" class="modal" onclick="if (event.target === this) closeModal('artikelModal')">
     <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="closeModal('artikelModal')" title="Schließen" aria-label="Schließen">✕</button>
+        <button type="button" class="modal-close-x" onclick="closeModal('artikelModal')">✕</button>
         <h2>Neuer Artikel</h2>
-        <div class="form-group"><label>Name (z.B. Kabelbinder groß)</label><input type="text" id="new-name"></div>
-        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="new-kategorie" list="kategorie-liste" placeholder="z.B. Verbrauchsmaterial"></div>
-        
+        <div class="form-group"><label>Name</label><input type="text" id="new-name"></div>
+        <div class="form-group"><label>Kategorie</label><input type="text" id="new-kategorie" list="kategorie-liste"></div>
         <div class="form-group">
             <label>Einheit</label>
             <select id="new-einheit">
                 <option value="Stück">Stück</option>
                 <option value="Packung">Packung</option>
                 <option value="Flasche">Flasche</option>
-                <option value="Kiste">Kiste</option>
                 <option value="Rolle">Rolle</option>
                 <option value="Paar">Paar</option>
                 <option value="Set">Set</option>
-                <option value="Meter">Meter</option>
             </select>
         </div>
-
-        <div class="form-group">
-            <label>Typ (für Kisten-Check / Behälter)</label>
-            <select id="new-typ">
-                <option value="zaehlbar">Zählbar (Stück, z.B. Werkzeug)</option>
-                <option value="verbrauch">Verbrauchsmaterial (Füllstand, z.B. Kabelbinder)</option>
-            </select>
+        <div class="form-group" style="display:flex; align-items:center; gap:10px;">
+            <input type="checkbox" id="new-wichtig" style="width:18px; height:18px;">
+            <label for="new-wichtig" style="margin:0; cursor:pointer;">Auf Startseite markieren</label>
         </div>
-
-        <div class="form-group" style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
-            <input type="checkbox" id="new-wichtig" style="width:18px; height:18px; accent-color:#f39c12;">
-            <label for="new-wichtig" style="margin:0; font-weight:bold; cursor:pointer;">Als markierten Artikel kennzeichnen</label>
-        </div>
-        
-        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-        <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Start-Mengen:</p>
+        <hr style="margin: 20px 0; border:0; border-top:1px solid #eee;">
+        <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerort &amp; Soll-Bestand:</p>
         <div id="new-orte-wrapper">
-                <div class="lagerort-row" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
-                    <div class="bestand-row-stack" style="width: 100%;">
-                        <select class="new-ort" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
-
-                        <div class="bestand-action-row" style="flex-wrap: nowrap; width: 100%;">
-                            <input type="text" class="new-menge bestand-menge-input bestand-form-quantity" value="0" oninput="bestandEingabeGeaendert(this)" style="flex: 1.25; min-width: 0; padding: 12px 14px; border-radius: 6px; border: 1px solid #ccc; text-align: center; font-size: 1.08em; box-sizing: border-box;">
-                            <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 68px; font-weight: bold;" title="Unendlich umschalten" onclick="toggleBestandInf(this)">∞</button>
-                            <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background: #95a5a6; padding: 10px 10px; width: auto; min-width: 44px; font-weight: bold;" title="Ohne Bestand umschalten" onclick="toggleBestandMinus(this)">-</button>
-                        </div>
-
-                        <label class="bestand-nachkauf-wrap">
-                            <input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)">
-                            <span>Auf Nachkaufen setzen</span>
-                        </label>
-                    </div>
-
-                    <button type="button" class="btn" style="background:#e74c3c; padding: 8px 12px; width: auto; min-width: 40px;" onclick="removeNewOrtRow(this)" title="Ort entfernen">🗑️</button>
-                </div>
+            <div class="lagerort-row" style="display:flex; gap:8px; margin-bottom:8px;">
+                <select class="new-ort" style="flex:2; padding:10px; border-radius:6px; border:1px solid #ccc;"></select>
+                <input type="number" class="new-menge" value="1" min="0" style="flex:1; padding:10px; border-radius:6px; border:1px solid #ccc; text-align:center;">
+            </div>
         </div>
-        <button type="button" class="btn" style="background-color: #3498db; width: 100%; margin-top: 5px;" onclick="addOrtRow()" title="Weiteren Ort hinzufügen">➕ Weiteren Ort hinzufügen</button>
-
-        <div class="flex-buttons" style="margin-top: 20px;">
+        <div class="flex-buttons">
             <button class="btn btn-save" onclick="artikelAnlegen()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('artikelModal')">Abbrechen</button>
         </div>
@@ -1491,61 +459,44 @@
 
 <div id="editModal" class="modal" onclick="if (event.target === this) closeModal('editModal')">
     <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="closeModal('editModal')" title="Schließen" aria-label="Schließen">✕</button>
+        <button type="button" class="modal-close-x" onclick="closeModal('editModal')">✕</button>
         <h2>Artikel bearbeiten</h2>
         <input type="hidden" id="edit-artikel-id">
         <div class="form-group"><label>Name</label><input type="text" id="edit-name"></div>
-        <div class="form-group"><label>Kategorie (Ordnername)</label><input type="text" id="edit-kategorie" list="kategorie-liste"></div>
-
+        <div class="form-group"><label>Kategorie</label><input type="text" id="edit-kategorie" list="kategorie-liste"></div>
         <div class="form-group">
             <label>Einheit</label>
             <select id="edit-einheit">
                 <option value="Stück">Stück</option>
                 <option value="Packung">Packung</option>
                 <option value="Flasche">Flasche</option>
-                <option value="Kiste">Kiste</option>
                 <option value="Rolle">Rolle</option>
                 <option value="Paar">Paar</option>
                 <option value="Set">Set</option>
-                <option value="Meter">Meter</option>
             </select>
         </div>
-
-        <div class="form-group">
-            <label>Typ (für Kisten-Check / Behälter)</label>
-            <select id="edit-typ">
-                <option value="zaehlbar">Zählbar (Stück, z.B. Werkzeug)</option>
-                <option value="verbrauch">Verbrauchsmaterial (Füllstand, z.B. Kabelbinder)</option>
-            </select>
+        <div class="form-group" style="display:flex; align-items:center; gap:10px;">
+            <input type="checkbox" id="edit-wichtig" style="width:18px; height:18px;">
+            <label for="edit-wichtig" style="margin:0; cursor:pointer;">Auf Startseite markieren</label>
         </div>
-
-        <div class="form-group" style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
-            <input type="checkbox" id="edit-wichtig" style="width:18px; height:18px; accent-color:#f39c12;">
-            <label for="edit-wichtig" style="margin:0; font-weight:bold; cursor:pointer;">Als markierten Artikel kennzeichnen</label>
-        </div>
-
-        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-        <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte & Mengen:</p>
-        <div id="edit-orte-wrapper">
-            </div>
+        <hr style="margin: 20px 0; border:0; border-top:1px solid #eee;">
+        <p style="font-weight: bold; margin-bottom: 10px;">📍 Lagerorte &amp; Mengen:</p>
+        <div id="edit-orte-wrapper"></div>
         <button type="button" class="btn" style="background-color: #3498db; width: 100%; margin-top: 5px;" onclick="addEditOrtRow()">➕ Weiteren Ort hinzufügen</button>
 
         <div class="flex-buttons" style="margin-top: 20px;">
             <button class="btn btn-save" onclick="speichereBearbeitung()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('editModal')">Abbrechen</button>
         </div>
-        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Artikel komplett löschen</button>
+        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="artikelLoeschen()">🗑️ Artikel löschen</button>
     </div>
 </div>
 
 <div id="neuOrtModal" class="modal" onclick="if (event.target === this) closeModal('neuOrtModal')">
     <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="closeModal('neuOrtModal')" title="Schließen" aria-label="Schließen">✕</button>
-        <h2>Neuer Lagerort</h2>
-        <div class="form-group">
-            <label>Name des neuen Lagerorts</label>
-            <input type="text" id="neu-ort-name" placeholder="z.B. Regal A">
-        </div>
+        <button type="button" class="modal-close-x" onclick="closeModal('neuOrtModal')">✕</button>
+        <h2>Neuer Lagerort / Kiste</h2>
+        <div class="form-group"><label>Name (z.B. Kiste Ausschank (Regal B))</label><input type="text" id="neu-ort-name"></div>
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="speichereNeuenOrt()">Speichern</button>
             <button class="btn btn-cancel" onclick="closeModal('neuOrtModal')">Abbrechen</button>
@@ -1555,11 +506,10 @@
 
 <div id="orteModal" class="modal" onclick="if (event.target === this) closeModal('orteModal')">
     <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="closeModal('orteModal')" title="Schließen" aria-label="Schließen">✕</button>
-        <h2>⚙️ Lagerorte verwalten</h2>
-        <p style="font-size: 0.85em; color: #666;">Ein Ort kann nur gelöscht werden, wenn ihm keine Artikel mehr zugeordnet sind.</p>
+        <button type="button" class="modal-close-x" onclick="closeModal('orteModal')">✕</button>
+        <h2>⚙️ Lagerorte / Kisten verwalten</h2>
         <div class="form-group">
-            <label>Lagerort auswählen</label>
+            <label>Lagerort / Kiste auswählen</label>
             <select id="manage-ort-select" onchange="ortSelectChanged()"></select>
         </div>
         <div class="form-group">
@@ -1567,48 +517,41 @@
             <input type="text" id="manage-ort-name">
         </div>
         <div class="flex-buttons">
-            <button class="btn btn-save" onclick="speichereOrt()">Speichern</button>
-            <button class="btn btn-cancel" onclick="closeModal('orteModal')">Abbrechen</button>
+            <button class="btn btn-save" onclick="speichereOrt()">Name speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('orteModal')">Schließen</button>
         </div>
-        <button class="btn" style="background-color: #c0392b; width: 100%; margin-top: 10px;" onclick="loescheOrt()">🗑️ Lagerort löschen</button>
-
         <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-        <p style="font-weight: bold; margin-bottom: 6px;">📶 NFC-Tag für diesen Lagerort</p>
+        <p style="font-weight: bold; margin-bottom: 6px;">📶 NFC-Tag für diese Kiste</p>
         <p id="manage-ort-nfc-status" style="font-size: 0.85em; color: #666; margin-bottom: 10px;"></p>
-        <button type="button" class="btn" style="background-color: #16a085; width: 100%;" onclick="schreibeNfcTagFuerOrt()">📶 NFC-Tag beschreiben</button>
+        <button type="button" class="btn" style="background-color: #16a085; width: 100%;" onclick="schreibeNfcTagFuerOrt()">📶 NFC-Tag beschreiben (Handy dranhalten)</button>
         <button type="button" id="manage-ort-nfc-entfernen-btn" class="btn" style="background-color: #95a5a6; width: 100%; margin-top: 8px; display:none;" onclick="entferneNfcVonOrt()">🔌 NFC-Zuordnung entfernen</button>
-        <p style="font-size: 0.8em; color: #9ca3af; margin-top: 8px;">
-            Damit lässt sich jeder Lagerort - egal ob neu oder schon länger im Einsatz wie "Kiste Banner (Regal C)" -
-            mit einem physischen NFC-Tag verknüpfen. Tag scannen → Inhalt dieses Lagerorts öffnet sich direkt zum Prüfen.
-        </p>
+    </div>
+</div>
+
+<div id="kommentarModal" class="modal" onclick="if (event.target === this) closeModal('kommentarModal')">
+    <div class="modal-content">
+        <button type="button" class="modal-close-x" onclick="closeModal('kommentarModal')">✕</button>
+        <h2 style="color: #3498db; margin-top: 0;">💬 Notiz zu: <br><small id="kommentar-artikel-name" style="color: #333;"></small></h2>
+        <input type="hidden" id="kommentar-artikel-id">
+        <div class="form-group">
+            <textarea id="kommentar-text" rows="5" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; box-sizing: border-box;"></textarea>
+        </div>
+        <div class="flex-buttons">
+            <button class="btn btn-save" onclick="speichereKommentar()">Speichern</button>
+            <button class="btn btn-cancel" onclick="closeModal('kommentarModal')">Schließen</button>
+        </div>
     </div>
 </div>
 
 <div id="packItemModal" class="modal" onclick="if (event.target === this) closeModal('packItemModal')">
     <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="closeModal('packItemModal')" title="Schließen" aria-label="Schließen">✕</button>
+        <button type="button" class="modal-close-x" onclick="closeModal('packItemModal')">✕</button>
         <h2>Packliste ergänzen</h2>
         <div class="form-group">
-            <label>Art des Gegenstands</label>
-            <select id="pack-typ" onchange="togglePackTyp()">
-                <option value="lager">Aus dem Lagerbestand</option>
-                <option value="custom">Eigener Gegenstand (Nicht im Lager)</option>
-            </select>
+            <label>Artikel aus Lager</label>
+            <input type="text" id="pack-artikel-input" list="kategorie-artikel-liste" placeholder="Artikel suchen...">
         </div>
-        <div class="form-group" id="div-pack-lager">
-            <label>Lager-Artikel suchen & auswählen</label>
-            <input type="text" id="pack-artikel-input" list="pack-artikel-datalist" oninput="aktualisierePackVerfuegbarkeit()" placeholder="🔍 Tippen zum Suchen..." autocomplete="off">
-            <datalist id="pack-artikel-datalist"></datalist>
-            <div id="pack-artikel-info" style="margin-top: 5px; font-size: 0.9em; font-weight: bold;"></div>
-        </div>
-        <div class="form-group" id="div-pack-custom" style="display:none;">
-            <label>Bezeichnung (Eigener Posten)</label>
-            <input type="text" id="pack-eigener-name" placeholder="z.B. Miet-Transporter">
-        </div>
-        <div class="form-group">
-            <label>Benötigte Menge (Zahl)</label>
-            <input type="text" id="pack-menge" value="1">
-        </div>
+        <div class="form-group"><label>Menge</label><input type="number" id="pack-menge" value="1" min="1"></div>
         <div class="flex-buttons">
             <button class="btn btn-save" onclick="packPositionSpeichern()">Hinzufügen</button>
             <button class="btn btn-cancel" onclick="closeModal('packItemModal')">Abbrechen</button>
@@ -1618,131 +561,25 @@
 
 <div id="kauflisteModal" class="modal" onclick="if (event.target === this) closeModal('kauflisteModal')">
     <div class="modal-content" style="max-width: 500px;">
-        <button type="button" class="modal-close-x" onclick="closeModal('kauflisteModal')" title="Schließen" aria-label="Schließen">✕</button>
+        <button type="button" class="modal-close-x" onclick="closeModal('kauflisteModal')">✕</button>
         <h2 style="margin-top: 0; color: #8e44ad;">🛒 Einkaufsliste</h2>
-        <p style="margin-bottom: 5px; font-weight: bold;">Automatisch erkannter Fehlbestand:</p>
-        <div style="max-height: 150px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border: 1px solid #fadbd8;">
+        <p style="font-weight: bold;">Fehlbestand im Lager:</p>
+        <div style="max-height: 180px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px;">
             <ul id="auto-kauf-liste" style="margin: 0; padding-left: 20px; color: #c0392b;"></ul>
-        </div>
-        <p style="margin: 12px 0 5px 0; font-weight: bold;">Eigene Gegenstände auswählen:</p>
-        <div style="max-height: 140px; overflow-y: auto; background: #eef7ff; padding: 10px; border-radius: 6px; border: 1px solid #d6eaf8;">
-            <ul id="eigene-kauf-liste" style="margin: 0; padding-left: 20px; color: #2c3e50;"></ul>
-        </div>
-        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ddd;">
-        <p style="margin-bottom: 10px; font-weight: bold;">Zusätzliche Dinge manuell hinzufügen:</p>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <input type="text" id="manuell-kauf-name" placeholder="z.B. Klebeband" style="flex: 3; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            <input type="text" id="manuell-kauf-menge" value="1" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            <button class="btn" style="background-color: #3498db; width: auto;" onclick="manuellAufZettel()">+ Add</button>
-        </div>
-        <div style="max-height: 100px; overflow-y: auto;">
-            <ul id="manuell-kauf-liste" style="margin: 0; padding-left: 20px; color: #27ae60;"></ul>
         </div>
         <div class="flex-buttons" style="margin-top: 25px;">
             <button class="btn btn-save" style="background-color: #8e44ad;" onclick="downloadExcel()">📥 Excel Herunterladen</button>
-            <button class="btn btn-cancel" onclick="closeModal('kauflisteModal')">Abbrechen</button>
+            <button class="btn btn-cancel" onclick="closeModal('kauflisteModal')">Schließen</button>
         </div>
     </div>
 </div>
-<div id="kommentarModal" class="modal" onclick="if (event.target === this) closeModal('kommentarModal')">
-    <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="closeModal('kommentarModal')" title="Schließen" aria-label="Schließen">✕</button>
-        <h2 style="color: #3498db; margin-top: 0;">💬 Kommentar zu: <br><small id="kommentar-artikel-name" style="color: #333;"></small></h2>
-        <input type="hidden" id="kommentar-artikel-id">
-        <div class="form-group">
-            <textarea id="kommentar-text" rows="5" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc; font-family: inherit; resize: vertical; box-sizing: border-box;" placeholder="Hinterlasse hier Notizen, Warnungen oder Infos zu diesem Artikel..."></textarea>
-        </div>
-        <div class="flex-buttons" style="margin-top: 15px;">
-            <button class="btn btn-save" style="background-color: #3498db;" onclick="speichereKommentar()">Speichern</button>
-            <button class="btn btn-cancel" onclick="closeModal('kommentarModal')">Schließen</button>
-        </div>
-    </div>
-</div>
+
+<datalist id="kategorie-liste"></datalist>
+<datalist id="kategorie-artikel-liste"></datalist>
 
 <div class="app-footer">
-    Bugs gefunden oder Verbesserungsvorschläge?<br>
-    <a href="mailto:pius.schwarzenboeck@trisport-erding.de?subject=Bug-Report%20Lager-Tool">Melden Sie sich hier!</a>
-    <p style="margin-top: 15px;">
-        <a href="https://trisport-erding.de/verein/impressum" target="_blank" style="margin-right: 15px; text-decoration: none;">Impressum</a>
-        <a href="https://trisport-erding.de/verein/datenschutz" target="_blank" style="margin-right: 15px; text-decoration: none;">Datenschutz</a>
-        <a href="#" onclick="openRechtliches(event, 'technikModal')" style="text-decoration: none;">Technik-Info</a>
-    </p>
-    <p>&copy; 2026 Trisport Erding. Alle Rechte vorbehalten.</p>
+    Trisport Erding e.V. &bull; Lagerverwaltung
 </div>
-
-<div id="rueckgabeKameraModal" class="modal" onclick="if (event.target === this) schliesseRueckgabeKameraModal()">
-    <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="schliesseRueckgabeKameraModal()" title="Schließen" aria-label="Schließen">✕</button>
-        <h2>📷 Schnell-Rückgabe – Kamera</h2>
-        <p style="font-size: 0.85em; color: #666;">Etikett des Artikels vor die Kamera halten. Der Lagerbestand wird automatisch um +1 erhöht.</p>
-        <div id="rueckgabe-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
-        <p id="rueckgabe-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
-        <div class="flex-buttons">
-            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseRueckgabeKameraModal()">Schließen</button>
-        </div>
-    </div>
-</div>
-
-<div id="ausbuchenKameraModal" class="modal" onclick="if (event.target === this) schliesseAusbuchenKameraModal()">
-    <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="schliesseAusbuchenKameraModal()" title="Schließen" aria-label="Schließen">✕</button>
-        <h2>📷 Schnell-Ausbuchen – Kamera</h2>
-        <p style="font-size: 0.85em; color: #666;">Etikett des Artikels vor die Kamera halten. Der Artikel wird automatisch mit Menge 1 zur Materialliste hinzugefügt.</p>
-        <div id="ausbuchen-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
-        <p id="ausbuchen-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
-        <div class="flex-buttons">
-            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseAusbuchenKameraModal()">Schließen</button>
-        </div>
-    </div>
-</div>
-
-<div id="entnahmeLogModal" class="modal" onclick="if (event.target === this) schliesseEntnahmeLog()">
-    <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="schliesseEntnahmeLog()" title="Schließen" aria-label="Schließen">✕</button>
-        <h2>🗂️ Rückgabe-Log</h2>
-        <p style="font-size: 0.85em; color: #666;">Admin-Übersicht: alle vollständig oder teilweise zurückgegebenen Entnahmen, unveränderlich protokolliert.</p>
-        <div id="entnahme-log-liste" style="max-height: 60vh; overflow-y: auto; margin-top: 10px;"></div>
-        <div class="flex-buttons">
-            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseEntnahmeLog()">Schließen</button>
-        </div>
-    </div>
-</div>
-
-<div id="kistenCheckModal" class="modal" onclick="if (event.target === this) schliesseKistenCheckModal()">
-    <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="schliesseKistenCheckModal()" title="Schließen" aria-label="Schließen">✕</button>
-        <h2 id="kisten-check-titel">📦 Inhalt / Prüfen</h2>
-        <p style="font-family:monospace; color:#7f8c8d; margin-top:-8px;" id="kisten-check-code"></p>
-        <p style="font-size:0.85em; color:#666;">Das ist der ganz normale Bestand dieser Kiste als Lagerort. Genau zählen, "∞" für unbegrenzt, oder "-" für Ampel-Status (grün = genug da, rot + Haken = Nachfüllen nötig → landet automatisch auf der Einkaufsliste).</p>
-
-        <div id="kisten-check-liste" style="max-height: 45vh; overflow-y: auto;"></div>
-
-        <div style="display:flex; gap:8px; margin-top:10px;">
-            <input type="text" id="kisten-check-artikel-input" list="kategorie-artikel-liste" placeholder="Artikelname eingeben..." style="flex:1; padding:10px; border-radius:6px; border:1px solid #ccc;">
-            <button type="button" class="btn" style="background:#3498db; width:auto;" onclick="kistenCheckArtikelHinzufuegen()">➕ Hinzufügen</button>
-        </div>
-
-        <div class="flex-buttons" style="margin-top: 15px;">
-            <button class="btn btn-save" onclick="speichereKistenCheck()">Speichern &amp; als geprüft markieren</button>
-            <button class="btn btn-cancel" onclick="schliesseKistenCheckModal()">Abbrechen</button>
-        </div>
-    </div>
-</div>
-
-<div id="kistenKameraModal" class="modal" onclick="if (event.target === this) schliesseKistenKameraModal()">
-    <div class="modal-content">
-        <button type="button" class="modal-close-x" onclick="schliesseKistenKameraModal()" title="Schließen" aria-label="Schließen">✕</button>
-        <h2>📷 Kiste scannen</h2>
-        <p style="font-size: 0.85em; color: #666;">NFC-Tag/QR-Code der Kiste vor die Kamera halten. Der Inhalt der Kiste öffnet sich automatisch.</p>
-        <div id="kisten-qr-reader" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
-        <p id="kisten-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height: 1.2em;"></p>
-        <div class="flex-buttons">
-            <button class="btn btn-cancel" style="width: 100%;" onclick="schliesseKistenKameraModal()">Schließen</button>
-        </div>
-    </div>
-</div>
-
-<datalist id="kategorie-artikel-liste"></datalist>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
