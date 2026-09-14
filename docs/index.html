@@ -112,9 +112,16 @@
         .modal-close-x { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border: none; border-radius: 50%; background: #f1f2f6; color: #555; font-size: 1.1em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background-color 0.15s ease, color 0.15s ease; }
         .modal-close-x:hover { background: #e74c3c; color: white; }
 
+        .onboarding-step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 22px; text-align: left; }
+        .onboarding-icon { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8em; background: #eef4fb; box-shadow: inset 0 0 0 2px #d6e6f7; }
+        .onboarding-text h4 { margin: 0 0 4px 0; color: #2c3e50; }
+        .onboarding-text p { margin: 0; color: #555; line-height: 1.45; font-size: 0.95em; }
+        .onboarding-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+        .onboarding-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 0.85em; font-weight: bold; }
+
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; min-height: 44px; }
+        .form-group input[type="text"], .form-group input[type="password"], .form-group input[type="number"], .form-group select, .form-group textarea { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; min-height: 44px; }
         
         .flex-buttons { display: flex; gap: 10px; margin-top: 25px; }
         .btn-save { background-color: #27ae60; flex: 2; }
@@ -130,46 +137,36 @@
         .app-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
         .app-footer a { color: white; font-weight: bold; text-decoration: underline; }
         .app-footer a:hover { color: #f1c40f; text-decoration: none; }
+        .login-footer { text-align: center; padding: 20px; margin-top: 30px; color: rgba(255, 255, 255, 0.8); font-size: 0.9em; }
+        .login-footer a { color: white; font-weight: bold; text-decoration: underline; }
+        .login-footer a:hover { color: #f1c40f; text-decoration: none; }
 
-        .no-select { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+        .subview-backbar { max-width: 900px; margin: 0 auto 16px auto; padding: 0 20px; }
+        .subview-back-btn { display: inline-flex; align-items: center; gap: 6px; background: #34495e; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; font-size: 0.95em; font-weight: 600; cursor: pointer; text-decoration: none; }
+        .subview-back-btn:hover { background: #2c3e50; }
 
-        .btn.nfc-aktiv {
-            background:#e67e22 !important;
-            box-shadow: 0 0 0 3px rgba(230, 126, 34, 0.35);
-            animation: nfcPulse 1.4s ease-in-out infinite;
-        }
+        .survey-page { max-width: min(860px, 90vw); margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); }
+        .survey-note { color: #5f6b77; margin-bottom: 18px; }
+        .survey-answer-list { margin-top: 16px; border-top: 1px solid #e3e8ed; padding-top: 12px; max-height: 360px; overflow-y: auto; }
+        .survey-answer-item { border: 1px solid #dbe3ea; border-radius: 8px; background: #f9fbfd; padding: 12px; margin-bottom: 10px; }
+
+        .regal-qr-tool { margin: 0 0 18px 0; padding: 14px; border: 1px solid #d9e3ec; border-radius: 12px; background: #f8fafc; }
+        .regal-qr-grid { display: grid; grid-template-columns: 1.4fr 0.9fr; gap: 14px; align-items: start; }
+        .regal-qr-preview-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px; background: white; border: 1px dashed #c9d5df; border-radius: 10px; }
+        .regal-qr-preview-wrap #regal-qr-preview { width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; background: white; }
+
+        .etiketten-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .etiketten-liste { display: flex; flex-direction: column; gap: 10px; }
+        .etikett-zeile { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid #d9e3ec; border-radius: 10px; background: #fbfdff; flex-wrap: wrap; }
+        .etikett-zeile.ist-ausgewaehlt { border-color: #27ae60; background: #f2fbf5; }
+        .etikett-qr { width: 90px; height: 90px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: white; border: 1px dashed #c9d5df; border-radius: 8px; }
+
+        .btn.nfc-aktiv { background:#e67e22 !important; box-shadow: 0 0 0 3px rgba(230, 126, 34, 0.35); animation: nfcPulse 1.4s ease-in-out infinite; }
         @keyframes nfcPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.75; } }
 
-        /* Kisten-Item Zeilen im Modal */
-        .kiste-item-card {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 12px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            margin-bottom: 8px;
-            background: #fff;
-        }
-        .kiste-item-card.fehlend {
-            border-color: #fca5a5;
-            background: #fef2f2;
-        }
-        .stepper-btn {
-            background: #e2e8f0;
-            color: #2c3e50;
-            border: none;
-            border-radius: 6px;
-            font-size: 1.2em;
-            font-weight: bold;
-            width: 38px;
-            height: 38px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
+        .kiste-item-card { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; background: #fff; }
+        .kiste-item-card.fehlend { border-color: #fca5a5; background: #fef2f2; }
+        .stepper-btn { background: #e2e8f0; color: #2c3e50; border: none; border-radius: 6px; font-size: 1.2em; font-weight: bold; width: 38px; height: 38px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
         .stepper-btn:hover { background: #cbd5e1; }
 
         @media (max-width: 600px) {
@@ -181,6 +178,7 @@
             .modal-content { padding: 16px; width: 95%; }
             h1 { flex-direction: column; align-items: flex-start; }
             h1 > span:last-child { width: 100%; }
+            .regal-qr-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -188,14 +186,93 @@
 
 <div id="toast-container"></div>
 
+<!-- TOOLTIPS -->
 <div id="hover-date-info" style="display: none; position: fixed; bottom: 20px; left: 20px; background-color: rgba(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
     <span style="font-size: 1.2em; vertical-align: middle; margin-right: 5px;">📅</span> 
     <span style="vertical-align: middle;">Letzte Änderung: <strong id="hover-date-text"></strong></span>
 </div>
-
 <div id="hover-res-info" style="display: none; position: fixed; bottom: 20px; right: 20px; background-color: rgb(44, 62, 80, 0.95); color: white; padding: 10px 15px; border-radius: 8px; z-index: 10000; font-size: 0.9em; pointer-events: none; box-shadow: 0 4px 15px rgb(0,0,0,0.3); line-height: 1.5;">
     <span style="font-size: 1.2em; vertical-align: top; margin-right: 5px;">📦</span> 
     <span style="vertical-align: top; display: inline-block;" id="hover-res-text"></span>
+</div>
+
+<!-- SUBVIEW: FEEDBACK PORTAL -->
+<div id="formular-ansicht" style="display:none; padding: 30px 0;">
+    <div class="subview-backbar">
+        <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+    </div>
+    <div class="survey-page">
+        <h1>📝 Lager-Feedbackportal</h1>
+        <p class="survey-note">Hast du Wünsche, Kritik oder Ideen zum Lager? Schreib es gerne hier auf.</p>
+
+        <div class="form-group">
+            <label for="formular-name">Name / Resort</label>
+            <input type="text" id="formular-name" placeholder="Dein Name oder Resort für Rückfragen">
+        </div>
+        <div class="form-group">
+            <label for="formular-frage1">Frage 1: Welche Anforderungen an die Lagerverwaltung fehlen dir?</label>
+            <textarea id="formular-frage1" rows="4" style="resize:vertical;"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="formular-frage2">Frage 2: Welche Materialien sollten zentral verwaltet oder nachgefüllt werden?</label>
+            <textarea id="formular-frage2" rows="4" style="resize:vertical;"></textarea>
+        </div>
+        <div class="flex-buttons" style="margin-top: 18px;">
+            <button class="btn btn-save" onclick="formularAntwortSpeichern()">Antwort absenden</button>
+            <button class="btn" style="background:#34495e;" onclick="formularAntwortenLaden()">Antworten laden</button>
+        </div>
+        <div id="formular-antworten" class="survey-answer-list" style="display:none;"></div>
+    </div>
+</div>
+
+<!-- SUBVIEW: REGAL QR-CODE GENERATOR -->
+<div id="qrgen-ansicht" style="display:none; padding: 30px 0;">
+    <div class="subview-backbar">
+        <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+    </div>
+    <div class="survey-page" style="max-width: 900px;">
+        <h1>🏷️ QR-Code für Regal-Beschriftungen</h1>
+        <p class="survey-note">Erzeugt einen QR-Code, der die App direkt mit dem ausgewählten Regal-Filter öffnet.</p>
+        <div class="regal-qr-tool">
+            <div class="regal-qr-grid">
+                <div>
+                    <div class="form-group">
+                        <label for="regal-qr-input">Regal-Beschriftung eingeben</label>
+                        <input type="text" id="regal-qr-input" placeholder="z.B. Fach Briefumschläge (Regal A)" oninput="aktualisiereRegalQrVorschau()">
+                    </div>
+                    <div class="flex-buttons" style="flex-wrap: wrap;">
+                        <button class="btn" style="background:#34495e; flex:1;" onclick="navigator.clipboard?.writeText(document.getElementById('regal-qr-link').innerText || '')">Link kopieren</button>
+                        <button class="btn" style="background:#1f5f8b; flex:1;" onclick="downloadRegalQrDatei('png')">PNG herunterladen</button>
+                    </div>
+                    <p style="font-size:0.85em; color:#5f6b77; word-break:break-all; margin-top:10px;"><a id="regal-qr-link" href="#" target="_blank" rel="noopener"></a></p>
+                </div>
+                <div class="regal-qr-preview-wrap">
+                    <div id="regal-qr-preview"></div>
+                    <small>QR-Code für Regal-Aufkleber</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SUBVIEW: ARTIKEL-ETIKETTEN -->
+<div id="etiketten-ansicht" style="display:none; padding: 30px 0;">
+    <div class="subview-backbar">
+        <button type="button" class="subview-back-btn" onclick="zurueckZurHauptseite()">← Zurück zur Hauptseite</button>
+    </div>
+    <div class="survey-page" style="max-width: 900px;">
+        <h1>🏷️ Artikel-Etiketten drucken</h1>
+        <p class="survey-note">Druckfertige QR-Codes für Artikel erzeugen. Beim Scannen öffnet sich direkt die Rückbuchung.</p>
+        <div class="etiketten-toolbar">
+            <input type="text" id="etiketten-suche" placeholder="🔍 Artikel suchen…" oninput="renderArtikelEtikettenListe()" style="flex:1; min-width:200px; padding:10px; border:2px solid #3498db; border-radius:8px;">
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" id="etiketten-alle-auswaehlen" onchange="toggleAlleEtikettenAuswahl(this.checked)"> Alle wählen
+            </label>
+            <button class="btn" style="background:#27ae60; width:auto;" id="etiketten-auswahl-drucken-btn" onclick="druckeAusgewaehlteEtiketten()" disabled>🖨️ Auswahl drucken (<span id="etiketten-auswahl-count">0</span>)</button>
+            <button class="btn" style="background:#1f5f8b; width:auto;" onclick="druckeAlleEtiketten()">🖨️ Alle drucken</button>
+        </div>
+        <div id="etiketten-liste" class="etiketten-liste"><p style="text-align:center;">Lade Artikel…</p></div>
+    </div>
 </div>
 
 <!-- LOGIN OVERLAY -->
@@ -207,6 +284,58 @@
         <button class="btn" onclick="handleLogin()" style="width:100%; padding:12px; font-size:1.1em;">🔓 Entsperren</button>
         <p id="login-error" style="color:red; display:none; margin-top:15px; font-weight:bold;">Falsches Passwort!</p>
     </div>
+    <div class="login-footer">
+        Trisport Erding e.V. &bull; Lagerverwaltung<br>
+        <p style="margin-top: 15px;">
+            <a href="https://trisport-erding.de/verein/impressum" target="_blank" style="margin-right: 15px;">Impressum</a>
+            <a href="https://trisport-erding.de/verein/datenschutz" target="_blank" style="margin-right: 15px;">Datenschutz</a>
+            <a href="#" onclick="openRechtliches(event, 'technikModal')">Technik-Info</a>
+        </p>
+    </div>
+</div>
+
+<!-- ONBOARDING & HILFE MODAL -->
+<div id="onboardingModal" class="modal">
+    <div class="modal-content" style="max-width: 580px;">
+        <button type="button" class="modal-close-x" onclick="schliesseOnboarding()" title="Schließen">✕</button>
+        <h2 style="margin-top:0; color:#2c3e50; text-align:center;">👋 Kurz erklärt: Lager-Tool</h2>
+
+        <div class="onboarding-step">
+            <div class="onboarding-icon" style="background:#fdecea;">📦</div>
+            <div class="onboarding-text">
+                <h4>Lager-Modus</h4>
+                <p>Hier siehst du den Gesamtbestand aller Artikel. Über die Suche findest du Artikel, Kisten, IDs oder Fächer sofort.</p>
+            </div>
+        </div>
+
+        <div class="onboarding-step">
+            <div class="onboarding-icon" style="background:#e8f8f5;">🧰</div>
+            <div class="onboarding-text">
+                <h4>Kisten scannen &amp; prüfen</h4>
+                <p>Jede Kiste hat einen festen Soll-Inhalt. Nach dem Scannen kannst du entweder die <strong>ganze Kiste entnehmen</strong> oder einzelne Teile mit <strong>+ / −</strong> verwalten.</p>
+            </div>
+        </div>
+
+        <div class="onboarding-step">
+            <div class="onboarding-icon" style="background:#fef5e7;">🔍</div>
+            <div class="onboarding-text">
+                <h4>Wo gehört das hin? / Rückgabe</h4>
+                <p>Hast du lose Gegenstände ohne Aufkleber (z.B. Flaschenöffner)? Klicke auf <strong>„Wo gehört das hin?“</strong>, tippe den Namen ein und du siehst sofort die Zielkiste inklusive 1-Klick-Rückgabe.</p>
+            </div>
+        </div>
+
+        <div class="onboarding-step">
+            <div class="onboarding-icon" style="background:#eef4fb;">📅</div>
+            <div class="onboarding-text">
+                <h4>Event-Packlisten &amp; Einkauf</h4>
+                <p>Stelle Packlisten für Wettkämpfe zusammen. Fehlbestände landen automatisch auf der herunterladbaren <strong>Einkaufsliste (Excel)</strong>.</p>
+            </div>
+        </div>
+
+        <div class="flex-buttons" style="margin-top: 15px;">
+            <button class="btn" style="width:100%; padding:12px; font-size:1.05em;" onclick="schliesseOnboarding()">Alles klar! 🚀</button>
+        </div>
+    </div>
 </div>
 
 <!-- HAUPTCONTAINER -->
@@ -214,10 +343,16 @@
     <h1>
         <span>📦 Lager-Verwaltung</span>
         <span style="display:flex; gap:8px;">
+            <button class="btn" style="background-color: #7f8c8d; font-size: 0.85em; width: auto;" onclick="oeffneOnboarding()" title="Kurzanleitung">❓ Hilfe</button>
             <button class="btn" style="background-color: #27ae60; font-size: 0.85em; width: auto;" onclick="oeffneKistenKameraModal()">📷 Kiste scannen</button>
             <button class="btn" style="background-color: #e74c3c; font-size: 0.85em; width: auto;" onclick="handleLogout()">🔒 Abmelden</button>
         </span>
     </h1>
+
+    <div style="display:flex; gap:8px; justify-content:center; margin-bottom:16px; flex-wrap:wrap;">
+        <button class="btn" style="background:#1f5f8b; font-size:0.85em; padding:6px 12px; width:auto;" onclick="oeffneQrGeneratorFenster()">🏷️ Regal-QR erzeugen</button>
+        <button class="btn" style="background:#d29c09; font-size:0.85em; padding:6px 12px; width:auto;" onclick="window.open('?formular=1', '_blank')">📝 Feedback</button>
+    </div>
 
     <div class="modus-switch">
         <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Lager-Modus</button>
@@ -360,12 +495,10 @@
             </button>
         </div>
 
-        <!-- Schnell-Übersicht mit -1 / +1 Buttons -->
         <div id="kisten-check-schnellansicht" style="max-height: 48vh; overflow-y: auto;">
             <div id="kisten-check-liste"></div>
         </div>
 
-        <!-- Bearbeitungs-Ansicht (nur wenn aktiviert) -->
         <div id="kisten-check-edit-bereich" style="display:none; border-top:1px solid #ddd; padding-top:12px; margin-top:12px;">
             <p style="font-size:0.85em; color:#666;">Artikel zu dieser Kiste als Stamm-Lagerort hinzufügen:</p>
             <div style="display:flex; gap:8px;">
@@ -548,8 +681,19 @@
         <button type="button" class="modal-close-x" onclick="closeModal('packItemModal')">✕</button>
         <h2>Packliste ergänzen</h2>
         <div class="form-group">
-            <label>Artikel aus Lager</label>
+            <label>Art des Eintrags</label>
+            <select id="pack-typ" onchange="togglePackTyp()">
+                <option value="lager">Lager-Artikel</option>
+                <option value="custom">Eigener Posten (nicht im Lager)</option>
+            </select>
+        </div>
+        <div class="form-group" id="div-pack-lager">
+            <label>Lager-Artikel</label>
             <input type="text" id="pack-artikel-input" list="kategorie-artikel-liste" placeholder="Artikel suchen...">
+        </div>
+        <div class="form-group" id="div-pack-custom" style="display:none;">
+            <label>Eigene Bezeichnung</label>
+            <input type="text" id="pack-eigener-name" placeholder="z.B. Transporter mieten">
         </div>
         <div class="form-group"><label>Menge</label><input type="number" id="pack-menge" value="1" min="1"></div>
         <div class="flex-buttons">
@@ -560,12 +704,16 @@
 </div>
 
 <div id="kauflisteModal" class="modal" onclick="if (event.target === this) closeModal('kauflisteModal')">
-    <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-content" style="max-width: 520px;">
         <button type="button" class="modal-close-x" onclick="closeModal('kauflisteModal')">✕</button>
         <h2 style="margin-top: 0; color: #8e44ad;">🛒 Einkaufsliste</h2>
-        <p style="font-weight: bold;">Fehlbestand im Lager:</p>
-        <div style="max-height: 180px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px;">
+        <p style="font-weight: bold; margin-bottom:5px;">Fehlbestand aus Packlisten &amp; Lager:</p>
+        <div style="max-height: 180px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border:1px solid #fadbd8;">
             <ul id="auto-kauf-liste" style="margin: 0; padding-left: 20px; color: #c0392b;"></ul>
+        </div>
+        <p style="font-weight: bold; margin: 12px 0 5px 0;">Sonderposten:</p>
+        <div style="max-height: 120px; overflow-y: auto; background: #eef7ff; padding: 10px; border-radius: 6px; border:1px solid #d6eaf8;">
+            <ul id="eigene-kauf-liste" style="margin: 0; padding-left: 20px; color: #2c3e50;"></ul>
         </div>
         <div class="flex-buttons" style="margin-top: 25px;">
             <button class="btn btn-save" style="background-color: #8e44ad;" onclick="downloadExcel()">📥 Excel Herunterladen</button>
@@ -574,11 +722,26 @@
     </div>
 </div>
 
+<div id="technikModal" class="modal">
+    <div class="modal-content" style="line-height: 1.5; color: #333;">
+        <button type="button" class="modal-close-x" onclick="closeModal('technikModal')">✕</button>
+        <h2 style="color: #e3000f; margin-top: 0;">Technik- &amp; Datenschutz-Infos</h2>
+        <p>Dieses interne Verwaltungstool nutzt spezialisierte Dienste zur Bereitstellung:</p>
+        <p><strong>1. Supabase / PostgreSQL API:</strong> Speicherung von Bestands- und Logindaten.</p>
+        <p><strong>2. GitHub Pages:</strong> Statisches Hosting der Oberfläche.</p>
+        <div class="flex-buttons" style="margin-top: 25px;">
+            <button class="btn btn-cancel" style="width: 100%;" onclick="closeModal('technikModal')">Schließen</button>
+        </div>
+    </div>
+</div>
+
 <datalist id="kategorie-liste"></datalist>
 <datalist id="kategorie-artikel-liste"></datalist>
 
 <div class="app-footer">
-    Trisport Erding e.V. &bull; Lagerverwaltung
+    Trisport Erding e.V. &bull; Lagerverwaltung &bull; 
+    <a href="https://trisport-erding.de/verein/impressum" target="_blank">Impressum</a> &bull; 
+    <a href="https://trisport-erding.de/verein/datenschutz" target="_blank">Datenschutz</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

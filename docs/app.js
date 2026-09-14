@@ -7,11 +7,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5v
 const STORAGE_KEYS = {
     SESSION: 'trilager_local_session_v2',
     ATTEMPTS: 'trilager_login_attempts_v1',
-    LOCK: 'trilager_login_lock_until_v1'
+    LOCK: 'trilager_login_lock_until_v1',
+    ONBOARDING: 'lager_onboarding_v1_gesehen'
 };
 
-const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_LOCK_DURATION_MS = 5 * 60 * 1000;
+const TABLES = {
+    FORMULAR: 'formular_antworten'
+};
+
 const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -21,9 +24,11 @@ let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // App-Datenzustände
 let aktuelleDaten = [], packlisten = [], packlistenPositionen = [], alleArtikelInfos = [], alleLagerorte = [];
 let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
-let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
+let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true;
 let aktiverRegalFilter = '';
-let finderFilterModus = 'fehlend'; // 'fehlend' oder 'alle'
+let finderFilterModus = 'fehlend';
+let etikettenAuswahlIds = new Set();
+let einkaufslisteArray = [];
 
 // Kisten- & Scan-Zustände
 let kistenCheckAktuelleId = '';
@@ -33,7 +38,7 @@ let nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
 
 // =========================================================================
-// 2. HILFSFUNKTIONEN & TOAST
+// 2. ALLGEMEINE HILFSFUNKTIONEN
 // =========================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -78,8 +83,14 @@ function extrahiereRegalName(text) {
     return m ? m[1].trim() : raw;
 }
 
+function formatArtikelId(id) {
+    if (!id) return '–';
+    const n = Number(id);
+    return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id);
+}
+
 // =========================================================================
-// 3. AUTH & SESSION
+// 3. AUTH & ONBOARDING / HILFE
 // =========================================================================
 function setzeAuthToken(token) {
     if (token) dbClient.rest.headers.set('Authorization', `Bearer ${token}`);
@@ -122,7 +133,8 @@ async function handleLogin() {
         $('login-overlay').style.display = 'none';
         speichereLokaleSession({ username: data.username, token: data.token });
         showToast('Erfolgreich angemeldet!');
-        ladeAlles();
+        await ladeAlles();
+        pruefeUndZeigeOnboarding();
     }
 }
 
@@ -132,14 +144,22 @@ function handleLogout() {
     $('login-overlay').style.display = 'flex';
 }
 
+function pruefeUndZeigeOnboarding() {
+    if (!window.localStorage.getItem(STORAGE_KEYS.ONBOARDING)) oeffneOnboarding();
+}
+function oeffneOnboarding() { openModalById('onboardingModal'); }
+function schliesseOnboarding() { closeModal('onboardingModal'); window.localStorage.setItem(STORAGE_KEYS.ONBOARDING, '1'); }
+function openRechtliches(e, mid) { if (e) e.preventDefault(); openModalById(mid); }
+
 // =========================================================================
-// 4. DATEN LADEN (BESTAND, LAGERORTE)
+// 4. DATEN LADEN & FILTER
 // =========================================================================
 async function ladeAlles() {
     await ladeLagerorte();
+    await ladePacklistenDaten();
     await ladeBestand();
     wendeFilterAn();
-    if (aktuellerModus === 'event') await ladeEventDaten();
+    if (aktuellerModus === 'event') zeigePackliste();
     if (aktuellerModus === 'kisten') renderKistenListe();
 }
 
@@ -148,16 +168,22 @@ async function ladeLagerorte() {
     alleLagerorte = data || [];
 
     const selectsNeu = document.querySelectorAll('.new-ort');
-    const selectEdit = $('edit-ort');
     selectsNeu.forEach(sel => populateSelect(sel, alleLagerorte));
-    if (selectEdit) populateSelect(selectEdit, alleLagerorte);
+}
+
+async function ladePacklistenDaten() {
+    const { data: listData } = await dbClient.from('packlisten').select('*').order('name');
+    packlisten = listData || [];
+    populateSelect($('packlisten-auswahl'), packlisten, { defaultOption: '-- Wähle Resort / Packliste --' });
+
+    const { data: posData } = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
+    packlistenPositionen = posData || [];
 }
 
 async function ladeBestand() {
     const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
     alleArtikelInfos = alleArt || [];
 
-    // Bestand mit Soll-Werten laden (alte_menge dient als Referenz/Soll-Bestand)
     let { data } = await dbClient.from('bestand').select(`
         id, menge, alte_menge, created_at, artikel_id, lagerort_id, 
         artikel (id, name, kategorie, einheit, kommentar, wichtig), 
@@ -166,7 +192,6 @@ async function ladeBestand() {
 
     aktuelleDaten = (data || []).map(z => ({
         ...z,
-        // Soll-Menge ermitteln: Falls alte_menge existiert und positiv ist, sonst menge
         soll_menge: (z.alte_menge !== null && Number(z.alte_menge) >= 0) ? Number(z.alte_menge) : (Number(z.menge) >= 0 ? Number(z.menge) : 0)
     }));
 
@@ -195,7 +220,7 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. DAS VEREINHEITLICHTE KISTEN-SYSTEM (ENTNEHMEN & ZURÜCKBUCHEN)
+// 5. DAS VEREINHEITLICHTE KISTEN-SYSTEM (INHALT, ENTNAMENTE & RÜCKGABE)
 // =========================================================================
 
 function gibKistenBestand(lid) {
@@ -203,7 +228,6 @@ function gibKistenBestand(lid) {
         .sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de'));
 }
 
-// Öffnet das Kisten-Modal (wird bei Scan oder Klick aufgerufen)
 function oeffneKistenCheck(lid) {
     const ort = alleLagerorte.find(o => String(o.id) === String(lid));
     if (!ort) return;
@@ -232,7 +256,7 @@ function renderKistenInhaltListe(lid) {
         const ist = Number(z.menge);
         const soll = Number(z.soll_menge);
         const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
-        const istSonder = ist < 0; // -1 (unendlich) oder -2/-3
+        const istSonder = ist < 0;
 
         const card = document.createElement('div');
         card.className = `kiste-item-card ${fehlt > 0 ? 'fehlend' : ''}`;
@@ -267,7 +291,7 @@ function renderKistenInhaltListe(lid) {
     });
 }
 
-// 1. Ganze Kiste entnehmen -> Setzt alle zählbaren Artikel auf 0 (ausgebucht)
+// 1. Ganze Kiste entnehmen (alle zählbaren Artikel auf 0)
 async function ganzeKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
     if (!confirm('Soll die gesamte Kiste als entnommen ausgebucht werden (Bestand aller zählbaren Artikel wird 0)?')) return;
@@ -282,12 +306,12 @@ async function ganzeKisteAusbuchen() {
     });
 
     await Promise.all(updates);
-    showToast('📤 Kiste als entnommen ausgebucht!');
+    showToast('📤 Ganze Kiste als entnommen ausgebucht!');
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// 2. Ganze Kiste zurückbuchen -> Setzt alle Artikel wieder auf ihren Soll-Wert
+// 2. Ganze Kiste zurückbuchen (alle Artikel auf Soll-Wert)
 async function ganzeKisteZurueckbuchen() {
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
@@ -307,12 +331,12 @@ async function ganzeKisteZurueckbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// 3. Einzelnen Artikel in Kiste anpassen (+1 / -1)
+// 3. Einzelnen Artikel in Kiste schrittweise anpassen (+1 / -1)
 async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
     const aktuell = Number(eintrag.menge);
-    if (aktuell < 0) return; // Unbegrenzt nicht ändern
+    if (aktuell < 0) return;
 
     const neu = Math.max(0, aktuell + delta);
     const soll = eintrag.soll_menge || eintrag.alte_menge || aktuell;
@@ -343,9 +367,8 @@ async function kistenCheckArtikelHinzufuegen() {
     const art = alleArtikelInfos.find(a => a.name.toLowerCase() === val.toLowerCase());
     if (!art) return showToast(`Artikel "${val}" nicht gefunden.`, 'error');
 
-    // Prüfen, ob Artikel bereits an diesem Ort liegt
     const existiert = aktuelleDaten.some(b => b.artikel_id === art.id && String(b.lagerort_id) === String(kistenCheckAktuelleId));
-    if (existiert) return showToast('Dieser Artikel liegt bereits in dieser Kiste.', 'warning');
+    if (existiert) return showToast('Dieser Artikel ist bereits dieser Kiste zugeordnet.', 'warning');
 
     const startMenge = prompt(`Soll-Menge für "${art.name}" in dieser Kiste:`, '1');
     if (startMenge === null) return;
@@ -368,7 +391,7 @@ async function kistenCheckArtikelHinzufuegen() {
 async function entferneArtikelAusKiste(bestandId) {
     if (!confirm('Diesen Artikel wirklich aus dieser Kiste entfernen?')) return;
     await dbClient.from('bestand').delete().eq('id', bestandId);
-    showToast('Artikel aus Kiste entfernt.');
+    showToast('Artikel entfernt.');
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
@@ -379,7 +402,7 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. DER ARTIKEL-FINDER: „WO GEHÖRT DAS HIN? / RÜCKGABE OHNE CODE“
+// 6. ARTIKEL-FINDER: „WO GEHÖRT DAS HIN? / RÜCKGABE OHNE CODE“
 // =========================================================================
 
 function oeffneWoGehoertDasHinModal(vorbelegterSuchbegriff = '') {
@@ -477,7 +500,7 @@ async function buchtArtikelZurueckInKiste(bestandId) {
     }).eq('id', bestandId);
 
     if (navigator.vibrate) navigator.vibrate(120);
-    showToast(`✅ 1x "${eintrag.artikel?.name}" in "${eintrag.lagerorte?.name}" zurückgebucht!`);
+    showToast(`✅ 1x "${eintrag.artikel?.name}" in "${eintrag.lagerorte?.name}" gebucht!`);
     await ladeAlles();
     aktualisiereArtikelFinderListe($('artikel-finder-input').value);
 }
@@ -530,7 +553,6 @@ function oeffneKistenKameraModal() {
 }
 function schliesseKistenKameraModal() { stoppeKameraScanner('kistenKameraModal'); }
 
-// Universeller Scan-Decoder (Kiste oder Artikel)
 async function verarbeiteUniversalScan(rawCode) {
     if (scanSperre.kisten) return;
     scanSperre.kisten = true;
@@ -538,7 +560,7 @@ async function verarbeiteUniversalScan(rawCode) {
 
     const raw = String(rawCode || '').trim();
 
-    // 1. Prüfen, ob es ein Kistencheck / Lagerort ist
+    // Kisten-Scan prüfen
     let ortCode = null;
     const mKisteUrl = /kistencheck=([^&\s]+)/i.exec(raw);
     const mKistePref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
@@ -554,7 +576,7 @@ async function verarbeiteUniversalScan(rawCode) {
         return;
     }
 
-    // 2. Prüfen, ob es ein Einzelartikel-QR ist (?rueckgabe=123 oder artikel:123)
+    // Artikel-Scan prüfen
     let artikelId = null;
     const mArtUrl = /rueckgabe=([^&\s]+)/i.exec(raw);
     const mArtPref = /^artikel:(.+)$/i.exec(raw);
@@ -565,10 +587,8 @@ async function verarbeiteUniversalScan(rawCode) {
         schliesseKistenKameraModal();
         const bestandsEintraege = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
         if (bestandsEintraege.length === 1) {
-            // Eindeutiger Ort -> direkt einbuchen!
             await buchtArtikelZurueckInKiste(bestandsEintraege[0].id);
         } else if (bestandsEintraege.length > 1) {
-            // Mehrere Orte -> Finder öffnen
             const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
             oeffneWoGehoertDasHinModal(art?.name || '');
         } else {
@@ -580,7 +600,6 @@ async function verarbeiteUniversalScan(rawCode) {
     showToast(`Code "${raw}" wurde nicht erkannt.`, 'error');
 }
 
-// NFC-Engine
 async function starteKistenNfc() {
     if (aktiverNfcModus === 'kisten') {
         deaktiviereNfc();
@@ -588,7 +607,7 @@ async function starteKistenNfc() {
     }
 
     if (!('NDEFReader' in window) && typeof window.nfc === 'undefined') {
-        return showToast('Web-NFC wird auf diesem Gerät/Browser nicht unterstützt.', 'error');
+        return showToast('Web-NFC wird von diesem Browser/Gerät nicht unterstützt.', 'error');
     }
 
     aktiverNfcModus = 'kisten';
@@ -638,7 +657,6 @@ function aktualisiereNfcUI(aktiv) {
     });
 }
 
-// NFC Schreiben für Lagerorte / Kisten
 async function schreibeNfcTagFuerOrt() {
     const oId = $('manage-ort-select').value;
     const ort = alleLagerorte.find(o => String(o.id) === String(oId));
@@ -655,7 +673,7 @@ async function schreibeNfcTagFuerOrt() {
 
     const url = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
 
-    if (!('NDEFReader' in window)) return showToast('NFC schreiben wird von diesem Browser nicht unterstützt.', 'error');
+    if (!('NDEFReader' in window)) return showToast('NFC-Schreiben im Browser nicht unterstützt.', 'error');
     try {
         const writer = new NDEFReader();
         showToast('📶 Leeren NFC-Tag an das Handy halten…');
@@ -668,7 +686,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE & FILTER)
+// 8. LAGER-MODUS (TABELLE & TOOLTIPS)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -696,9 +714,7 @@ function wendeFilterAn() {
     tabelleAktualisieren(gefiltert);
 }
 
-function ortComboChanged() {
-    wendeFilterAn();
-}
+function ortComboChanged() { wendeFilterAn(); }
 
 function toggleSortierung() {
     sortAscending = !sortAscending;
@@ -721,6 +737,17 @@ function tabelleAktualisieren(daten) {
     const tbody = $('lager-tabelle');
     if (!tbody) return;
     tbody.innerHTML = '';
+
+    // Reservierungen aus Packlisten ermitteln
+    const resMap = {};
+    packlistenPositionen.forEach(p => {
+        if (!p.artikel_id) return;
+        if (!resMap[p.artikel_id]) resMap[p.artikel_id] = { gesamt: 0, listen: {} };
+        resMap[p.artikel_id].gesamt += Number(p.menge);
+        const pl = packlisten.find(l => String(l.id) === String(p.packliste_id));
+        const plName = pl ? pl.name : 'Unbekannt';
+        resMap[p.artikel_id].listen[plName] = (resMap[p.artikel_id].listen[plName] || 0) + Number(p.menge);
+    });
 
     const gruppen = {};
     daten.forEach(z => {
@@ -765,6 +792,13 @@ function tabelleAktualisieren(daten) {
                 if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
             };
 
+            let resHtml = '';
+            const res = resMap[artId];
+            if (res && res.gesamt > 0) {
+                let hoverText = '<strong>Reserviert für:</strong><br>' + Object.entries(res.listen).map(([l, m]) => `• ${m}x in <i>${escapeHtml(l)}</i><br>`).join('');
+                resHtml = `<div class="bestand-reserviert-info" data-hover-type="res" data-hover-content="${hoverText}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">📦 Reserviert: ${res.gesamt}</div>`;
+            }
+
             let bestandRowsHtml = grp.bestaende.map(b => {
                 const ist = Number(b.menge);
                 const soll = Number(b.soll_menge);
@@ -779,10 +813,15 @@ function tabelleAktualisieren(daten) {
                     </div>`;
             }).join('');
 
+            let latestDate = null;
+            grp.bestaende.forEach(b => { if (b.created_at && (!latestDate || new Date(b.created_at) > latestDate)) latestDate = new Date(b.created_at); });
+            const dateStr = latestDate ? latestDate.toLocaleDateString('de-DE') + ' ' + latestDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : 'Unbekannt';
+
             tr.innerHTML = `
-                <td style="padding-left:25px;">
+                <td style="padding-left:25px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
                     <strong>${escapeHtml(grp.artikel.name)}</strong>
                     ${grp.artikel.kommentar ? `<div style="font-size:0.8em; color:#3498db;">💬 ${escapeHtml(grp.artikel.kommentar)}</div>` : ''}
+                    ${resHtml ? `<div style="margin-top:3px;">${resHtml}</div>` : ''}
                 </td>
                 <td colspan="2">${bestandRowsHtml}</td>`;
             tbody.appendChild(tr);
@@ -797,6 +836,14 @@ async function speichereMengeDirekt(bestandId, val) {
     await ladeAlles();
 }
 
+// Tooltip-Events
+window.handleMouseEnter = (e) => {
+    const t = e.currentTarget;
+    if (t.dataset.hoverType === 'date') { $('hover-date-text').innerHTML = t.dataset.hoverContent; $('hover-date-info').style.display = 'block'; }
+    if (t.dataset.hoverType === 'res') { $('hover-res-text').innerHTML = t.dataset.hoverContent; $('hover-res-info').style.display = 'block'; }
+};
+window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
+
 // =========================================================================
 // 9. KISTEN-ANSICHT & ORTE VERWALTEN
 // =========================================================================
@@ -809,7 +856,7 @@ function renderKistenListe() {
     const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
 
     if (!liste.length) {
-        ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine Orte gefunden.</td></tr>';
+        ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine Kisten gefunden.</td></tr>';
         return;
     }
 
@@ -932,7 +979,7 @@ async function openEditModal(artikelId) {
                 ${alleLagerorte.map(o => `<option value="${o.id}" ${o.id === b.lagerort_id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
             </select>
             <input type="number" class="edit-menge-val" value="${b.menge}" placeholder="Ist" style="width:70px; padding:8px; text-align:center; border:1px solid #ccc; border-radius:4px;">
-            <input type="number" class="edit-soll-val" value="${b.soll_menge}" placeholder="Soll" title="Soll-Menge (Regulärer Kistenbestand)" style="width:70px; padding:8px; text-align:center; border:1px solid #27ae60; border-radius:4px;">
+            <input type="number" class="edit-soll-val" value="${b.soll_menge}" placeholder="Soll" title="Soll-Menge" style="width:70px; padding:8px; text-align:center; border:1px solid #27ae60; border-radius:4px;">
             <button type="button" class="btn" style="background:#e74c3c; width:auto; padding:6px 10px;" onclick="this.parentElement.remove()">🗑️</button>
         `;
         wrapper.appendChild(div);
@@ -980,7 +1027,7 @@ async function speichereBearbeitung() {
 }
 
 async function artikelLoeschen() {
-    if (!confirm('Diesen Artikel wirklich unwiderruflich löschen?')) return;
+    if (!confirm('Diesen Artikel wirklich löschen?')) return;
     const aid = $('edit-artikel-id').value;
     await dbClient.from('bestand').delete().eq('artikel_id', aid);
     await dbClient.from('artikel').delete().eq('id', aid);
@@ -989,8 +1036,25 @@ async function artikelLoeschen() {
     await ladeAlles();
 }
 
+function openKommentarModal(artikelId, event) {
+    if (event) event.stopPropagation();
+    const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
+    if (!art) return;
+    $('kommentar-artikel-id').value = artikelId;
+    $('kommentar-artikel-name').innerText = art.name;
+    $('kommentar-text').value = art.kommentar || '';
+    openModalById('kommentarModal');
+}
+async function speichereKommentar() {
+    const aid = $('kommentar-artikel-id').value, text = $('kommentar-text').value;
+    await dbClient.from('artikel').update({ kommentar: text }).eq('id', aid);
+    closeModal('kommentarModal');
+    showToast('Notiz gespeichert!');
+    ladeAlles();
+}
+
 // =========================================================================
-// 11. EVENT-MODUS & INITIALISIERUNG
+// 11. EVENT-MODUS & PACKLISTEN & EXCEL
 // =========================================================================
 function wechsleModus(modus) {
     aktuellerModus = modus;
@@ -1000,16 +1064,7 @@ function wechsleModus(modus) {
         if (t) t.className = m === modus ? 'btn btn-modus active' : 'btn btn-modus';
     });
     if (modus === 'kisten') renderKistenListe();
-    if (modus === 'event') ladeEventDaten();
-}
-
-async function ladeEventDaten() {
-    const { data: lists } = await dbClient.from('packlisten').select('*').order('name');
-    packlisten = lists || [];
-    populateSelect($('packlisten-auswahl'), packlisten, { defaultOption: '-- Wähle Resort / Packliste --' });
-    const { data: pos } = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
-    packlistenPositionen = pos || [];
-    zeigePackliste();
+    if (modus === 'event') zeigePackliste();
 }
 
 function zeigePackliste() {
@@ -1022,45 +1077,334 @@ function zeigePackliste() {
 
     const positionen = packlistenPositionen.filter(p => String(p.packliste_id) === String(currentId));
     if (!positionen.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Positionen.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Positionen in dieser Packliste.</td></tr>';
         return;
     }
 
     positionen.forEach(pos => {
-        const bestandArtikel = aktuelleDaten.filter(b => b.artikel_id === pos.artikel_id);
-        const verfuegbar = bestandArtikel.reduce((sum, b) => sum + (Number(b.menge) >= 0 ? Number(b.menge) : 0), 0);
-        const ok = verfuegbar >= pos.menge;
+        let name = pos.artikel?.name || pos.eigener_name || 'Unbekannt';
+        let verfuegbar = '-';
+        let status = '<span class="event-ok">✅ OK</span>';
+
+        if (pos.artikel_id) {
+            const bestandArtikel = aktuelleDaten.filter(b => b.artikel_id === pos.artikel_id);
+            verfuegbar = bestandArtikel.reduce((sum, b) => sum + (Number(b.menge) >= 0 ? Number(b.menge) : 0), 0);
+            if (verfuegbar < pos.menge) status = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
+        }
+
+        let actionCell = isEventEditMode ? `<button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:8px;" onclick="loeschePackPosition(${pos.id})">🗑️</button>` : '';
 
         tbody.innerHTML += `
             <tr>
-                <td><strong>${escapeHtml(pos.artikel?.name || 'Unbekannt')}</strong></td>
+                <td><strong>${escapeHtml(name)}</strong></td>
                 <td>${pos.menge}</td>
                 <td>${verfuegbar}</td>
-                <td><span class="${ok ? 'event-ok' : 'event-warning'}">${ok ? '✅ OK' : '❌ Zu wenig'}</span></td>
+                <td>${status} ${actionCell}</td>
             </tr>`;
     });
 }
 
-// Tool-Links
-function oeffneEtikettenTool() { window.open('?etiketten=1', '_blank'); }
+function toggleEventEditMode() {
+    isEventEditMode = !isEventEditMode;
+    $('btn-event-edit').innerText = isEventEditMode ? '✏️ Bearbeiten: AN' : '✏️ Bearbeiten: AUS';
+    $('btn-event-edit').style.backgroundColor = isEventEditMode ? '#e67e22' : '#f39c12';
+    document.querySelectorAll('.event-edit-only').forEach(el => el.style.display = isEventEditMode ? '' : 'none');
+    zeigePackliste();
+}
 
-// Init beim Laden der Seite
+function openPackItemModal() {
+    if (!$('packlisten-auswahl')?.value) return showToast('Bitte wähle zuerst eine Packliste aus.', 'warning');
+    $('pack-artikel-input').value = '';
+    $('pack-eigener-name').value = '';
+    $('pack-menge').value = '1';
+    openModalById('packItemModal');
+}
+
+function togglePackTyp() {
+    const t = $('pack-typ').value;
+    $('div-pack-lager').style.display = t === 'lager' ? 'block' : 'none';
+    $('div-pack-custom').style.display = t === 'custom' ? 'block' : 'none';
+}
+
+async function packPositionSpeichern() {
+    const plId = $('packlisten-auswahl').value;
+    const typ = $('pack-typ').value;
+    const menge = Math.max(1, parseInt($('pack-menge').value, 10) || 1);
+
+    const payload = { packliste_id: Number(plId), menge };
+
+    if (typ === 'lager') {
+        const artName = $('pack-artikel-input').value.trim();
+        const art = alleArtikelInfos.find(a => a.name.toLowerCase() === artName.toLowerCase());
+        if (!art) return showToast('Artikel nicht im Lager gefunden.', 'warning');
+        payload.artikel_id = art.id;
+    } else {
+        const cName = $('pack-eigener-name').value.trim();
+        if (!cName) return showToast('Bitte Namen eingeben.', 'warning');
+        payload.eigener_name = cName;
+    }
+
+    await dbClient.from('packlisten_positionen').insert([payload]);
+    closeModal('packItemModal');
+    showToast('Position hinzugefügt!');
+    await ladePacklistenDaten();
+    zeigePackliste();
+}
+
+async function loeschePackPosition(posId) {
+    if (!confirm('Position aus Packliste löschen?')) return;
+    await dbClient.from('packlisten_positionen').delete().eq('id', posId);
+    await ladePacklistenDaten();
+    zeigePackliste();
+}
+
+async function neuePacklisteAnlegen() {
+    const n = prompt('Name der neuen Packliste:');
+    if (!n?.trim()) return;
+    await dbClient.from('packlisten').insert([{ name: n.trim() }]);
+    await ladePacklistenDaten();
+}
+async function umbenennePackliste() {
+    const id = $('packlisten-auswahl').value;
+    const cur = packlisten.find(p => String(p.id) === String(id));
+    const n = prompt('Neuer Name:', cur?.name);
+    if (n?.trim() && n !== cur.name) {
+        await dbClient.from('packlisten').update({ name: n.trim() }).eq('id', id);
+        await ladePacklistenDaten();
+    }
+}
+async function loeschePackliste() {
+    const id = $('packlisten-auswahl').value;
+    if (!confirm('Packliste wirklich löschen?')) return;
+    await dbClient.from('packlisten').delete().eq('id', id);
+    $('packlisten-auswahl').value = '';
+    await ladePacklistenDaten();
+    zeigePackliste();
+}
+
+function druckePackliste() {
+    const listId = $('packlisten-auswahl').value;
+    if (!listId) return;
+    const pl = packlisten.find(p => String(p.id) === String(listId));
+    const pos = packlistenPositionen.filter(p => String(p.packliste_id) === String(listId));
+
+    const win = window.open('', '_blank');
+    const rowsHtml = pos.map(p => {
+        const art = p.artikel?.name || p.eigener_name;
+        const ort = p.artikel_id ? (aktuelleDaten.filter(b => b.artikel_id === p.artikel_id).map(b => b.lagerorte?.name).join(', ') || '-') : 'Sonderposten';
+        return `<tr><td style="width:30px; text-align:center;"><input type="checkbox"></td><td><strong>${escapeHtml(art)}</strong></td><td>${p.menge}</td><td>${escapeHtml(ort)}</td></tr>`;
+    }).join('');
+
+    win.document.write(`
+        <html><head><title>Packliste: ${escapeHtml(pl.name)}</title>
+        <style>body{font-family:sans-serif; padding:20px;} table{width:100%; border-collapse:collapse; margin-top:15px;} th,td{border:1px solid #ccc; padding:8px; text-align:left;} th{background:#eee;} @media print{.no-p{display:none;}}</style>
+        </head><body>
+            <button class="no-p" onclick="window.print()" style="padding:10px; margin-bottom:15px; cursor:pointer;">🖨️ Drucken</button>
+            <h1>📦 Packliste: ${escapeHtml(pl.name)}</h1>
+            <table><thead><tr><th>OK</th><th>Gegenstand</th><th>Menge</th><th>Lagerort</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+        </body></html>`);
+    win.document.close();
+}
+
+function startEinkaufsliste() {
+    const autoListe = [];
+    const sonderListe = [];
+    einkaufslisteArray = [];
+
+    // Fehlbestand ermitteln
+    const bestandMap = {};
+    aktuelleDaten.forEach(b => {
+        const m = Number(b.menge);
+        if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + m;
+    });
+
+    const bedarfMap = {};
+    packlistenPositionen.forEach(p => {
+        if (p.artikel_id) bedarfMap[p.artikel_id] = (bedarfMap[p.artikel_id] || 0) + Number(p.menge);
+        else if (p.eigener_name) sonderListe.push({ artikel: p.eigener_name, menge: p.menge, grund: 'Packliste Sonderposten' });
+    });
+
+    alleArtikelInfos.forEach(art => {
+        const bedarf = bedarfMap[art.id] || 0;
+        const ist = bestandMap[art.id] || 0;
+        if (bedarf > ist) autoListe.push({ artikel: art.name, menge: bedarf - ist, grund: 'Fehlt für Packliste' });
+    });
+
+    einkaufslisteArray = [...autoListe, ...sonderListe];
+
+    $('auto-kauf-liste').innerHTML = autoListe.length ? autoListe.map(i => `<li>${i.menge}x ${escapeHtml(i.artikel)}</li>`).join('') : '<li>Keine Fehlmengen.</li>';
+    $('eigene-kauf-liste').innerHTML = sonderListe.length ? sonderListe.map(i => `<li>${i.menge}x ${escapeHtml(i.artikel)}</li>`).join('') : '<li>Keine Sonderposten.</li>';
+    openModalById('kauflisteModal');
+}
+
+async function downloadExcel() {
+    if (!einkaufslisteArray.length) return showToast('Die Liste ist leer.', 'warning');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Einkaufsliste');
+
+    ws.addRow(['EINKAUFSLISTE - TRISPORT ERDING']);
+    ws.addRow(['Erstellt am: ' + new Date().toLocaleString('de-DE')]);
+    ws.addRow([]);
+    ws.addRow(['ARTIKEL / GEGENSTAND', 'MENGE', 'HINWEIS']);
+
+    einkaufslisteArray.forEach(i => ws.addRow([i.artikel, i.menge, i.grund]));
+    ws.getColumn(1).width = 40; ws.getColumn(2).width = 12; ws.getColumn(3).width = 30;
+
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = `Einkaufsliste_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.click();
+    closeModal('kauflisteModal');
+}
+
+// =========================================================================
+// 12. ETIKETTEN- & QR-TOOLS, FEEDBACK
+// =========================================================================
+
+function oeffneEtikettenTool() { window.open('?etiketten=1', '_blank'); }
+function oeffneQrGeneratorFenster() { window.open('?qrgen=1', '_blank'); }
+
+function renderArtikelEtikettenListe() {
+    const ziel = $('etiketten-liste');
+    if (!ziel) return;
+    const filter = ($('etiketten-suche')?.value || '').toLowerCase().trim();
+    const liste = alleArtikelInfos.filter(a => !filter || a.name.toLowerCase().includes(filter));
+
+    ziel.innerHTML = liste.map(art => {
+        const chk = etikettenAuswahlIds.has(String(art.id));
+        return `
+            <div class="etikett-zeile ${chk ? 'ist-ausgewaehlt' : ''}">
+                <input type="checkbox" ${chk ? 'checked' : ''} onchange="toggleEtikettAuswahl('${art.id}', this.checked)">
+                <div class="etikett-qr" id="etikett-qr-${art.id}"></div>
+                <div style="flex:1;"><strong>${escapeHtml(art.name)}</strong><br><small>${escapeHtml(art.kategorie || '')} &bull; ${formatArtikelId(art.id)}</small></div>
+            </div>`;
+    }).join('') || '<p style="text-align:center;">Keine Artikel.</p>';
+
+    liste.forEach(art => {
+        const c = $(`etikett-qr-${art.id}`);
+        if (c) new QRCode(c, { text: `https://trilager.pius-s.de?rueckgabe=${art.id}`, width: 90, height: 90 });
+    });
+}
+
+function toggleEtikettAuswahl(id, chk) {
+    if (chk) etikettenAuswahlIds.add(String(id)); else etikettenAuswahlIds.delete(String(id));
+    $('etiketten-auswahl-count').textContent = etikettenAuswahlIds.size;
+    $('etiketten-auswahl-drucken-btn').disabled = !etikettenAuswahlIds.size;
+}
+function toggleAlleEtikettenAuswahl(chk) {
+    alleArtikelInfos.forEach(a => toggleEtikettAuswahl(a.id, chk));
+    renderArtikelEtikettenListe();
+}
+
+function druckeAusgewaehlteEtiketten() { druckeEtiketten(alleArtikelInfos.filter(a => etikettenAuswahlIds.has(String(a.id)))); }
+function druckeAlleEtiketten() { druckeEtiketten(alleArtikelInfos); }
+
+function druckeEtiketten(liste) {
+    const win = window.open('', '_blank');
+    const items = liste.map(a => `
+        <div style="width:42mm; display:flex; flex-direction:column; align-items:center; padding:3mm; border:1px dashed #bbb; page-break-inside:avoid; text-align:center;">
+            <div class="p-qr" data-link="https://trilager.pius-s.de?rueckgabe=${a.id}"></div>
+            <div style="font-size:11px; font-weight:bold; margin-top:2mm;">${escapeHtml(a.name)}</div>
+            <div style="font-size:9px; color:#666;">${formatArtikelId(a.id)}</div>
+        </div>`).join('');
+
+    win.document.write(`
+        <html><head><title>Etiketten drucken</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+        <style>body{margin:0; padding:10mm; display:grid; grid-template-columns:repeat(4, 1fr); gap:5mm; font-family:sans-serif;} @media print{.no-p{display:none;}}</style>
+        </head><body>
+            <button class="no-p" onclick="window.print()" style="position:fixed; top:10px; right:10px; padding:10px;">🖨️ Drucken</button>
+            ${items}
+            <script>window.onload=function(){document.querySelectorAll('.p-qr').forEach(el=>new QRCode(el,{text:el.dataset.link,width:180,height:180}));};<\/script>
+        </body></html>`);
+    win.document.close();
+}
+
+function aktualisiereRegalQrVorschau() {
+    const val = $('regal-qr-input')?.value.trim();
+    const prev = $('regal-qr-preview'), link = $('regal-qr-link');
+    if (!val) { if (prev) prev.innerHTML = ''; if (link) link.innerText = ''; return; }
+    const url = `https://trilager.pius-s.de?regal=${encodeURIComponent(extrahiereRegalName(val))}`;
+    prev.innerHTML = '';
+    new QRCode(prev, { text: url, width: 220, height: 220 });
+    link.href = url; link.innerText = url;
+}
+function downloadRegalQrDatei(fmt = 'png') {
+    const c = $('regal-qr-preview')?.querySelector('canvas');
+    if (!c) return;
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/png');
+    a.download = `Regal_QR_${extrahiereRegalName($('regal-qr-input').value)}.${fmt}`;
+    a.click();
+}
+
+async function formularAntwortSpeichern() {
+    const name = $('formular-name')?.value.trim() || 'Anonym';
+    const frage1 = $('formular-frage1')?.value.trim() || '';
+    const frage2 = $('formular-frage2')?.value.trim() || '';
+    if (!frage1 && !frage2) return showToast('Bitte mindestens eine Frage beantworten.', 'warning');
+    await dbClient.from(TABLES.FORMULAR).insert([{ name, frage1, frage2 }]);
+    showToast('Danke für dein Feedback!');
+    $('formular-frage1').value = ''; $('formular-frage2').value = '';
+}
+async function formularAntwortenLaden() {
+    const ziel = $('formular-antworten');
+    const { data } = await dbClient.from(TABLES.FORMULAR).select('*').order('created_at', { ascending: false });
+    if (!ziel) return;
+    ziel.style.display = 'block';
+    ziel.innerHTML = (data || []).map(e => `
+        <div class="survey-answer-item">
+            <strong>${escapeHtml(e.name)}</strong> &bull; <small>${new Date(e.created_at).toLocaleDateString('de-DE')}</small>
+            <p><strong>Bedarf:</strong> ${escapeHtml(e.frage1)}</p>
+            <p><strong>Materialien:</strong> ${escapeHtml(e.frage2)}</p>
+        </div>`).join('') || '<p>Noch keine Antworten vorhanden.</p>';
+}
+
+function zurueckZurHauptseite() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    window.location.href = url.toString();
+}
+
+// =========================================================================
+// 13. APP STARTUP / DOMCONTENTLOADED
+// =========================================================================
 document.addEventListener('DOMContentLoaded', async () => {
-    const params = new URLSearchParams(window.location.search);
-    const kistenCode = params.get('kistencheck');
-    const rueckgabeId = params.get('rueckgabe');
+    const urlParams = new URLSearchParams(window.location.search);
+
+    if (urlParams.get('qrgen') === '1') {
+        $('qrgen-ansicht').style.display = 'block';
+        $('login-overlay').style.display = 'none';
+        document.querySelector('.container').style.display = 'none';
+        return;
+    }
+    if (urlParams.get('formular') === '1') {
+        $('formular-ansicht').style.display = 'block';
+        $('login-overlay').style.display = 'none';
+        document.querySelector('.container').style.display = 'none';
+        return;
+    }
+    if (urlParams.get('etiketten') === '1') {
+        $('etiketten-ansicht').style.display = 'block';
+        $('login-overlay').style.display = 'none';
+        document.querySelector('.container').style.display = 'none';
+        const s = holeLokaleSession();
+        if (s) { setzeAuthToken(s.token); await ladeBestand(); renderArtikelEtikettenListe(); }
+        return;
+    }
 
     const session = holeLokaleSession();
     if (session) {
         setzeAuthToken(session.token);
         $('login-overlay').style.display = 'none';
         await ladeAlles();
+        pruefeUndZeigeOnboarding();
 
-        if (kistenCode) {
-            verarbeiteUniversalScan('kistencheck=' + kistenCode);
-        } else if (rueckgabeId) {
-            verarbeiteUniversalScan('rueckgabe=' + rueckgabeId);
-        }
+        const kistenCode = urlParams.get('kistencheck');
+        const rueckgabeId = urlParams.get('rueckgabe');
+        if (kistenCode) verarbeiteUniversalScan('kistencheck=' + kistenCode);
+        else if (rueckgabeId) verarbeiteUniversalScan('rueckgabe=' + rueckgabeId);
     } else {
         $('login-overlay').style.display = 'flex';
     }
