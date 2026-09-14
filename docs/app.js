@@ -15,6 +15,9 @@ const TABLES = {
     FORMULAR: 'formular_antworten'
 };
 
+// Konstanten für das Mengensystem
+const BESTAND_STRICH_AUSREICHEND = -2;
+const BESTAND_STRICH_NACHKAUF = -3;
 const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -38,7 +41,7 @@ let nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
 
 // =========================================================================
-// 2. ALLGEMEINE HILFSFUNKTIONEN
+// 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN (DAS ORIGINAL-SYSTEM)
 // =========================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -77,6 +80,61 @@ function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', d
     }
 }
 
+// Sicherer Mini-Parser für Rechenausdrücke (z.B. "3+2" oder "(4-1)*2")
+function berechneMengenAusdruck(ausdruck) {
+    let pos = 0;
+    const err = () => { throw new Error('Ungültiger Ausdruck'); };
+    const parseZahl = () => {
+        let start = pos;
+        while (pos < ausdruck.length && /[0-9.]/.test(ausdruck[pos])) pos++;
+        if (pos === start) err();
+        const val = parseFloat(ausdruck.slice(start, pos));
+        if (Number.isNaN(val)) err();
+        return val;
+    };
+    const parseFactor = () => {
+        if (ausdruck[pos] === '(') {
+            pos++; const val = parseExpr();
+            if (ausdruck[pos] !== ')') err();
+            pos++; return val;
+        }
+        if (ausdruck[pos] === '-') { pos++; return -parseFactor(); }
+        if (ausdruck[pos] === '+') { pos++; return parseFactor(); }
+        return parseZahl();
+    };
+    const parseTerm = () => {
+        let val = parseFactor();
+        while (ausdruck[pos] === '*' || ausdruck[pos] === '/') {
+            const op = ausdruck[pos++];
+            const rhs = parseFactor();
+            val = op === '*' ? val * rhs : val / rhs;
+        }
+        return val;
+    };
+    const parseExpr = () => {
+        let val = parseTerm();
+        while (ausdruck[pos] === '+' || ausdruck[pos] === '-') {
+            const op = ausdruck[pos++];
+            const rhs = parseTerm();
+            val = op === '+' ? val + rhs : val - rhs;
+        }
+        return val;
+    };
+    const res = parseExpr();
+    if (pos !== ausdruck.length) err();
+    return res;
+}
+
+function werteMengeAus(eingabe) {
+    if (eingabe === undefined || eingabe === null) return 0;
+    const clean = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
+    if (!clean) return 0;
+    try {
+        const res = berechneMengenAusdruck(clean);
+        return Number.isFinite(res) ? Math.round(res) : 0;
+    } catch { return 0; }
+}
+
 function extrahiereRegalName(text) {
     const raw = String(text || '').trim();
     const m = raw.match(/\(([^)]+)\)\s*$/);
@@ -87,6 +145,80 @@ function formatArtikelId(id) {
     if (!id) return '–';
     const n = Number(id);
     return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id);
+}
+
+// Steuerung von Mengen-Feldern und Buttons (∞ und -)
+function aktualisiereMengeEingabeFarbe(feld) {
+    if (!feld) return;
+    const w = String(feld.value ?? '').trim();
+    feld.classList.remove('bestand-menge-ok', 'bestand-menge-low');
+    if (!w || w === '-' || w === '∞') return;
+    const m = werteMengeAus(w);
+    if (Number.isFinite(m)) feld.classList.add(m > 0 ? 'bestand-menge-ok' : 'bestand-menge-low');
+}
+
+function setzeBestandStatus(row, status = 'zahl', nachkauf = false) {
+    if (!row) return;
+    const input = row.querySelector('.new-menge, .edit-menge-input');
+    const infBtn = row.querySelector('.bestand-btn-inf');
+    const minusBtn = row.querySelector('.bestand-btn-minus');
+    const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
+    const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
+    const isStrich = status === 'strich-ok' || status === 'strich-warn';
+
+    row.dataset.stockMode = isStrich ? (status === 'strich-warn' ? 'strich-warn' : 'strich-ok') : status;
+    row.dataset.nachkauf = isStrich && nachkauf ? 'true' : 'false';
+
+    if (nachkaufCheckbox) nachkaufCheckbox.checked = Boolean(isStrich && nachkauf);
+    if (nachkaufWrap) nachkaufWrap.style.display = isStrich ? 'flex' : 'none';
+
+    if (input) {
+        if (status === 'zahl') input.value = input.getAttribute('data-old-value') || (['∞', '-'].includes(input.value) ? '0' : input.value || '0');
+        else if (status === 'inf') { if (input.value !== '∞') input.setAttribute('data-old-value', input.value || '0'); input.value = '∞'; }
+        else { if (input.value !== '-') input.setAttribute('data-old-value', input.value || '0'); input.value = '-'; }
+        aktualisiereMengeEingabeFarbe(input);
+    }
+
+    if (infBtn) {
+        infBtn.classList.toggle('active-inf', status === 'inf');
+        infBtn.style.background = status === 'inf' ? '#27ae60' : '#95a5a6';
+    }
+    if (minusBtn) {
+        minusBtn.classList.toggle('active-minus-ok', status === 'strich-ok' && !nachkauf);
+        minusBtn.classList.toggle('active-minus-warn', status === 'strich-warn' || nachkauf);
+        minusBtn.style.background = (status === 'strich-warn' || nachkauf) ? '#c0392b' : (status === 'strich-ok' ? '#27ae60' : '#95a5a6');
+    }
+}
+
+function bestandEingabeGeaendert(feld) {
+    const row = feld?.closest('.lagerort-row, .edit-ort-row');
+    if (!row || !feld) return;
+    const w = String(feld.value ?? '').trim();
+    if (w === '∞') setzeBestandStatus(row, 'inf', false);
+    else if (w === '-') setzeBestandStatus(row, row.querySelector('.bestand-nachkauf-checkbox')?.checked ? 'strich-warn' : 'strich-ok');
+    else setzeBestandStatus(row, 'zahl', false);
+}
+
+function leseBestandswertAusZeile(row) {
+    const status = row?.dataset?.stockMode || 'zahl';
+    const val = String(row?.querySelector('input')?.value ?? '').trim();
+    if (status === 'inf' || val === '∞') return -1;
+    if (status === 'strich-warn') return BESTAND_STRICH_NACHKAUF;
+    if (status === 'strich-ok' || val === '-') return BESTAND_STRICH_AUSREICHEND;
+    return werteMengeAus(val);
+}
+
+function toggleBestandInf(btn) {
+    const row = btn?.closest('.lagerort-row, .edit-ort-row');
+    if (row) setzeBestandStatus(row, row.dataset.stockMode === 'inf' ? 'zahl' : 'inf', false);
+}
+function toggleBestandMinus(btn) {
+    const row = btn?.closest('.lagerort-row, .edit-ort-row');
+    if (row) setzeBestandStatus(row, row.dataset.stockMode?.startsWith('strich') ? 'zahl' : 'strich-ok', row.dataset.nachkauf === 'true');
+}
+function toggleNachkaufCheckbox(chk) {
+    const row = chk?.closest('.lagerort-row, .edit-ort-row');
+    if (row && row.dataset.stockMode?.startsWith('strich')) setzeBestandStatus(row, chk.checked ? 'strich-warn' : 'strich-ok', chk.checked);
 }
 
 // =========================================================================
@@ -220,7 +352,7 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. DAS VEREINHEITLICHTE KISTEN-SYSTEM (INHALT, ENTNAMENTE & RÜCKGABE)
+// 5. DAS VEREINHEITLICHTE KISTEN-SYSTEM (INHALT, ENTNAHME & RÜCKGABE)
 // =========================================================================
 
 function gibKistenBestand(lid) {
@@ -257,32 +389,33 @@ function renderKistenInhaltListe(lid) {
         const soll = Number(z.soll_menge);
         const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
         const istSonder = ist < 0;
+        const einheit = z.artikel?.einheit || 'Stück';
 
         const card = document.createElement('div');
         card.className = `kiste-item-card ${fehlt > 0 ? 'fehlend' : ''}`;
 
         let statusText = '';
-        if (ist === -1) statusText = 'Bestand: ∞ (Unbegrenzt)';
-        else if (ist === -2) statusText = 'Status: Ausreichend';
-        else if (ist === -3) statusText = 'Status: 🔴 Nachkaufen';
+        if (ist === -1) statusText = '<span style="font-size:1.1em; font-weight:bold; color:#7f8c8d;">∞</span> (Unbegrenzt)';
+        else if (ist === -2) statusText = '<span class="bestand-status-pill ok">-</span> Ausreichend vorhanden';
+        else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
         else {
-            statusText = `Ist: <strong>${ist}</strong> / Soll: <strong>${soll}</strong>`;
-            if (fehlt > 0) statusText += ` <span style="color:#c0392b; font-weight:bold;">(${fehlt} fehlen)</span>`;
-            else statusText += ` <span style="color:#27ae60;">✅ Voll</span>`;
+            statusText = `Soll: <strong>${soll}</strong> ${einheit}`;
+            if (fehlt > 0) statusText += ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>`;
+            else statusText += ` &bull; <span style="color:#27ae60;">✅ Vollständig</span>`;
         }
 
         card.innerHTML = `
             <div style="flex:1;">
                 <div style="font-weight:bold; font-size:1.02em; color:#2c3e50;">${escapeHtml(z.artikel?.name || 'Unbekannt')}</div>
-                <div style="font-size:0.85em; color:#555; margin-top:2px;">${statusText}</div>
+                <div style="font-size:0.85em; color:#555; margin-top:3px;">${statusText}</div>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
                 ${!istSonder ? `
-                    <button class="stepper-btn" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="1 Stück entnehmen">−</button>
-                    <span style="font-weight:bold; min-width:30px; text-align:center; font-size:1.1em;">${ist}</span>
-                    <button class="stepper-btn" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="1 Stück zurückbuchen" style="background:#27ae60; color:#fff;">+</button>
+                    <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em;" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="1 Stück entnehmen">−</button>
+                    <input type="text" id="menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereMenge(${z.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width:60px; height:36px;">
+                    <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em;" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="1 Stück zurückgeben">+</button>
                 ` : `
-                    <span style="font-weight:bold; color:#7f8c8d; padding:0 8px;">${ist === -1 ? '∞' : '-'}</span>
+                    <input type="text" id="menge-${z.id}" class="menge-input" value="${ist === -1 ? '∞' : '-'}" onchange="speichereMenge(${z.id})" style="width:60px; height:36px; text-align:center;">
                 `}
                 <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
             </div>
@@ -291,7 +424,7 @@ function renderKistenInhaltListe(lid) {
     });
 }
 
-// 1. Ganze Kiste entnehmen (alle zählbaren Artikel auf 0)
+// Ganze Kiste entnehmen (alle zählbaren Artikel auf 0)
 async function ganzeKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
     if (!confirm('Soll die gesamte Kiste als entnommen ausgebucht werden (Bestand aller zählbaren Artikel wird 0)?')) return;
@@ -311,7 +444,7 @@ async function ganzeKisteAusbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// 2. Ganze Kiste zurückbuchen (alle Artikel auf Soll-Wert)
+// Ganze Kiste zurückbuchen (alle Artikel auf Soll-Wert)
 async function ganzeKisteZurueckbuchen() {
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
@@ -331,7 +464,7 @@ async function ganzeKisteZurueckbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// 3. Einzelnen Artikel in Kiste schrittweise anpassen (+1 / -1)
+// Einzelnen Artikel in Kiste schrittweise anpassen (+1 / -1)
 async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
@@ -372,7 +505,7 @@ async function kistenCheckArtikelHinzufuegen() {
 
     const startMenge = prompt(`Soll-Menge für "${art.name}" in dieser Kiste:`, '1');
     if (startMenge === null) return;
-    const mengeNum = Math.max(0, parseInt(startMenge, 10) || 1);
+    const mengeNum = werteMengeAus(startMenge);
 
     await dbClient.from('bestand').insert([{
         artikel_id: art.id,
@@ -465,6 +598,12 @@ function aktualisiereArtikelFinderListe(suchbegriff = '') {
         const soll = Number(z.soll_menge);
         const ist = Number(z.menge);
         const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
+        const einheit = z.artikel?.einheit || 'Stück';
+
+        let standText = '';
+        if (ist === -1) standText = '∞ Unbegrenzt';
+        else if (ist === -2 || ist === -3) standText = ist === -3 ? '🔴 Nachkaufen' : 'Ausreichend';
+        else standText = `Vorhanden: ${ist} / ${soll} ${einheit} ${fehlt > 0 ? `<span style="color:#c0392b; font-weight:bold;">(${fehlt} fehlen)</span>` : '✅'}`;
 
         return `
             <div style="border:1px solid #d9e3ec; background:#fff; border-radius:8px; padding:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
@@ -473,14 +612,13 @@ function aktualisiereArtikelFinderListe(suchbegriff = '') {
                     <div style="color:#16a085; font-weight:bold; margin-top:2px;">
                         📍 Gehört in: <u>${escapeHtml(z.lagerorte?.name || 'Unbekannter Ort')}</u>
                     </div>
-                    <small style="color:#666;">
-                        ${soll > 0 ? `Vorhanden: ${ist} / ${soll} ${fehlt > 0 ? `<span style="color:#c0392b; font-weight:bold;">(fehlen: ${fehlt})</span>` : '✅'}` : 'Nicht limitiert'}
-                    </small>
+                    <small style="color:#666;">${standText}</small>
                 </div>
                 <div style="display:flex; gap:6px;">
                     <button class="btn" style="background:#27ae60; padding:8px 12px; width:auto; min-height:40px;" onclick="buchtArtikelZurueckInKiste(${z.id})">
                         📥 Hier rein (+1)
                     </button>
+                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto; min-height:40px;" onclick="oeffneKistenCheck(${z.lagerort_id})" title="Kiste öffnen">📦</button>
                 </div>
             </div>
         `;
@@ -686,7 +824,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE & TOOLTIPS)
+// 8. LAGER-MODUS (TABELLE & BESTANDSSPEICHERUNG)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -738,7 +876,6 @@ function tabelleAktualisieren(daten) {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    // Reservierungen aus Packlisten ermitteln
     const resMap = {};
     packlistenPositionen.forEach(p => {
         if (!p.artikel_id) return;
@@ -768,17 +905,26 @@ function tabelleAktualisieren(daten) {
         const zeilen = gruppen[katName];
         const isOpen = offeneGruppen.has(katName);
 
+        let ordnerSumme = 0, hatUnendlich = false;
+        zeilen.forEach(z => {
+            if (Number(z.menge) === -1) hatUnendlich = true;
+            else if (Number(z.menge) >= 0) ordnerSumme += Number(z.menge);
+        });
+        const sumText = hatUnendlich ? (ordnerSumme > 0 ? `${ordnerSumme} + ∞` : '∞') : ordnerSumme;
+
         const headerTr = document.createElement('tr');
         headerTr.style.cursor = 'pointer';
         headerTr.onclick = () => toggleGruppe(katName);
         headerTr.innerHTML = `
-            <td colspan="3" style="background:#e2e8f0; font-weight:bold; padding:12px;">
-                ${isOpen ? '📂' : '📁'} ${escapeHtml(katName)} (${zeilen.length})
+            <td colspan="3" style="background-color:#e2e8f0; color:#2c3e50; font-weight:bold; padding:12px; user-select:none;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>${isOpen ? '📂' : '📁'} ${escapeHtml(katName)}</span>
+                    <span class="summen-badge">Gesamt: ${sumText}</span>
+                </div>
             </td>`;
         tbody.appendChild(headerTr);
         if (!isOpen) return;
 
-        // Artikel gruppieren
         const artMap = new Map();
         zeilen.forEach(z => {
             if (!artMap.has(z.artikel_id)) artMap.set(z.artikel_id, { artikel: z.artikel, bestaende: [] });
@@ -792,6 +938,18 @@ function tabelleAktualisieren(daten) {
                 if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
             };
 
+            const wichtigBadge = grp.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
+            const hatKommentar = Boolean(grp.artikel.kommentar?.trim());
+            const kommentarIcon = isEditMode ? `
+                <span onclick="openKommentarModal('${artId}', event)" style="cursor:pointer; margin-left:8px; vertical-align:middle; opacity:${hatKommentar ? '1' : '0.5'};" title="Kommentar bearbeiten">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="${hatKommentar ? '#3498db' : 'none'}" stroke="${hatKommentar ? '#3498db' : '#bdc3c7'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                </span>` : '';
+            const kommentarAnzeige = !isEditMode && hatKommentar ? `
+                <div class="bestand-kommentar-anzeige">
+                    <span style="color:#3498db;">💬</span>
+                    <span style="word-break:break-word;">${escapeHtml(grp.artikel.kommentar.trim())}</span>
+                </div>` : '';
+
             let resHtml = '';
             const res = resMap[artId];
             if (res && res.gesamt > 0) {
@@ -799,18 +957,20 @@ function tabelleAktualisieren(daten) {
                 resHtml = `<div class="bestand-reserviert-info" data-hover-type="res" data-hover-content="${hoverText}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">📦 Reserviert: ${res.gesamt}</div>`;
             }
 
+            const einheit = grp.artikel.einheit || 'Stück';
             let bestandRowsHtml = grp.bestaende.map(b => {
-                const ist = Number(b.menge);
-                const soll = Number(b.soll_menge);
-                return `
-                    <div class="bestand-ort-row">
-                        <span class="bestand-ort-name">📍 ${escapeHtml(b.lagerorte?.name || '')}</span>
+                const m = Number(b.menge);
+                let zelle = '';
+                if (m === -1) zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
+                else if (m === -2 || m === -3) zelle = `<span class="bestand-status-pill ${m === -3 ? 'warn' : 'ok'}">-</span>`;
+                else {
+                    zelle = `
                         <div class="bestand-ort-qty-wrap">
-                            <input type="number" value="${ist}" style="width:60px; padding:6px; text-align:center; border:1px solid #ccc; border-radius:4px;" 
-                                   onchange="speichereMengeDirekt(${b.id}, this.value)">
-                            <small class="bestand-einheit">${soll > 0 ? `/ ${soll}` : ''} ${escapeHtml(grp.artikel.einheit || 'Stück')}</small>
-                        </div>
-                    </div>`;
+                            <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${m > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${b.menge}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width:60px;">
+                            <small class="bestand-einheit">${einheit}</small>
+                        </div>`;
+                }
+                return `<div class="bestand-ort-row"><span class="bestand-ort-name">📍 ${escapeHtml(b.lagerorte?.name || '')}</span>${zelle}</div>`;
             }).join('');
 
             let latestDate = null;
@@ -819,8 +979,8 @@ function tabelleAktualisieren(daten) {
 
             tr.innerHTML = `
                 <td style="padding-left:25px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
-                    <strong>${escapeHtml(grp.artikel.name)}</strong>
-                    ${grp.artikel.kommentar ? `<div style="font-size:0.8em; color:#3498db;">💬 ${escapeHtml(grp.artikel.kommentar)}</div>` : ''}
+                    <strong>${escapeHtml(grp.artikel.name)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
+                    <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(grp.artikel.id)}</div>
                     ${resHtml ? `<div style="margin-top:3px;">${resHtml}</div>` : ''}
                 </td>
                 <td colspan="2">${bestandRowsHtml}</td>`;
@@ -829,11 +989,27 @@ function tabelleAktualisieren(daten) {
     });
 }
 
-async function speichereMengeDirekt(bestandId, val) {
-    const neueMenge = Math.max(0, parseInt(val, 10) || 0);
-    await dbClient.from('bestand').update({ menge: neueMenge }).eq('id', bestandId);
-    showToast('Bestand aktualisiert!');
-    await ladeAlles();
+// Speichert das Mengenfeld (inkl. Rechner & Strich-Unterstützung)
+async function speichereMenge(bId) {
+    const f = $(`menge-${bId}`);
+    if (!f) return;
+    const val = f.value.trim();
+    let neueMenge;
+    if (val === '∞') neueMenge = -1;
+    else if (val === '-') neueMenge = BESTAND_STRICH_AUSREICHEND;
+    else neueMenge = werteMengeAus(val);
+
+    f.value = neueMenge === -1 ? '∞' : (neueMenge < 0 ? '-' : neueMenge);
+    aktualisiereMengeEingabeFarbe(f);
+    f.style.backgroundColor = '#fff3cd';
+
+    const datum = new Date().toISOString();
+    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, created_at: datum }).eq('id', bId);
+    if (!error) {
+        f.style.backgroundColor = '#d4edda';
+        showToast(`Bestand gespeichert: ${f.value}`);
+        setTimeout(() => { if (f) f.style.backgroundColor = ''; ladeAlles(); }, 800);
+    } else showToast('Speicherfehler!', 'error');
 }
 
 // Tooltip-Events
@@ -917,7 +1093,7 @@ async function entferneNfcVonOrt() {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN
+// 10. ARTIKEL ANLEGEN & BEARBEITEN (MIT DEM ORIGINALEN MENGEN-SYSTEM)
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
@@ -930,32 +1106,94 @@ function toggleEditMode() {
 function openModal() {
     $('new-name').value = '';
     $('new-kategorie').value = '';
+    $('new-einheit').value = 'Stück';
+    if ($('new-wichtig')) $('new-wichtig').checked = false;
+    if ($('new-typ')) $('new-typ').value = 'zaehlbar';
+
+    const wrapper = $('new-orte-wrapper');
+    const rows = wrapper.querySelectorAll('.lagerort-row');
+    for (let i = 1; i < rows.length; i++) rows[i].remove();
+
+    const first = rows[0];
+    const input = first.querySelector('.new-menge');
+    input.value = '0';
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(first, 'zahl');
+
     openModalById('artikelModal');
+}
+
+function addOrtRow() {
+    const wrapper = $('new-orte-wrapper');
+    const newRow = wrapper.querySelector('.lagerort-row').cloneNode(true);
+    const input = newRow.querySelector('.new-menge');
+    input.value = '0';
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(newRow, 'zahl');
+    wrapper.appendChild(newRow);
+}
+
+function removeNewOrtRow(btn) {
+    const wrapper = $('new-orte-wrapper');
+    if (wrapper.querySelectorAll('.lagerort-row').length > 1) btn.closest('.lagerort-row').remove();
+    else showToast('Ein Artikel muss mindestens einen Lagerort haben!', 'warning');
 }
 
 async function artikelAnlegen() {
     const name = $('new-name').value.trim(), kat = $('new-kategorie').value.trim(), einheit = $('new-einheit').value;
-    const wichtig = $('new-wichtig').checked;
+    const wichtig = Boolean($('new-wichtig')?.checked), typ = $('new-typ')?.value || 'zaehlbar';
     if (!name) return showToast('Bitte Namen eingeben.', 'warning');
 
-    const { data, error } = await dbClient.from('artikel').insert([{ name, kategorie: kat, einheit, wichtig }]).select();
-    if (error) return showToast('Fehler beim Anlegen: ' + error.message, 'error');
+    const { data, error } = await dbClient.from('artikel').insert([{ name, kategorie: kat, einheit, wichtig, typ }]).select();
+    if (error) return showToast('Fehler: ' + error.message, 'error');
 
-    const ortId = document.querySelector('.new-ort')?.value;
-    const menge = parseInt(document.querySelector('.new-menge')?.value, 10) || 0;
-
-    if (ortId) {
-        await dbClient.from('bestand').insert([{
+    const inserts = Array.from(document.querySelectorAll('#new-orte-wrapper .lagerort-row')).map(row => {
+        const menge = leseBestandswertAusZeile(row);
+        const oldVal = werteMengeAus(row.querySelector('.new-menge')?.getAttribute('data-old-value') || '0');
+        return {
             artikel_id: data[0].id,
-            lagerort_id: Number(ortId),
+            lagerort_id: row.querySelector('.new-ort').value,
             menge,
-            alte_menge: menge
-        }]);
-    }
+            alte_menge: menge < 0 ? oldVal : menge
+        };
+    });
 
+    if (inserts.length) await dbClient.from('bestand').insert(inserts);
     closeModal('artikelModal');
     showToast('Artikel gespeichert!');
     await ladeAlles();
+}
+
+function addEditOrtRow(data = null) {
+    const wrapper = $('edit-orte-wrapper');
+    const div = document.createElement('div');
+    div.className = 'edit-ort-row';
+    div.style = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+
+    const options = alleLagerorte.map(o => `<option value="${o.id}" ${(data?.lagerort_id == o.id) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('');
+
+    let displayVal = '0', status = 'zahl';
+    if (data) {
+        if (data.menge == -1) { displayVal = '∞'; status = 'inf'; }
+        else if (data.menge == -2) { displayVal = '-'; status = 'strich-ok'; }
+        else if (data.menge == -3) { displayVal = '-'; status = 'strich-warn'; }
+        else displayVal = data.menge;
+    }
+
+    div.innerHTML = `
+        <div class="bestand-row-stack" style="width:100%;">
+            <select class="edit-ort-select" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;">${options}</select>
+            <div class="bestand-action-row" style="flex-wrap:nowrap; width:100%;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;">
+                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background:#95a5a6; padding:10px; width:auto; min-width:68px; font-weight:bold;" onclick="toggleBestandInf(this)">∞</button>
+                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background:#95a5a6; padding:10px; width:auto; min-width:44px; font-weight:bold;" onclick="toggleBestandMinus(this)">-</button>
+            </div>
+            <label class="bestand-nachkauf-wrap"><input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)"><span>Auf Nachkaufen setzen</span></label>
+        </div>
+        <button type="button" class="btn" style="background:#e74c3c; padding:8px 12px; width:auto;" onclick="this.closest('.edit-ort-row').remove()">🗑️</button>`;
+    
+    setzeBestandStatus(div, status, status === 'strich-warn');
+    wrapper.appendChild(div);
 }
 
 async function openEditModal(artikelId) {
@@ -967,67 +1205,45 @@ async function openEditModal(artikelId) {
     $('edit-name').value = art.name;
     $('edit-kategorie').value = art.kategorie || '';
     $('edit-einheit').value = art.einheit || 'Stück';
+    $('edit-typ').value = art.typ || 'zaehlbar';
     $('edit-wichtig').checked = Boolean(art.wichtig);
 
     const wrapper = $('edit-orte-wrapper');
     wrapper.innerHTML = '';
-    bestaende.forEach(b => {
-        const div = document.createElement('div');
-        div.style = 'display:flex; gap:8px; margin-bottom:8px;';
-        div.innerHTML = `
-            <select class="edit-ort-select" style="flex:2; padding:8px; border-radius:4px; border:1px solid #ccc;">
-                ${alleLagerorte.map(o => `<option value="${o.id}" ${o.id === b.lagerort_id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
-            </select>
-            <input type="number" class="edit-menge-val" value="${b.menge}" placeholder="Ist" style="width:70px; padding:8px; text-align:center; border:1px solid #ccc; border-radius:4px;">
-            <input type="number" class="edit-soll-val" value="${b.soll_menge}" placeholder="Soll" title="Soll-Menge" style="width:70px; padding:8px; text-align:center; border:1px solid #27ae60; border-radius:4px;">
-            <button type="button" class="btn" style="background:#e74c3c; width:auto; padding:6px 10px;" onclick="this.parentElement.remove()">🗑️</button>
-        `;
-        wrapper.appendChild(div);
-    });
+    if (bestaende.length) bestaende.forEach(b => addEditOrtRow(b));
+    else addEditOrtRow();
 
     openModalById('editModal');
-}
-
-function addEditOrtRow() {
-    const wrapper = $('edit-orte-wrapper');
-    const div = document.createElement('div');
-    div.style = 'display:flex; gap:8px; margin-bottom:8px;';
-    div.innerHTML = `
-        <select class="edit-ort-select" style="flex:2; padding:8px; border-radius:4px; border:1px solid #ccc;">
-            ${alleLagerorte.map(o => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('')}
-        </select>
-        <input type="number" class="edit-menge-val" value="1" placeholder="Ist" style="width:70px; padding:8px; text-align:center; border:1px solid #ccc; border-radius:4px;">
-        <input type="number" class="edit-soll-val" value="1" placeholder="Soll" style="width:70px; padding:8px; text-align:center; border:1px solid #27ae60; border-radius:4px;">
-        <button type="button" class="btn" style="background:#e74c3c; width:auto; padding:6px 10px;" onclick="this.parentElement.remove()">🗑️</button>
-    `;
-    wrapper.appendChild(div);
 }
 
 async function speichereBearbeitung() {
     const aid = $('edit-artikel-id').value;
     const name = $('edit-name').value.trim(), kat = $('edit-kategorie').value.trim(), einheit = $('edit-einheit').value;
-    const wichtig = $('edit-wichtig').checked;
+    const typ = $('edit-typ').value, wichtig = $('edit-wichtig').checked;
 
-    await dbClient.from('artikel').update({ name, kategorie: kat, einheit, wichtig }).eq('id', aid);
+    await dbClient.from('artikel').update({ name, kategorie: kat, einheit, typ, wichtig }).eq('id', aid);
     await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
-    const rows = document.querySelectorAll('#edit-orte-wrapper > div');
-    const inserts = Array.from(rows).map(r => ({
-        artikel_id: Number(aid),
-        lagerort_id: Number(r.querySelector('.edit-ort-select').value),
-        menge: parseInt(r.querySelector('.edit-menge-val').value, 10) || 0,
-        alte_menge: parseInt(r.querySelector('.edit-soll-val').value, 10) || 0
-    }));
+    const inserts = Array.from(document.querySelectorAll('#edit-orte-wrapper .edit-ort-row')).map(row => {
+        const oid = row.querySelector('.edit-ort-select').value;
+        const menge = leseBestandswertAusZeile(row);
+        const oldVal = werteMengeAus(row.querySelector('.edit-menge-input')?.getAttribute('data-old-value') || '0');
+        return {
+            artikel_id: Number(aid),
+            lagerort_id: Number(oid),
+            menge,
+            alte_menge: menge < 0 ? oldVal : menge
+        };
+    });
 
     if (inserts.length) await dbClient.from('bestand').insert(inserts);
-
     closeModal('editModal');
     showToast('Artikel aktualisiert!');
     await ladeAlles();
 }
 
 async function artikelLoeschen() {
-    if (!confirm('Diesen Artikel wirklich löschen?')) return;
+    if (!confirm('Diesen Artikel wirklich komplett löschen?')) return;
     const aid = $('edit-artikel-id').value;
     await dbClient.from('bestand').delete().eq('artikel_id', aid);
     await dbClient.from('artikel').delete().eq('id', aid);
@@ -1129,7 +1345,7 @@ function togglePackTyp() {
 async function packPositionSpeichern() {
     const plId = $('packlisten-auswahl').value;
     const typ = $('pack-typ').value;
-    const menge = Math.max(1, parseInt($('pack-menge').value, 10) || 1);
+    const menge = werteMengeAus($('pack-menge').value) || 1;
 
     const payload = { packliste_id: Number(plId), menge };
 
@@ -1211,7 +1427,6 @@ function startEinkaufsliste() {
     const sonderListe = [];
     einkaufslisteArray = [];
 
-    // Fehlbestand ermitteln
     const bestandMap = {};
     aktuelleDaten.forEach(b => {
         const m = Number(b.menge);
