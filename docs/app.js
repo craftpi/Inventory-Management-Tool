@@ -95,7 +95,7 @@ function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', d
     }
 }
 
-// Sicherer Mini-Parser für Rechenausdrücke
+// Sicherer Mini-Parser für Rechenausdrücke (z.B. "3+2" oder "(4-1)*2")
 function berechneMengenAusdruck(ausdruck) {
     let pos = 0;
     const err = () => { throw new Error('Ungültiger Ausdruck'); };
@@ -185,6 +185,7 @@ function formatArtikelId(id) {
     return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id);
 }
 
+// Steuerung von Mengen-Feldern und Buttons (∞ und -)
 function aktualisiereMengeEingabeFarbe(feld) {
     if (!feld) return;
     const w = String(feld.value ?? '').trim();
@@ -436,10 +437,13 @@ function renderKistenInhaltListe(lid) {
         else if (ist === -2) statusText = '<span class="bestand-status-pill ok">-</span> Ausreichend vorhanden';
         else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
         else {
-            statusText = `Soll: <strong>${soll}</strong> ${einheit}`;
+            statusText = `Im Lager: <strong>${ist}</strong> von max. <strong>${soll}</strong> ${einheit}`;
             if (fehlt > 0) statusText += ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>`;
-            else statusText += ` &bull; <span style="color:#27ae60;">✅ Vollständig</span>`;
+            else statusText += ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
         }
+
+        const canMinus = ist > 0;
+        const canPlus = ist < soll;
 
         card.innerHTML = `
             <div style="flex:1;">
@@ -448,11 +452,11 @@ function renderKistenInhaltListe(lid) {
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
                 ${!istSonder ? `
-                    <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em;" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="1 Stück entnehmen">−</button>
-                    <input type="text" id="menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereMenge(${z.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width:60px; height:36px;">
-                    <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em;" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="1 Stück zurückgeben">+</button>
+                    <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.4; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück ausbuchen' : 'Bereits 0 vorhanden'}">−</button>
+                    <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
+                    <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.4; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : 'Bereits vollzählig'}">+</button>
                 ` : `
-                    <input type="text" id="menge-${z.id}" class="menge-input" value="${ist === -1 ? '∞' : '-'}" onchange="speichereMenge(${z.id})" style="width:60px; height:36px; text-align:center;">
+                    <span style="font-weight:bold; color:#7f8c8d; padding:0 8px;">${ist === -1 ? '∞' : '-'}</span>
                 `}
                 <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
             </div>
@@ -461,6 +465,7 @@ function renderKistenInhaltListe(lid) {
     });
 }
 
+// Ganze Kiste entnehmen (alle zählbaren Artikel auf 0)
 async function ganzeKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
     if (!confirm('Soll die gesamte Kiste als entnommen ausgebucht werden (Bestand aller zählbaren Artikel wird 0)?')) return;
@@ -480,6 +485,7 @@ async function ganzeKisteAusbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
+// Ganze Kiste zurückbuchen (alle Artikel exakt auf Soll-Wert, niemals darüber)
 async function ganzeKisteZurueckbuchen() {
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
@@ -499,14 +505,25 @@ async function ganzeKisteZurueckbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
+// Einzelnen Artikel in Kiste anpassen (+1 / -1) mit harter 0- und Soll-Grenze
 async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
     const aktuell = Number(eintrag.menge);
     if (aktuell < 0) return;
 
-    const neu = Math.max(0, aktuell + delta);
-    const soll = eintrag.soll_menge || eintrag.alte_menge || aktuell;
+    const soll = Number(eintrag.soll_menge) || Number(eintrag.alte_menge) || 0;
+
+    if (delta > 0 && soll > 0 && aktuell >= soll) {
+        showToast(`Bereits vollzählig (${soll} von ${soll} im Lager). Mehr kann nicht eingebucht werden.`, 'warning');
+        return;
+    }
+    if (delta < 0 && aktuell <= 0) {
+        showToast(`Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!`, 'warning');
+        return;
+    }
+
+    const neu = soll > 0 ? Math.min(soll, Math.max(0, aktuell + delta)) : Math.max(0, aktuell + delta);
 
     await dbClient.from('bestand').update({
         menge: neu,
@@ -515,6 +532,28 @@ async function aendereArtikelMengeInKiste(bestandId, delta) {
     }).eq('id', bestandId);
 
     if (navigator.vibrate) navigator.vibrate(60);
+    await ladeAlles();
+    renderKistenInhaltListe(kistenCheckAktuelleId);
+}
+
+// Direkteingabe im Kisten-Check (valdiert gegen Soll-Grenze)
+async function speichereKisteMengeInput(bId, rawVal) {
+    const eintrag = aktuelleDaten.find(b => b.id === bId);
+    if (!eintrag) return;
+    const soll = Number(eintrag.soll_menge) || Number(eintrag.alte_menge) || 0;
+    let val = werteMengeAus(rawVal);
+    if (soll > 0 && val > soll) {
+        showToast(`Maximal ${soll} ${eintrag.artikel?.einheit || 'Stück'} möglich! Höhere Mengen bitte im Hauptfenster eintragen.`, 'warning');
+        val = soll;
+    }
+    if (val < 0) val = 0;
+
+    await dbClient.from('bestand').update({
+        menge: val,
+        created_at: new Date().toISOString()
+    }).eq('id', bId);
+
+    showToast(`Bestand: ${val} / ${soll}`);
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
@@ -664,7 +703,14 @@ async function buchtArtikelZurueckInKiste(bestandId) {
     if (!eintrag) return;
 
     const aktuell = Number(eintrag.menge);
-    const neu = aktuell < 0 ? aktuell : aktuell + 1;
+    const soll = Number(eintrag.soll_menge) || Number(eintrag.alte_menge) || 0;
+
+    if (soll > 0 && aktuell >= soll) {
+        showToast(`⚠️ "${eintrag.artikel?.name}" ist in "${eintrag.lagerorte?.name}" bereits vollzählig (${soll}/${soll})!`, 'warning');
+        return;
+    }
+
+    const neu = aktuell < 0 ? aktuell : (soll > 0 ? Math.min(soll, aktuell + 1) : aktuell + 1);
 
     await dbClient.from('bestand').update({
         menge: neu,
@@ -672,7 +718,7 @@ async function buchtArtikelZurueckInKiste(bestandId) {
     }).eq('id', bestandId);
 
     if (navigator.vibrate) navigator.vibrate(120);
-    showToast(`✅ 1x "${eintrag.artikel?.name}" in "${eintrag.lagerorte?.name}" gebucht!`);
+    showToast(`✅ 1x "${eintrag.artikel?.name}" in "${eintrag.lagerorte?.name}" zurückgebucht (${neu}/${soll})!`);
     await ladeAlles();
     aktualisiereArtikelFinderListe($('artikel-finder-input').value);
 }
@@ -1103,6 +1149,7 @@ function tabelleAktualisieren(daten) {
     }
 }
 
+// Haupt-Speicherung in der Tabelle: Erhöhung passt Soll-Bestand an (Neukauf)
 async function speichereMenge(bId) {
     const f = $(`menge-${bId}`);
     if (!f) return;
@@ -1117,7 +1164,18 @@ async function speichereMenge(bId) {
     f.style.backgroundColor = '#fff3cd';
 
     const datum = new Date().toISOString();
-    let { error } = await dbClient.from('bestand').update({ menge: neueMenge, created_at: datum }).eq('id', bId);
+    const eintrag = aktuelleDaten.find(b => b.id === bId);
+    const soll = Number(eintrag?.soll_menge) || 0;
+
+    // Erhöhung im Hauptfenster erweitert automatisch die Obergrenze
+    const neuesSoll = neueMenge > soll ? neueMenge : soll;
+
+    let { error } = await dbClient.from('bestand').update({
+        menge: neueMenge,
+        alte_menge: neuesSoll,
+        created_at: datum
+    }).eq('id', bId);
+
     if (!error) {
         f.style.backgroundColor = '#d4edda';
         showToast(`Bestand gespeichert: ${f.value}`);
@@ -1205,7 +1263,7 @@ async function entferneNfcVonOrt() {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN
+// 10. ARTIKEL ANLEGEN & BEARBEITEN (NEUKÄUFE & SOLL-BESTAND)
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
@@ -1266,7 +1324,7 @@ async function artikelAnlegen() {
             artikel_id: data[0].id,
             lagerort_id: row.querySelector('.new-ort').value,
             menge,
-            alte_menge: menge < 0 ? oldVal : menge
+            alte_menge: menge < 0 ? oldVal : menge // Initiale Soll-Menge entspricht dem Start-Gesamtbestand
         };
     });
 
@@ -1292,13 +1350,19 @@ function addEditOrtRow(data = null) {
         else displayVal = data.menge;
     }
 
+    const sollVal = data ? (data.soll_menge ?? data.alte_menge ?? displayVal) : '1';
+
     div.innerHTML = `
         <div class="bestand-row-stack" style="width:100%;">
             <select class="edit-ort-select" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;">${options}</select>
             <div class="bestand-action-row" style="flex-wrap:nowrap; width:100%;">
-                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;" title="Aktuell im Lager (Ist-Bestand)">
                 <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background:#95a5a6; padding:10px; width:auto; min-width:68px; font-weight:bold;" onclick="toggleBestandInf(this)">∞</button>
                 <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background:#95a5a6; padding:10px; width:auto; min-width:44px; font-weight:bold;" onclick="toggleBestandMinus(this)">-</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; font-size:0.9em; color:#555; padding:4px 2px;">
+                <label style="margin:0; font-weight:bold;">Soll-Gesamtbestand:</label>
+                <input type="number" class="edit-soll-val" value="${sollVal}" min="0" style="width:80px; padding:6px; border-radius:6px; border:1px solid #27ae60; text-align:center;" title="Maximalmenge für diese Kiste (Neukäufe hier erhöhen)">
             </div>
             <label class="bestand-nachkauf-wrap"><input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)"><span>Auf Nachkaufen setzen</span></label>
         </div>
@@ -1339,12 +1403,13 @@ async function speichereBearbeitung() {
     const inserts = Array.from(document.querySelectorAll('#edit-orte-wrapper .edit-ort-row')).map(row => {
         const oid = row.querySelector('.edit-ort-select').value;
         const menge = leseBestandswertAusZeile(row);
-        const oldVal = werteMengeAus(row.querySelector('.edit-menge-input')?.getAttribute('data-old-value') || '0');
+        const sollRaw = parseInt(row.querySelector('.edit-soll-val')?.value, 10);
+        const soll = Number.isFinite(sollRaw) && sollRaw >= 0 ? sollRaw : (menge >= 0 ? menge : 0);
         return {
             artikel_id: Number(aid),
             lagerort_id: Number(oid),
-            menge,
-            alte_menge: menge < 0 ? oldVal : menge
+            menge: menge,
+            alte_menge: menge < 0 ? soll : Math.max(menge, soll) // Obergrenze ist mindestens der Ist-Bestand
         };
     });
 
