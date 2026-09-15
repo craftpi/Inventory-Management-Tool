@@ -35,10 +35,10 @@
 
         .action-bar { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
         
-        /* 2-Spalten-Layout für die Haupt-Bedienelemente */
+        /* 2 feste Spalten für die Haupt-Bedienelemente */
         .lager-controls-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
             width: 100%;
         }
@@ -52,12 +52,16 @@
             margin: 0;
         }
 
+        /* Bearbeiten-Leiste darunter mit flexiblem Zeilenumbruch */
         .lager-edit-bar {
-            grid-column: 1 / -1;
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
-            margin-top: 4px;
+            width: 100%;
+            margin-top: -3px;
+        }
+        .lager-edit-bar .btn {
+            flex: 1 1 200px;
         }
         
         .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -196,6 +200,7 @@
             .container { padding: 15px 10px; max-width: 100%; border-radius: 10px; }
             .action-bar { flex-direction: column; align-items: stretch; }
             .lager-controls-grid { grid-template-columns: 1fr; }
+            .lager-edit-bar .btn { width: 100%; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
             .modal-content { padding: 16px; width: 95%; }
@@ -388,6 +393,7 @@
         <div class="action-bar">
             <input type="text" id="such-filter" placeholder="🔍 Artikel, Ort, IDs oder Kategorie suchen..." onkeyup="wendeFilterAn()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
             
+            <!-- Feste 2 Spalten für Scannen/Bearbeiten und Filter -->
             <div class="lager-controls-grid">
                 <!-- Spalte 1: Aktionen (Scannen oben, Bearbeiten darunter) -->
                 <div class="control-column">
@@ -404,14 +410,14 @@
                         <option value="">Alle Orte</option>
                     </select>
                 </div>
+            </div>
 
-                <!-- Bearbeiten-Toolbar (wird nur eingeblendet, wenn Bearbeiten AN ist) -->
-                <div class="lager-edit-bar lager-edit-only" style="display:none;">
-                    <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
-                    <button class="btn" style="background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
-                    <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
-                    <button class="btn" style="background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
-                </div>
+            <!-- Bearbeiten-Toolbar (liegt separat darunter mit automatischem Zeilenumbruch) -->
+            <div class="lager-edit-bar lager-edit-only" style="display:none;">
+                <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
+                <button class="btn" style="background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
+                <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
+                <button class="btn" style="background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
             </div>
         </div>
 
@@ -787,7 +793,7 @@
             <ul id="auto-kauf-liste" style="margin: 0; padding-left: 20px; color: #c0392b;"></ul>
         </div>
         
-        <p style="font-weight: bold; margin: 12px 0 5px 0;">Sonderposten aus Packlisten:</p>
+        <p style="font-weight: bold; margin-margin: 12px 0 5px 0;">Sonderposten aus Packlisten:</p>
         <div style="max-height: 120px; overflow-y: auto; background: #eef7ff; padding: 10px; border-radius: 6px; border:1px solid #d6eaf8;">
             <ul id="eigene-kauf-liste" style="margin: 0; padding-left: 20px; color: #2c3e50;"></ul>
         </div>
