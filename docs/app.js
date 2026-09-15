@@ -361,11 +361,19 @@ async function ladeBestand() {
     `).order('id');
 
     aktuelleDaten = (data || []).map(z => {
-        const ist = Number(z.menge);
-        // Das Soll ist die im Lagermodus festgelegte Gesamtmenge (alte_menge)
-        const soll = (z.alte_menge !== null && Number(z.alte_menge) >= 0) 
-            ? Math.max(Number(z.alte_menge), ist >= 0 ? ist : 0) 
-            : (ist >= 0 ? ist : 0);
+        const m = Number(z.menge);
+        const alt = z.alte_menge !== null && z.alte_menge !== undefined ? Number(z.alte_menge) : null;
+
+        let soll, ist;
+        // WICHTIG: Negative Werte (-1, -2, -3) sind Sonderzustände und dürfen nicht auf 0 gesetzt werden!
+        if (m === -1 || m === -2 || m === -3) {
+            soll = m;
+            ist = m;
+        } else {
+            soll = (alt !== null && alt >= 0 && alt >= m) ? alt : m;
+            ist = m;
+        }
+
         return {
             ...z,
             soll_menge: soll,
@@ -464,7 +472,7 @@ function renderKistenInhaltListe(lid) {
                     <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
                     <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : 'Bereits vollzählig'}">+</button>
                 ` : `
-                    <input type="text" id="kiste-menge-${z.id}" class="menge-input" value="${ist === -1 ? '∞' : '-'}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px; text-align:center;">
+                    <span class="bestand-status-pill ${ist === -3 ? 'warn' : (ist === -2 ? 'ok' : '')}" style="font-size:0.9em;">${ist === -1 ? '∞' : '-'}</span>
                 `}
                 <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
             </div>
@@ -624,7 +632,6 @@ function oeffneScanHubModal(vorbelegterSuchbegriff = '') {
     aktualisiereFinderFilterButtons();
     aktualisiereArtikelFinderListe(vorbelegterSuchbegriff);
     
-    // Kamera-Zustand zurücksetzen
     stoppeHubKamera();
     openModalById('scanHubModal');
 }
@@ -690,7 +697,6 @@ function stoppeHubKamera() {
     hubKameraAktiv = false;
 }
 
-// Kompatibilitäts-Aliase
 function oeffneWoGehoertDasHinModal(vorbelegterSuchbegriff = '') { oeffneScanHubModal(vorbelegterSuchbegriff); }
 function oeffneKistenKameraModal() { oeffneScanHubModal(); starteHubKamera(); }
 
@@ -750,7 +756,7 @@ function aktualisiereArtikelFinderListe(suchbegriff = '') {
 
         let standText = '';
         if (ist === -1) standText = '∞ Unbegrenzt';
-        else if (ist === -2 || ist === -3) standText = ist === -3 ? '🔴 Nachkaufen' : 'Ausreichend';
+        else if (ist === -2 || ist === -3) standText = ist === -3 ? '🔴 Nachkaufen' : '<span class="bestand-status-pill ok">-</span> Ausreichend';
         else standText = `Vorhanden: ${ist} / ${soll} ${einheit} ${fehlt > 0 ? `<span style="color:#c0392b; font-weight:bold;">(${fehlt} fehlen)</span>` : '✅'}`;
 
         return `
@@ -763,9 +769,13 @@ function aktualisiereArtikelFinderListe(suchbegriff = '') {
                     <small style="color:#666;">${standText}</small>
                 </div>
                 <div style="display:flex; gap:6px;">
+                    ${ist >= 0 ? `
                     <button class="btn" style="background:#27ae60; padding:8px 12px; width:auto; min-height:40px;" onclick="buchtArtikelZurueckInKiste(${z.id})">
                         📥 Hier rein (+1)
                     </button>
+                    ` : `
+                    <span style="display:inline-flex; align-items:center; padding:0 8px; color:#27ae60; font-weight:bold;">${ist === -3 ? '🔴 Nachkauf' : '✅ Vorhanden'}</span>
+                    `}
                     <button class="btn" style="background:#3498db; padding:8px 10px; width:auto; min-height:40px;" onclick="schliesseScanHubModal(); oeffneKistenCheck(${z.lagerort_id})" title="Kiste öffnen">📦</button>
                 </div>
             </div>
@@ -932,7 +942,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE: HAUPTERFASSUNG DER GESAMTMENGE)
+// 8. LAGER-MODUS (TABELLE: HAUPTERFASSUNG DER GESAMTMENGE & STRICH-ANZEIGE)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -1038,8 +1048,8 @@ function tabelleAktualisieren(daten) {
 
         let ordnerSumme = 0, hatUnendlich = false;
         zeilen.forEach(z => {
-            if (Number(z.soll_menge) === -1) hatUnendlich = true;
-            else if (Number(z.soll_menge) >= 0) ordnerSumme += Number(z.soll_menge);
+            if (Number(z.menge) === -1) hatUnendlich = true;
+            else if (Number(z.menge) >= 0) ordnerSumme += Number(z.soll_menge >= 0 ? z.soll_menge : z.menge);
         });
         const sumText = hatUnendlich ? (ordnerSumme > 0 ? `${ordnerSumme} + ∞` : '∞') : ordnerSumme;
 
@@ -1062,8 +1072,8 @@ function tabelleAktualisieren(daten) {
             if (parts.length > 1) {
                 const pref = parts[0];
                 prefixCounts[pref] = (prefixCounts[pref] || 0) + 1;
-                if (Number(z.soll_menge) === -1) prefixInf[pref] = true;
-                else if (Number(z.soll_menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(z.soll_menge);
+                if (Number(z.menge) === -1) prefixInf[pref] = true;
+                else if (Number(z.menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(z.soll_menge >= 0 ? z.soll_menge : z.menge);
             }
         });
 
@@ -1133,14 +1143,18 @@ function tabelleAktualisieren(daten) {
 
             const einheit = grp.artikel.einheit || 'Stück';
             let bestandRowsHtml = grp.bestaende.map(b => {
+                const m = Number(b.menge);
                 const soll = Number(b.soll_menge);
                 const ist = Number(b.ist_menge);
                 const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
                 
                 let zelle = '';
-                if (soll === -1) zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
-                else if (soll === -2 || soll === -3) zelle = `<span class="bestand-status-pill ${soll === -3 ? 'warn' : 'ok'}">-</span>`;
-                else {
+                // HIER: Exakte Prüfung der Mengenwerte -1, -2, -3!
+                if (m === -1) {
+                    zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
+                } else if (m === -2 || m === -3) {
+                    zelle = `<span class="bestand-status-pill ${m === -3 ? 'warn' : 'ok'}">-</span>`;
+                } else {
                     zelle = `
                         <div style="display:flex; flex-direction:column; align-items:flex-end;">
                             <div class="bestand-ort-qty-wrap">
@@ -1185,7 +1199,6 @@ function tabelleAktualisieren(daten) {
     }
 }
 
-// Haupt-Erfassung im Lagermodus: Ändern dieses Werts setzt das Soll (den Gesamtbestand)
 async function speichereMenge(bId) {
     const f = $(`menge-${bId}`);
     if (!f) return;
@@ -1211,7 +1224,7 @@ async function speichereMenge(bId) {
     }
 
     let { error } = await dbClient.from('bestand').update({
-        menge: neuesIst,
+        menge: neuesMenge < 0 ? neueMenge : neuesIst,
         alte_menge: neueMenge,
         created_at: datum
     }).eq('id', bId);
@@ -1303,7 +1316,7 @@ async function entferneNfcVonOrt() {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN (NUR 1 MENGEN-SLOT FÜR SOLL)
+// 10. ARTIKEL ANLEGEN & BEARBEITEN (STRICHE & UNENDLICHVOLLSTÄNDIG AKTIV)
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
@@ -1364,7 +1377,7 @@ async function artikelAnlegen() {
         return {
             artikel_id: data[0].id,
             lagerort_id: row.querySelector('.new-ort').value,
-            menge: soll,
+            menge: menge < 0 ? menge : soll,
             alte_menge: soll
         };
     });
@@ -1385,11 +1398,13 @@ function addEditOrtRow(data = null) {
 
     let displayVal = '0', status = 'zahl';
     if (data) {
-        const s = data.soll_menge ?? data.alte_menge ?? data.menge;
-        if (s == -1) { displayVal = '∞'; status = 'inf'; }
-        else if (s == -2) { displayVal = '-'; status = 'strich-ok'; }
-        else if (s == -3) { displayVal = '-'; status = 'strich-warn'; }
-        else displayVal = s;
+        const m = Number(data.menge);
+        if (m === -1) { displayVal = '∞'; status = 'inf'; }
+        else if (m === -2) { displayVal = '-'; status = 'strich-ok'; }
+        else if (m === -3) { displayVal = '-'; status = 'strich-warn'; }
+        else {
+            displayVal = (data.soll_menge !== undefined && data.soll_menge >= 0) ? data.soll_menge : (data.alte_menge ?? m);
+        }
     }
 
     div.innerHTML = `
@@ -1652,9 +1667,9 @@ function startEinkaufsliste() {
     const bestandMap = {}, nachkaufSet = new Set(), bedarfMap = {}, eigeneMap = {};
 
     aktuelleDaten.forEach(b => {
-        const m = Number(b.ist_menge);
+        const m = Number(b.menge);
         if (m === BESTAND_STRICH_NACHKAUF) nachkaufSet.add(String(b.artikel_id));
-        else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + m;
+        else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + (b.ist_menge >= 0 ? b.ist_menge : m);
     });
 
     packlistenPositionen.forEach(p => {
