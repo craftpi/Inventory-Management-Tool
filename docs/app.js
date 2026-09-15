@@ -15,7 +15,6 @@ const TABLES = {
     FORMULAR: 'formular_antworten'
 };
 
-// Konstanten für das Mengensystem
 const BESTAND_STRICH_AUSREICHEND = -2;
 const BESTAND_STRICH_NACHKAUF = -3;
 const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -80,7 +79,7 @@ function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', d
     }
 }
 
-// Sicherer Mini-Parser für Rechenausdrücke (z.B. "3+2" oder "(4-1)*2")
+// Sicherer Mini-Parser für Rechenausdrücke
 function berechneMengenAusdruck(ausdruck) {
     let pos = 0;
     const err = () => { throw new Error('Ungültiger Ausdruck'); };
@@ -170,7 +169,6 @@ function formatArtikelId(id) {
     return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id);
 }
 
-// Steuerung von Mengen-Feldern und Buttons (∞ und -)
 function aktualisiereMengeEingabeFarbe(feld) {
     if (!feld) return;
     const w = String(feld.value ?? '').trim();
@@ -845,7 +843,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE, PREFIX-GRUPPIERUNG & SICHTBARKEIT)
+// 8. LAGER-MODUS (TABELLE, PREFIX-GRUPPIERUNG & RESERVIERT RECHTS)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -924,7 +922,6 @@ function tabelleAktualisieren(daten) {
         resMap[p.artikel_id].listen[plName] = (resMap[p.artikel_id].listen[plName] || 0) + Number(p.menge);
     });
 
-    // Markierte vs. Alle Artikel filtern
     const anzeigeDaten = (zeigeAlleArtikel || isSearching) ? daten : daten.filter(z => z.artikel?.wichtig);
 
     const gruppen = {};
@@ -983,7 +980,6 @@ function tabelleAktualisieren(daten) {
             }
         });
 
-        // Nach Artikel gruppieren
         const artMap = new Map();
         zeilen.forEach(z => {
             if (!artMap.has(z.artikel_id)) artMap.set(z.artikel_id, { artikel: z.artikel, bestaende: [] });
@@ -1006,7 +1002,6 @@ function tabelleAktualisieren(daten) {
             const isGrp = parts.length > 1 && prefixCounts[parts[0]] > 1;
             const pref = isGrp ? parts[0] : null;
 
-            // Prefix-Zwischenüberschrift einfügen
             if (isGrp && currentPrefix !== pref) {
                 const pSum = prefixSums[pref] || 0;
                 const pInf = prefixInf[pref];
@@ -1042,6 +1037,7 @@ function tabelleAktualisieren(daten) {
                     <span style="word-break:break-word;">${escapeHtml(grp.artikel.kommentar.trim())}</span>
                 </div>` : '';
 
+            // Reservierungshinweis (wird jetzt rechts unter die Mengen platziert)
             let resHtml = '';
             const res = resMap[artId];
             if (res && res.gesamt > 0) {
@@ -1073,14 +1069,17 @@ function tabelleAktualisieren(daten) {
                 <td style="padding-left:${isGrp ? 45 : 25}px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
                     ${isGrp ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
                     <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(grp.artikel.id)}</div>
-                    ${resHtml ? `<div style="margin-top:3px;">${resHtml}</div>` : ''}
                 </td>
-                <td colspan="2">${bestandRowsHtml}</td>`;
+                <td colspan="2">
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        ${bestandRowsHtml}
+                        ${resHtml ? `<div style="display:flex; justify-content:flex-end; margin-top:2px;">${resHtml}</div>` : ''}
+                    </div>
+                </td>`;
             tbody.appendChild(tr);
         });
     });
 
-    // Button für mehr/weniger Artikel
     const hiddenCount = aktuelleDaten.filter(z => z.artikel && !z.artikel.wichtig).length;
     if (hiddenCount > 0 && !isSearching) {
         const footTr = document.createElement('tr');
@@ -1094,7 +1093,6 @@ function tabelleAktualisieren(daten) {
     }
 }
 
-// Speichert das Mengenfeld (inkl. Rechner & Strich-Unterstützung)
 async function speichereMenge(bId) {
     const f = $(`menge-${bId}`);
     if (!f) return;
@@ -1198,7 +1196,7 @@ async function entferneNfcVonOrt() {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN (MIT ORIGINAL-MENGENSYSTEM)
+// 10. ARTIKEL ANLEGEN & BEARBEITEN
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
