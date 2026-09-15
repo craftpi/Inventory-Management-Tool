@@ -31,6 +31,9 @@ let aktiverRegalFilter = '';
 let finderFilterModus = 'fehlend';
 let etikettenAuswahlIds = new Set();
 let einkaufslisteArray = [];
+let autoFehlbestandListe = [];
+let eigeneVorschlaegeListe = [];
+let manuelleEintraegeListe = [];
 
 // Kisten- & Scan-Zustände
 let kistenCheckAktuelleId = '';
@@ -62,8 +65,21 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-function closeModal(id) { const el = $(id); if (el) el.style.display = 'none'; }
-function openModalById(id) { const el = $(id); if (el) el.style.display = 'block'; }
+function openModalById(id) {
+    const el = $(id);
+    if (!el) return;
+    el.style.display = 'block';
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('modal-visible')));
+}
+
+function closeModal(id) {
+    const el = $(id);
+    if (!el) return;
+    el.classList.remove('modal-visible');
+    setTimeout(() => {
+        if (!el.classList.contains('modal-visible')) el.style.display = 'none';
+    }, 220);
+}
 
 function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', defaultOption = null, selectedValue = null, formatLabel = null } = {}) {
     if (!selectEl) return;
@@ -445,7 +461,6 @@ function renderKistenInhaltListe(lid) {
     });
 }
 
-// Ganze Kiste entnehmen (alle zählbaren Artikel auf 0)
 async function ganzeKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
     if (!confirm('Soll die gesamte Kiste als entnommen ausgebucht werden (Bestand aller zählbaren Artikel wird 0)?')) return;
@@ -465,7 +480,6 @@ async function ganzeKisteAusbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// Ganze Kiste zurückbuchen (alle Artikel auf Soll-Wert)
 async function ganzeKisteZurueckbuchen() {
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
@@ -485,7 +499,6 @@ async function ganzeKisteZurueckbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// Einzelnen Artikel in Kiste anpassen (+1 / -1)
 async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
@@ -911,7 +924,6 @@ function tabelleAktualisieren(daten) {
     const suchText = $('such-filter')?.value.trim() || '';
     const isSearching = suchText.length > 0 || aktiverRegalFilter !== '';
 
-    // Reservierungen aus Packlisten berechnen
     const resMap = {};
     packlistenPositionen.forEach(p => {
         if (!p.artikel_id) return;
@@ -968,7 +980,6 @@ function tabelleAktualisieren(daten) {
         tbody.appendChild(headerTr);
         if (!isOpen) return;
 
-        // Prefix-Gruppierung vorbereiten
         const prefixCounts = {}, prefixSums = {}, prefixInf = {};
         zeilen.forEach(z => {
             const parts = z.artikel.name.trim().split(' ');
@@ -1037,7 +1048,6 @@ function tabelleAktualisieren(daten) {
                     <span style="word-break:break-word;">${escapeHtml(grp.artikel.kommentar.trim())}</span>
                 </div>` : '';
 
-            // Reservierungshinweis (wird jetzt rechts unter die Mengen platziert)
             let resHtml = '';
             const res = resMap[artId];
             if (res && res.gesamt > 0) {
@@ -1115,7 +1125,6 @@ async function speichereMenge(bId) {
     } else showToast('Speicherfehler!', 'error');
 }
 
-// Tooltip-Events
 window.handleMouseEnter = (e) => {
     const t = e.currentTarget;
     if (t.dataset.hoverType === 'date') { $('hover-date-text').innerHTML = t.dataset.hoverContent; $('hover-date-info').style.display = 'block'; }
@@ -1526,33 +1535,71 @@ function druckePackliste() {
 }
 
 function startEinkaufsliste() {
-    const autoListe = [];
-    const sonderListe = [];
-    einkaufslisteArray = [];
+    autoFehlbestandListe = [];
+    eigeneVorschlaegeListe = [];
+    manuelleEintraegeListe = [];
+    const bestandMap = {}, nachkaufSet = new Set(), bedarfMap = {}, eigeneMap = {};
 
-    const bestandMap = {};
     aktuelleDaten.forEach(b => {
         const m = Number(b.menge);
-        if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + m;
+        if (m === BESTAND_STRICH_NACHKAUF) nachkaufSet.add(String(b.artikel_id));
+        else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + m;
     });
 
-    const bedarfMap = {};
     packlistenPositionen.forEach(p => {
         if (p.artikel_id) bedarfMap[p.artikel_id] = (bedarfMap[p.artikel_id] || 0) + Number(p.menge);
-        else if (p.eigener_name) sonderListe.push({ artikel: p.eigener_name, menge: p.menge, grund: 'Packliste Sonderposten' });
+        else if (p.eigener_name) eigeneMap[p.eigener_name] = (eigeneMap[p.eigener_name] || 0) + Number(p.menge);
     });
 
     alleArtikelInfos.forEach(art => {
+        const bestand = nachkaufSet.has(String(art.id)) ? 0 : (bestandMap[art.id] || 0);
         const bedarf = bedarfMap[art.id] || 0;
-        const ist = bestandMap[art.id] || 0;
-        if (bedarf > ist) autoListe.push({ artikel: art.name, menge: bedarf - ist, grund: 'Fehlt für Packliste' });
+        if (nachkaufSet.has(String(art.id))) {
+            autoFehlbestandListe.push({ artikel: art.name, menge: Math.max(1, bedarf), grund: 'Nachkauf markiert (🔴)' });
+        } else if (bedarf > bestand) {
+            autoFehlbestandListe.push({ artikel: art.name, menge: bedarf - bestand, grund: 'Fehlt im Lager für Packliste' });
+        }
     });
 
-    einkaufslisteArray = [...autoListe, ...sonderListe];
+    const autoEl = $('auto-kauf-liste');
+    if (autoEl) {
+        autoEl.innerHTML = autoFehlbestandListe.length ? 
+            autoFehlbestandListe.map(i => `<li><strong>${i.menge}x</strong> ${escapeHtml(i.artikel)} <small style="color:#7f8c8d;">(${i.grund})</small></li>`).join('') : 
+            '<li style="color:#27ae60;">Alles grün! Keine Fehlbestände.</li>';
+    }
 
-    $('auto-kauf-liste').innerHTML = autoListe.length ? autoListe.map(i => `<li>${i.menge}x ${escapeHtml(i.artikel)}</li>`).join('') : '<li>Keine Fehlmengen.</li>';
-    $('eigene-kauf-liste').innerHTML = sonderListe.length ? sonderListe.map(i => `<li>${i.menge}x ${escapeHtml(i.artikel)}</li>`).join('') : '<li>Keine Sonderposten.</li>';
+    const eigeneEl = $('eigene-kauf-liste');
+    if (eigeneEl) {
+        eigeneEl.innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
+            eigeneVorschlaegeListe.push({ artikel: name, menge: m, grund: 'Sonderposten Packliste' });
+            return `<li style="margin-bottom:6px;"><label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="eigene-kauf-check" data-index="${idx}" checked onchange="aktualisiereEinkaufslisteAuswahl()"><span>${m}x ${escapeHtml(name)}</span></label></li>`;
+        }).join('') || '<li style="color:#7f8c8d;">Keine Sonderposten in Packlisten.</li>';
+    }
+
+    const manEl = $('manuell-kauf-liste');
+    if (manEl) manEl.innerHTML = '';
+
+    aktualisiereEinkaufslisteAuswahl();
     openModalById('kauflisteModal');
+}
+
+function aktualisiereEinkaufslisteAuswahl() {
+    const ausgewaehlt = Array.from(document.querySelectorAll('.eigene-kauf-check:checked'))
+        .map(chk => eigeneVorschlaegeListe[Number(chk.dataset.index)])
+        .filter(Boolean);
+    einkaufslisteArray = [...autoFehlbestandListe, ...ausgewaehlt, ...manuelleEintraegeListe];
+}
+
+function manuellAufZettel() {
+    const n = $('manuell-kauf-name')?.value.trim();
+    const m = werteMengeAus($('manuell-kauf-menge')?.value) || 1;
+    if (!n || m <= 0) return;
+    manuelleEintraegeListe.push({ artikel: n, menge: m, grund: 'Manuell hinzugefügt' });
+    aktualisiereEinkaufslisteAuswahl();
+    const manEl = $('manuell-kauf-liste');
+    if (manEl) manEl.innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
+    if ($('manuell-kauf-name')) $('manuell-kauf-name').value = '';
+    if ($('manuell-kauf-menge')) $('manuell-kauf-menge').value = '1';
 }
 
 async function downloadExcel() {

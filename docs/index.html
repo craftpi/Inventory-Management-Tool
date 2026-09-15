@@ -746,15 +746,29 @@
     <div class="modal-content" style="max-width: 520px;">
         <button type="button" class="modal-close-x" onclick="closeModal('kauflisteModal')">✕</button>
         <h2 style="margin-top: 0; color: #8e44ad;">🛒 Einkaufsliste</h2>
-        <p style="font-weight: bold; margin-bottom:5px;">Fehlbestand aus Packlisten &amp; Lager:</p>
-        <div style="max-height: 180px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border:1px solid #fadbd8;">
+        
+        <p style="font-weight: bold; margin-bottom:5px;">Automatisch erkannter Fehlbestand &amp; Nachkauf:</p>
+        <div style="max-height: 150px; overflow-y: auto; background: #fdf0ed; padding: 10px; border-radius: 6px; border:1px solid #fadbd8;">
             <ul id="auto-kauf-liste" style="margin: 0; padding-left: 20px; color: #c0392b;"></ul>
         </div>
-        <p style="font-weight: bold; margin: 12px 0 5px 0;">Sonderposten:</p>
+        
+        <p style="font-weight: bold; margin: 12px 0 5px 0;">Sonderposten aus Packlisten:</p>
         <div style="max-height: 120px; overflow-y: auto; background: #eef7ff; padding: 10px; border-radius: 6px; border:1px solid #d6eaf8;">
             <ul id="eigene-kauf-liste" style="margin: 0; padding-left: 20px; color: #2c3e50;"></ul>
         </div>
-        <div class="flex-buttons" style="margin-top: 25px;">
+
+        <hr style="margin: 18px 0; border: 0; border-top: 1px solid #eee;">
+        <p style="margin-bottom: 8px; font-weight: bold;">Zusätzliche Dinge manuell notieren:</p>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <input type="text" id="manuell-kauf-name" placeholder="z.B. Klebeband" style="flex: 3; padding: 8px; border: 1px solid #ccc; border-radius: 6px;">
+            <input type="text" id="manuell-kauf-menge" value="1" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 6px; text-align: center;">
+            <button type="button" class="btn" style="background-color: #3498db; width: auto;" onclick="manuellAufZettel()">+ Add</button>
+        </div>
+        <div style="max-height: 90px; overflow-y: auto;">
+            <ul id="manuell-kauf-liste" style="margin: 0; padding-left: 20px; color: #27ae60;"></ul>
+        </div>
+
+        <div class="flex-buttons" style="margin-top: 20px;">
             <button class="btn btn-save" style="background-color: #8e44ad;" onclick="downloadExcel()">📥 Excel Herunterladen</button>
             <button class="btn btn-cancel" onclick="closeModal('kauflisteModal')">Schließen</button>
         </div>
