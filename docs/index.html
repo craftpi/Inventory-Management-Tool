@@ -15,7 +15,11 @@
         body { font-family: Arial, sans-serif; background: linear-gradient(160deg, #e3000f 0%, #b8000c 100%); color: #333; margin: 0; padding: 40px 20px; min-height: 100vh; box-sizing: border-box; overflow-x: hidden; }
         .container { max-width: min(1300px, 90vw); width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); animation: containerEnter 0.35s cubic-bezier(0.16,1,0.3,1); }
         @keyframes containerEnter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        
+        /* Kopfzeile: Titel links, Buttons rechtsbündig in einer Linie */
+        h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .header-actions { display: inline-flex; gap: 8px; align-items: center; margin-left: auto; flex-shrink: 0; }
+        
         p.subtitle { color: #666; margin-bottom: 25px; line-height: 1.4; text-align: center; }
         
         .btn { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease; font-size: 0.95em; font-weight: bold; min-height: 44px; }
@@ -171,8 +175,10 @@
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
             .modal-content { padding: 16px; width: 95%; }
-            h1 { flex-direction: column; align-items: flex-start; }
-            h1 > span:last-child { width: 100%; }
+            
+            /* Kopfzeile auf Mobilgeräten: Titel und Buttons weiterhin sauber in einer Zeile */
+            h1 { font-size: 1.25em; gap: 8px; }
+            .header-actions .btn { width: auto; padding: 6px 10px; font-size: 0.75em; min-height: 36px; }
             .regal-qr-grid { grid-template-columns: 1fr; }
         }
     </style>
@@ -333,13 +339,13 @@
 </div>
 
 <div class="container">
+    <!-- Header: Titel links, Hilfe und Abmelden in einer Zeile rechtsbündig -->
     <h1>
         <span>📦 Lager-Verwaltung</span>
-        <span style="display:flex; gap:8px;">
-            <button class="btn" style="background-color: #7f8c8d; font-size: 0.85em; width: auto;" onclick="oeffneOnboarding()" title="Kurzanleitung">❓ Hilfe</button>
-            <button class="btn" style="background-color: #16a085; font-size: 0.85em; width: auto;" onclick="oeffneScanHubModal()">⚡ Scannen &amp; Rückgabe</button>
-            <button class="btn" style="background-color: #e74c3c; font-size: 0.85em; width: auto;" onclick="handleLogout()">🔒 Abmelden</button>
-        </span>
+        <div class="header-actions">
+            <button class="btn" style="background-color: #7f8c8d; font-size: 0.85em; width: auto; min-height: 38px; padding: 6px 12px;" onclick="oeffneOnboarding()" title="Kurzanleitung">❓ Hilfe</button>
+            <button class="btn" style="background-color: #e74c3c; font-size: 0.85em; width: auto; min-height: 38px; padding: 6px 12px;" onclick="handleLogout()">🔒 Abmelden</button>
+        </div>
     </h1>
 
     <div style="display:flex; gap:8px; justify-content:center; margin-bottom:16px; flex-wrap:wrap;">
