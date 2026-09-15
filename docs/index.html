@@ -16,7 +16,6 @@
         .container { max-width: min(1300px, 90vw); width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); animation: containerEnter 0.35s cubic-bezier(0.16,1,0.3,1); }
         @keyframes containerEnter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* Kopfzeile: Titel links, Buttons rechtsbündig in einer Linie */
         h1 { color: #2c3e50; margin-top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
         .header-actions { display: inline-flex; gap: 8px; align-items: center; margin-left: auto; flex-shrink: 0; }
         
@@ -176,7 +175,6 @@
             th, td { padding: 10px 6px; font-size: 0.9em; }
             .modal-content { padding: 16px; width: 95%; }
             
-            /* Kopfzeile auf Mobilgeräten: Titel und Buttons weiterhin sauber in einer Zeile */
             h1 { font-size: 1.25em; gap: 8px; }
             .header-actions .btn { width: auto; padding: 6px 10px; font-size: 0.75em; min-height: 36px; }
             .regal-qr-grid { grid-template-columns: 1fr; }
@@ -339,7 +337,6 @@
 </div>
 
 <div class="container">
-    <!-- Header: Titel links, Hilfe und Abmelden in einer Zeile rechtsbündig -->
     <h1>
         <span>📦 Lager-Verwaltung</span>
         <div class="header-actions">
@@ -372,11 +369,13 @@
                 <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                     <option value="ALLE">Alle Kategorien</option>
                 </select>
+
+                <!-- Bearbeiten-Knopf und Orte-Dropdown getauscht -->
+                <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 <select id="ort-filter-combo" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="ortComboChanged()">
                     <option value="">Alle Orte</option>
                 </select>
 
-                <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 <button class="btn lager-edit-only" style="display:none;" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
                 <button class="btn lager-edit-only" style="display:none; background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
@@ -476,7 +475,6 @@
             Kiste oder Artikel per Kamera / NFC erfassen – oder Gegenstand ohne Code direkt per Name zuordnen.
         </p>
 
-        <!-- Zwei zentrale Hardware-Scan Taster -->
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px;">
             <button class="btn" id="hub-kamera-btn" style="background:#27ae60; padding:12px; display:flex; flex-direction:column; align-items:center; gap:4px;" onclick="toggleHubKamera()">
                 <span style="font-size:1.5em;">📷</span>
@@ -490,7 +488,6 @@
             </button>
         </div>
 
-        <!-- Kamera-Scanner Bereich (klappt bei Klick auf) -->
         <div id="hub-camera-wrapper" style="display:none; margin-bottom:14px; background:#f8fafc; border:1px solid #d9e3ec; border-radius:8px; padding:10px;">
             <div id="hub-qr-reader" style="width:100%; border-radius:6px; overflow:hidden;"></div>
             <p id="hub-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height:1.2em; margin:6px 0 0 0; font-size:0.9em;"></p>
@@ -786,8 +783,8 @@
         <button type="button" class="modal-close-x" onclick="closeModal('technikModal')">✕</button>
         <h2 style="color: #e3000f; margin-top: 0;">Technik- &amp; Datenschutz-Infos</h2>
         <p>Dieses interne Verwaltungstool nutzt spezialisierte Dienste zur Bereitstellung:</p>
-        <p><strong>1. Supabase / PostgreSQL API:</strong> Speicherung von Bestands- und Logindaten.</p>
-        <p><strong>2. GitHub Pages:</strong> Statisches Hosting der Webapp.</p>
+        <p><strong>1. Supabase / PostgreSQL API:</strong> Speicherung von Bestands- und Logindaten. Aus technischen Gründen wird die IP-Adresse des Nutzers verarbeitet.</p>
+        <p><strong>2. GitHub Pages:</strong> Statisches Hosting der Webapp. Es gelten die Datenschutzbestimmungen von GitHub.</p>
         <div class="flex-buttons" style="margin-top: 25px;">
             <button class="btn btn-cancel" style="width: 100%;" onclick="closeModal('technikModal')">Schließen</button>
         </div>
