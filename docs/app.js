@@ -96,7 +96,6 @@ function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', d
     }
 }
 
-// Sicherer Mini-Parser für Rechenausdrücke
 function berechneMengenAusdruck(ausdruck) {
     let pos = 0;
     const err = () => { throw new Error('Ungültiger Ausdruck'); };
@@ -365,7 +364,6 @@ async function ladeBestand() {
         const alt = z.alte_menge !== null && z.alte_menge !== undefined ? Number(z.alte_menge) : null;
 
         let soll, ist;
-        // WICHTIG: Negative Werte (-1, -2, -3) sind Sonderzustände und dürfen nicht auf 0 gesetzt werden!
         if (m === -1 || m === -2 || m === -3) {
             soll = m;
             ist = m;
@@ -481,7 +479,6 @@ function renderKistenInhaltListe(lid) {
     });
 }
 
-// Ganze Kiste entnehmen (alle zählbaren Artikel auf 0)
 async function ganzeKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
     if (!confirm('Soll die gesamte Kiste als entnommen ausgebucht werden (Bestand aller zählbaren Artikel wird 0)?')) return;
@@ -501,7 +498,6 @@ async function ganzeKisteAusbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// Ganze Kiste zurückbuchen (alle Artikel exakt auf Soll-Wert, niemals darüber)
 async function ganzeKisteZurueckbuchen() {
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
@@ -521,7 +517,6 @@ async function ganzeKisteZurueckbuchen() {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// Einzelnen Artikel in Kiste anpassen (+1 / -1) mit harter 0- und Soll-Grenze
 async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
@@ -551,7 +546,6 @@ async function aendereArtikelMengeInKiste(bestandId, delta) {
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
-// Direkteingabe im Kisten-Check (validiert gegen Soll-Grenze)
 async function speichereKisteMengeInput(bId, rawVal) {
     const eintrag = aktuelleDaten.find(b => b.id === bId);
     if (!eintrag) return;
@@ -942,7 +936,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE: HAUPTERFASSUNG DER GESAMTMENGE & STRICH-ANZEIGE)
+// 8. LAGER-MODUS (TABELLE: HAUPTERFASSUNG DER GESAMTMENGE & KORREKTE GRUPPIERUNG)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -1066,21 +1060,30 @@ function tabelleAktualisieren(daten) {
         tbody.appendChild(headerTr);
         if (!isOpen) return;
 
-        const prefixCounts = {}, prefixSums = {}, prefixInf = {};
-        zeilen.forEach(z => {
-            const parts = z.artikel.name.trim().split(' ');
-            if (parts.length > 1) {
-                const pref = parts[0];
-                prefixCounts[pref] = (prefixCounts[pref] || 0) + 1;
-                if (Number(z.menge) === -1) prefixInf[pref] = true;
-                else if (Number(z.menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(z.soll_menge >= 0 ? z.soll_menge : z.menge);
-            }
-        });
-
+        // Nach Artikel-ID gruppieren (mehrere Standorte landen im selben Objekt)
         const artMap = new Map();
         zeilen.forEach(z => {
             if (!artMap.has(z.artikel_id)) artMap.set(z.artikel_id, { artikel: z.artikel, bestaende: [] });
             artMap.get(z.artikel_id).bestaende.push(z);
+        });
+
+        // WICHTIGE ÄNDERUNG: Wir zählen unterschiedliche Artikel (IDs) pro Prefix, NICHT Standorte!
+        const prefixArtikelSets = {};
+        const prefixSums = {};
+        const prefixInf = {};
+
+        artMap.forEach(grp => {
+            const parts = grp.artikel.name.trim().split(' ');
+            if (parts.length > 1) {
+                const pref = parts[0];
+                if (!prefixArtikelSets[pref]) prefixArtikelSets[pref] = new Set();
+                prefixArtikelSets[pref].add(grp.artikel.id);
+
+                grp.bestaende.forEach(b => {
+                    if (Number(b.menge) === -1) prefixInf[pref] = true;
+                    else if (Number(b.menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(b.soll_menge >= 0 ? b.soll_menge : b.menge);
+                });
+            }
         });
 
         const sortierteArtikel = Array.from(artMap.entries()).map(([artId, grp]) => ({
@@ -1096,10 +1099,12 @@ function tabelleAktualisieren(daten) {
         sortierteArtikel.forEach(({ grp, artId }) => {
             grp.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
             const parts = grp.artikel.name.trim().split(' ');
-            const isGrp = parts.length > 1 && prefixCounts[parts[0]] > 1;
-            const pref = isGrp ? parts[0] : null;
 
-            if (isGrp && currentPrefix !== pref) {
+            // Nur gruppieren, wenn mindestens 2 VERSCHIEDENE ARTIKEL mit diesem Wort beginnen!
+            const hatMehrereVerschiedeneArtikel = parts.length > 1 && prefixArtikelSets[parts[0]] && prefixArtikelSets[parts[0]].size > 1;
+            const pref = hatMehrereVerschiedeneArtikel ? parts[0] : null;
+
+            if (hatMehrereVerschiedeneArtikel && currentPrefix !== pref) {
                 const pSum = prefixSums[pref] || 0;
                 const pInf = prefixInf[pref];
                 const pText = pInf ? (pSum > 0 ? `${pSum} + ∞` : '∞') : pSum;
@@ -1113,7 +1118,9 @@ function tabelleAktualisieren(daten) {
                     </td>`;
                 tbody.appendChild(subTr);
                 currentPrefix = pref;
-            } else if (!isGrp) currentPrefix = null;
+            } else if (!hatMehrereVerschiedeneArtikel) {
+                currentPrefix = null;
+            }
 
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? 'pointer' : 'default';
@@ -1121,7 +1128,8 @@ function tabelleAktualisieren(daten) {
                 if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
             };
 
-            const displayName = isGrp ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
+            // Nur abschneiden, wenn es wirklich mehrere unterschiedliche Artikel unter diesem Prefix gibt
+            const displayName = hatMehrereVerschiedeneArtikel ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
             const wichtigBadge = grp.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
             const hatKommentar = Boolean(grp.artikel.kommentar?.trim());
             const kommentarIcon = isEditMode ? `
@@ -1149,7 +1157,6 @@ function tabelleAktualisieren(daten) {
                 const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
                 
                 let zelle = '';
-                // HIER: Exakte Prüfung der Mengenwerte -1, -2, -3!
                 if (m === -1) {
                     zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
                 } else if (m === -2 || m === -3) {
@@ -1172,8 +1179,8 @@ function tabelleAktualisieren(daten) {
             const dateStr = latestDate ? latestDate.toLocaleDateString('de-DE') + ' ' + latestDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : 'Unbekannt';
 
             tr.innerHTML = `
-                <td style="padding-left:${isGrp ? 45 : 25}px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
-                    ${isGrp ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
+                <td style="padding-left:${hatMehrereVerschiedeneArtikel ? 45 : 25}px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
+                    ${hatMehrereVerschiedeneArtikel ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
                     <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(grp.artikel.id)}</div>
                 </td>
                 <td colspan="2">
@@ -1224,7 +1231,7 @@ async function speichereMenge(bId) {
     }
 
     let { error } = await dbClient.from('bestand').update({
-        menge: neuesMenge < 0 ? neueMenge : neuesIst,
+        menge: neueMenge < 0 ? neueMenge : neuesIst,
         alte_menge: neueMenge,
         created_at: datum
     }).eq('id', bId);
@@ -1316,7 +1323,7 @@ async function entferneNfcVonOrt() {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN (STRICHE & UNENDLICHVOLLSTÄNDIG AKTIV)
+// 10. ARTIKEL ANLEGEN & BEARBEITEN
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
