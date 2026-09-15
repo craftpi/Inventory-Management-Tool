@@ -11,6 +11,9 @@ const STORAGE_KEYS = {
     ONBOARDING: 'lager_onboarding_v1_gesehen'
 };
 
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCK_DURATION_MS = 5 * 60 * 1000;
+
 const TABLES = {
     FORMULAR: 'formular_antworten'
 };
@@ -261,6 +264,50 @@ function toggleNachkaufCheckbox(chk) {
 // =========================================================================
 // 3. AUTH & ONBOARDING / HILFE
 // =========================================================================
+function pruefeLoginSperre() {
+    try {
+        const lockUntil = Number(window.localStorage.getItem(STORAGE_KEYS.LOCK)) || 0;
+        const now = Date.now();
+        if (lockUntil > now) {
+            const verbleibendMs = lockUntil - now;
+            const minuten = Math.ceil(verbleibendMs / 60000);
+            return { gesperrt: true, minuten };
+        }
+        if (lockUntil > 0) {
+            window.localStorage.removeItem(STORAGE_KEYS.LOCK);
+            window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
+        }
+        return { gesperrt: false };
+    } catch {
+        return { gesperrt: false };
+    }
+}
+
+function registriereLoginFehlversuch() {
+    try {
+        const attempts = (Number(window.localStorage.getItem(STORAGE_KEYS.ATTEMPTS)) || 0) + 1;
+        if (attempts >= MAX_LOGIN_ATTEMPTS) {
+            const lockUntil = Date.now() + LOGIN_LOCK_DURATION_MS;
+            window.localStorage.setItem(STORAGE_KEYS.LOCK, String(lockUntil));
+            window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
+            const minuten = Math.ceil(LOGIN_LOCK_DURATION_MS / 60000);
+            return { gesperrt: true, minuten };
+        } else {
+            window.localStorage.setItem(STORAGE_KEYS.ATTEMPTS, String(attempts));
+            return { gesperrt: false, verbleibend: MAX_LOGIN_ATTEMPTS - attempts };
+        }
+    } catch {
+        return { gesperrt: false, verbleibend: 0 };
+    }
+}
+
+function loescheLoginSperre() {
+    try {
+        window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
+        window.localStorage.removeItem(STORAGE_KEYS.LOCK);
+    } catch {}
+}
+
 function setzeAuthToken(token) {
     if (token) dbClient.rest.headers.set('Authorization', `Bearer ${token}`);
     else dbClient.rest.headers.delete('Authorization');
@@ -290,13 +337,39 @@ function speichereLokaleSession(user) {
 }
 
 async function handleLogin() {
-    const p = $('login-password').value;
     const errEl = $('login-error');
+
+    const sperre = pruefeLoginSperre();
+    if (sperre.gesperrt) {
+        if (errEl) {
+            errEl.style.display = 'block';
+            errEl.innerText = `Zu viele Fehlversuche! Bitte in ca. ${sperre.minuten} Minute(n) erneut versuchen.`;
+        }
+        return;
+    }
+
+    const p = $('login-password').value;
+    if (!p) {
+        if (errEl) {
+            errEl.style.display = 'block';
+            errEl.innerText = 'Bitte gib ein Passwort ein!';
+        }
+        return;
+    }
 
     const { data, error } = await dbClient.rpc('login_user', { p_password: p });
     if (error || !data || data.length === 0) {
-        if (errEl) { errEl.style.display = 'block'; errEl.innerText = 'Falsches Passwort!'; }
+        const status = registriereLoginFehlversuch();
+        if (errEl) {
+            errEl.style.display = 'block';
+            if (status.gesperrt) {
+                errEl.innerText = `Zu viele Fehlversuche! Login für ${status.minuten} Minuten gesperrt.`;
+            } else {
+                errEl.innerText = `Falsches Passwort! Noch ${status.verbleibend} Versuch(e) übrig.`;
+            }
+        }
     } else {
+        loescheLoginSperre();
         if (errEl) errEl.style.display = 'none';
         $('login-password').value = '';
         $('login-overlay').style.display = 'none';

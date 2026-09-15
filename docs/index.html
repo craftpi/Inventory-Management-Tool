@@ -299,7 +299,7 @@
     <div style="max-width:350px; width:100%; padding:40px 30px; background:white; border-radius:12px; text-align:center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); box-sizing: border-box;">
         <h2 style="margin-top:0; color:#2c3e50;">🔐 Lager-Zugang</h2>
         <p style="color:#666; margin-bottom: 25px;">Bitte gib das Vereins-Passwort ein.</p>
-        <input type="password" id="login-password" placeholder="Vereins-Passwort" style="width:100%; padding:12px; margin-bottom:20px; text-align:center; font-size:1.2em; border: 1px solid #ccc; border-radius: 6px; box-sizing:border-box;">
+        <input type="password" id="login-password" placeholder="Vereins-Passwort" onkeydown="if (event.key === 'Enter') handleLogin()" style="width:100%; padding:12px; margin-bottom:20px; text-align:center; font-size:1.2em; border: 1px solid #ccc; border-radius: 6px; box-sizing:border-box;">
         <button class="btn" onclick="handleLogin()" style="width:100%; padding:12px; font-size:1.1em;">🔓 Entsperren</button>
         <p id="login-error" style="color:red; display:none; margin-top:15px; font-weight:bold;">Falsches Passwort!</p>
     </div>
