@@ -34,7 +34,31 @@
         .btn-modus.active:hover { background: #c40010; }
 
         .action-bar { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
-        .action-group { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
+        
+        /* 2-Spalten-Layout für die Haupt-Bedienelemente */
+        .lager-controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+            width: 100%;
+        }
+        .control-column {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .control-column .btn, .control-column select {
+            width: 100%;
+            margin: 0;
+        }
+
+        .lager-edit-bar {
+            grid-column: 1 / -1;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 4px;
+        }
         
         .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; min-width: 500px; }
@@ -170,7 +194,8 @@
         @media (max-width: 600px) {
             body { padding: 8px 4px; }
             .container { padding: 15px 10px; max-width: 100%; border-radius: 10px; }
-            .action-bar, .action-group { flex-direction: column; align-items: stretch; }
+            .action-bar { flex-direction: column; align-items: stretch; }
+            .lager-controls-grid { grid-template-columns: 1fr; }
             .btn { width: 100%; padding: 12px; }
             th, td { padding: 10px 6px; font-size: 0.9em; }
             .modal-content { padding: 16px; width: 95%; }
@@ -363,23 +388,30 @@
         <div class="action-bar">
             <input type="text" id="such-filter" placeholder="🔍 Artikel, Ort, IDs oder Kategorie suchen..." onkeyup="wendeFilterAn()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
             
-            <div class="action-group">
-                <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Scannen &amp; Rückgabe (Kamera / NFC / Suche)</button>
-                
-                <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
-                    <option value="ALLE">Alle Kategorien</option>
-                </select>
+            <div class="lager-controls-grid">
+                <!-- Spalte 1: Aktionen (Scannen oben, Bearbeiten darunter) -->
+                <div class="control-column">
+                    <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Scannen &amp; Rückgabe</button>
+                    <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
+                </div>
 
-                <!-- Bearbeiten-Knopf und Orte-Dropdown getauscht -->
-                <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
-                <select id="ort-filter-combo" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="ortComboChanged()">
-                    <option value="">Alle Orte</option>
-                </select>
+                <!-- Spalte 2: Filter (Kategorien oben, Orte darunter) -->
+                <div class="control-column">
+                    <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
+                        <option value="ALLE">Alle Kategorien</option>
+                    </select>
+                    <select id="ort-filter-combo" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="ortComboChanged()">
+                        <option value="">Alle Orte</option>
+                    </select>
+                </div>
 
-                <button class="btn lager-edit-only" style="display:none;" onclick="openModal()">+ Neuer Artikel</button>
-                <button class="btn lager-edit-only" style="display:none; background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
-                <button class="btn lager-edit-only" style="display:none; background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
-                <button class="btn lager-edit-only" style="display:none; background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
+                <!-- Bearbeiten-Toolbar (wird nur eingeblendet, wenn Bearbeiten AN ist) -->
+                <div class="lager-edit-bar lager-edit-only" style="display:none;">
+                    <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
+                    <button class="btn" style="background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
+                    <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
+                    <button class="btn" style="background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
+                </div>
             </div>
         </div>
 
