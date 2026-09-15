@@ -41,6 +41,7 @@ let aktiverQrScanner = null;
 let aktiverNfcModus = null;
 let nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
+let hubKameraAktiv = false;
 
 // =========================================================================
 // 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN (DAS ORIGINAL-SYSTEM)
@@ -361,7 +362,7 @@ async function ladeBestand() {
 
     aktuelleDaten = (data || []).map(z => {
         const ist = Number(z.menge);
-        // Das Soll ist der Gesamtbestand. Liegt alte_menge vor, gilt sie als Obergrenze; sonst die vorhandene Menge.
+        // Das Soll ist die im Lagermodus festgelegte Gesamtmenge (alte_menge)
         const soll = (z.alte_menge !== null && Number(z.alte_menge) >= 0) 
             ? Math.max(Number(z.alte_menge), ist >= 0 ? ist : 0) 
             : (ist >= 0 ? ist : 0);
@@ -445,7 +446,7 @@ function renderKistenInhaltListe(lid) {
         else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
         else {
             statusText = `Im Lager: <strong>${ist}</strong> von max. <strong>${soll}</strong> ${einheit}`;
-            if (fehlt > 0) statusText += ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlend unterwegs</span>`;
+            if (fehlt > 0) statusText += ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>`;
             else statusText += ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
         }
 
@@ -614,16 +615,84 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. ARTIKEL-FINDER: „WO GEHÖRT DAS HIN? / RÜCKGABE OHNE CODE“
+// 6. DER ZENTRALE SCAN- & RÜCKGABE-HUB (MODAL-LOGIK)
 // =========================================================================
 
-function oeffneWoGehoertDasHinModal(vorbelegterSuchbegriff = '') {
+function oeffneScanHubModal(vorbelegterSuchbegriff = '') {
     $('artikel-finder-input').value = vorbelegterSuchbegriff;
     finderFilterModus = vorbelegterSuchbegriff ? 'alle' : 'fehlend';
     aktualisiereFinderFilterButtons();
     aktualisiereArtikelFinderListe(vorbelegterSuchbegriff);
-    openModalById('artikelFinderModal');
+    
+    // Kamera-Zustand zurücksetzen
+    stoppeHubKamera();
+    openModalById('scanHubModal');
 }
+
+function schliesseScanHubModal() {
+    stoppeHubKamera();
+    closeModal('scanHubModal');
+}
+
+async function toggleHubKamera() {
+    if (hubKameraAktiv) {
+        stoppeHubKamera();
+    } else {
+        await starteHubKamera();
+    }
+}
+
+async function starteHubKamera() {
+    const wrap = $('hub-camera-wrapper');
+    const status = $('hub-scanner-status');
+    const btnText = $('hub-kamera-text');
+    
+    wrap.style.display = 'block';
+    status.style.display = 'block';
+    status.innerText = 'Kamera startet…';
+    if (btnText) btnText.innerText = '✕ Kamera stoppen';
+    hubKameraAktiv = true;
+
+    if (aktiverQrScanner) {
+        try { await aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {}
+    }
+
+    aktiverQrScanner = new Html5Qrcode('hub-qr-reader');
+    try {
+        await aktiverQrScanner.start(
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 220, height: 220 } },
+            (decoded) => {
+                status.innerText = 'Erkannt: ' + decoded;
+                stoppeHubKamera();
+                schliesseScanHubModal();
+                verarbeiteUniversalScan(decoded);
+            },
+            () => {}
+        );
+        status.innerText = 'Bereit – QR-Code vor die Kamera halten.';
+    } catch (err) {
+        showToast('Kamera konnte nicht gestartet werden: ' + err.message, 'error');
+        stoppeHubKamera();
+    }
+}
+
+function stoppeHubKamera() {
+    if (aktiverQrScanner) {
+        aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; });
+    }
+    const wrap = $('hub-camera-wrapper');
+    const status = $('hub-scanner-status');
+    const btnText = $('hub-kamera-text');
+    if (wrap) wrap.style.display = 'none';
+    if (status) status.style.display = 'none';
+    if (btnText) btnText.innerText = 'Kamera-Scan';
+    hubKameraAktiv = false;
+}
+
+// Kompatibilitäts-Aliase
+function oeffneWoGehoertDasHinModal(vorbelegterSuchbegriff = '') { oeffneScanHubModal(vorbelegterSuchbegriff); }
+function oeffneKistenKameraModal() { oeffneScanHubModal(); starteHubKamera(); }
 
 function setzeFinderFilter(modus) {
     finderFilterModus = modus;
@@ -697,7 +766,7 @@ function aktualisiereArtikelFinderListe(suchbegriff = '') {
                     <button class="btn" style="background:#27ae60; padding:8px 12px; width:auto; min-height:40px;" onclick="buchtArtikelZurueckInKiste(${z.id})">
                         📥 Hier rein (+1)
                     </button>
-                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto; min-height:40px;" onclick="oeffneKistenCheck(${z.lagerort_id})" title="Kiste öffnen">📦</button>
+                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto; min-height:40px;" onclick="schliesseScanHubModal(); oeffneKistenCheck(${z.lagerort_id})" title="Kiste öffnen">📦</button>
                 </div>
             </div>
         `;
@@ -730,52 +799,8 @@ async function buchtArtikelZurueckInKiste(bestandId) {
 }
 
 // =========================================================================
-// 7. HARDWARE SCANNING (KAMERA & NFC)
+// 7. HARDWARE SCANNING (NFC & UNIVERSAL-SCAN)
 // =========================================================================
-
-async function starteKameraScanner({ modalId, readerId, statusId, onDecode }) {
-    openModalById(modalId);
-    const status = $(statusId);
-    if (status) status.innerText = 'Kamera wird gestartet…';
-
-    if (aktiverQrScanner) {
-        try { await aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {}
-    }
-
-    aktiverQrScanner = new Html5Qrcode(readerId);
-    try {
-        await aktiverQrScanner.start(
-            { facingMode: 'environment' },
-            { fps: 10, qrbox: { width: 240, height: 240 } },
-            (decoded) => {
-                if (status) status.innerText = 'Erkannt: ' + decoded;
-                onDecode(decoded);
-            },
-            () => {}
-        );
-        if (status) status.innerText = 'Bereit – Code vor die Kamera halten.';
-    } catch (err) {
-        showToast('Kamera konnte nicht gestartet werden.', 'error');
-        stoppeKameraScanner(modalId);
-    }
-}
-
-function stoppeKameraScanner(modalId) {
-    if (aktiverQrScanner) {
-        aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; });
-    }
-    closeModal(modalId);
-}
-
-function oeffneKistenKameraModal() {
-    starteKameraScanner({
-        modalId: 'kistenKameraModal',
-        readerId: 'kisten-qr-reader',
-        statusId: 'kisten-scanner-status',
-        onDecode: verarbeiteUniversalScan
-    });
-}
-function schliesseKistenKameraModal() { stoppeKameraScanner('kistenKameraModal'); }
 
 async function verarbeiteUniversalScan(rawCode) {
     if (scanSperre.kisten) return;
@@ -794,7 +819,7 @@ async function verarbeiteUniversalScan(rawCode) {
     const ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === ortCode.toLowerCase());
     if (ort) {
         if (navigator.vibrate) navigator.vibrate(120);
-        schliesseKistenKameraModal();
+        schliesseScanHubModal();
         oeffneKistenCheck(ort.id);
         return;
     }
@@ -806,13 +831,13 @@ async function verarbeiteUniversalScan(rawCode) {
     else if (mArtPref) artikelId = mArtPref[1].trim();
 
     if (artikelId) {
-        schliesseKistenKameraModal();
+        schliesseScanHubModal();
         const bestandsEintraege = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
         if (bestandsEintraege.length === 1) {
             await buchtArtikelZurueckInKiste(bestandsEintraege[0].id);
         } else if (bestandsEintraege.length > 1) {
             const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
-            oeffneWoGehoertDasHinModal(art?.name || '');
+            oeffneScanHubModal(art?.name || '');
         } else {
             showToast('Artikel hat keinen festen Lagerort.', 'warning');
         }
@@ -870,13 +895,12 @@ function deaktiviereNfc() {
 }
 
 function aktualisiereNfcUI(aktiv) {
-    ['kisten-nfc-btn', 'kisten-nfc-btn-lager'].forEach(id => {
-        const btn = $(id);
-        if (btn) {
-            btn.classList.toggle('nfc-aktiv', aktiv);
-            btn.innerText = aktiv ? '📶 NFC aktiv – zum Stoppen tippen' : '📶 NFC-Scan (Android)';
-        }
-    });
+    const btn = $('hub-nfc-btn');
+    const text = $('hub-nfc-text');
+    if (btn) {
+        btn.classList.toggle('nfc-aktiv', aktiv);
+        if (text) text.innerText = aktiv ? 'NFC aktiv (Stopp)' : 'NFC-Scan';
+    }
 }
 
 async function schreibeNfcTagFuerOrt() {
@@ -1117,7 +1141,6 @@ function tabelleAktualisieren(daten) {
                 if (soll === -1) zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
                 else if (soll === -2 || soll === -3) zelle = `<span class="bestand-status-pill ${soll === -3 ? 'warn' : 'ok'}">-</span>`;
                 else {
-                    // Das Eingabefeld zeigt die Gesamtmenge (Soll). Fehlt etwas, wird es darunter angezeigt.
                     zelle = `
                         <div style="display:flex; flex-direction:column; align-items:flex-end;">
                             <div class="bestand-ort-qty-wrap">
