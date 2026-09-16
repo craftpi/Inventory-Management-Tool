@@ -621,7 +621,7 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 }
 
 // -------------------------------------------------------------------------
-// Entnahme mit Personenerfassung
+// Entnahme mit Personenerfassung (Punkt 3)
 // -------------------------------------------------------------------------
 function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
@@ -949,15 +949,12 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. SCAN- & RÜCKGABE-HUB (EINFACH FÜR HELFER)
+// 6. DIREKTE KISTEN-SUCHE (STATT DOPPELTER SCANN-MENÜS)
 // =========================================================================
 
-function oeffneScanHubModal(vorbelegterSuchbegriff = '') {
-    $('artikel-finder-input').value = vorbelegterSuchbegriff;
-    finderFilterModus = vorbelegterSuchbegriff ? 'alle' : 'fehlend';
-    aktualisiereFinderFilterButtons();
-    aktualisiereArtikelFinderListe(vorbelegterSuchbegriff);
-    
+function oeffneScanHubModal() {
+    $('artikel-finder-input').value = '';
+    aktualisiereArtikelFinderListe('');
     stoppeHubKamera();
     openModalById('scanHubModal');
 }
@@ -1020,111 +1017,35 @@ function stoppeHubKamera() {
     hubKameraAktiv = false;
 }
 
-function setzeFinderFilter(modus) {
-    finderFilterModus = modus;
-    aktualisiereFinderFilterButtons();
-    aktualisiereArtikelFinderListe($('artikel-finder-input').value);
-}
-
-function aktualisiereFinderFilterButtons() {
-    const btnFehlend = $('finder-filter-fehlend');
-    const btnAlle = $('finder-filter-alle');
-    if (!btnFehlend || !btnAlle) return;
-
-    if (finderFilterModus === 'fehlend') {
-        btnFehlend.style.background = '#e74c3c';
-        btnAlle.style.background = '#95a5a6';
-    } else {
-        btnFehlend.style.background = '#95a5a6';
-        btnAlle.style.background = '#3498db';
-    }
-}
-
 function aktualisiereArtikelFinderListe(suchbegriff = '') {
     const container = $('artikel-finder-ergebnisse');
     const term = (suchbegriff || '').toLowerCase().trim();
 
-    let treffer = aktuelleDaten.filter(b => {
-        const soll = Number(b.soll_menge);
-        const ist = Number(b.ist_menge);
-        const fehlt = (soll > 0 && ist >= 0 && ist < soll);
-
-        if (term) {
-            const matches = [b.artikel?.name, b.lagerorte?.name, b.artikel?.kategorie]
-                .some(field => (field || '').toLowerCase().includes(term));
-            if (!matches) return false;
-        }
-
-        if (finderFilterModus === 'fehlend') return fehlt;
-        return true;
+    let treffer = alleLagerorte.filter(o => {
+        if (!term) return true;
+        return o.name.toLowerCase().includes(term) || (o.nfc_code || '').toLowerCase().includes(term);
     });
 
     if (!treffer.length) {
-        container.innerHTML = `
-            <p style="color:#666; text-align:center; padding:25px;">
-                ${term ? 'Kein passender Artikel gefunden.' : '🎉 Alle Kisten sind aktuell vollzählig! Keine Fehlteile.'}
-            </p>`;
+        container.innerHTML = '<p style="color:#666; text-align:center; padding:25px;">Keine Kiste gefunden.</p>';
         return;
     }
 
-    container.innerHTML = treffer.map(z => {
-        const soll = Number(z.soll_menge);
-        const ist = Number(z.ist_menge);
-        const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
-        const einheit = z.artikel?.einheit || 'Stück';
-
-        let standText = '';
-        if (ist === -1) standText = '∞ Unbegrenzt';
-        else if (ist === -2 || ist === -3) standText = ist === -3 ? '🔴 Nachkaufen' : '<span class="bestand-status-pill ok">-</span> Ausreichend';
-        else standText = `Vorhanden: ${ist} / ${soll} ${einheit} ${fehlt > 0 ? `<span style="color:#c0392b; font-weight:bold;">(${fehlt} fehlen)</span>` : '✅'}`;
-
+    container.innerHTML = treffer.map(ort => {
+        const bestand = gibKistenBestand(ort.id);
+        const entnahme = ermittleKistenEntnahmeStatus(ort.id);
         return `
             <div style="border:1px solid #d9e3ec; background:#fff; border-radius:8px; padding:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
                 <div style="flex:1;">
-                    <div style="font-size:1.05em; font-weight:bold; color:#2c3e50;">${escapeHtml(z.artikel?.name)}</div>
-                    <div style="color:#16a085; font-weight:bold; margin-top:2px;">
-                        📍 Gehört in: <u>${escapeHtml(z.lagerorte?.name || 'Unbekannter Ort')}</u>
-                    </div>
-                    <small style="color:#666;">${standText}</small>
+                    <div style="font-size:1.05em; font-weight:bold; color:#2c3e50;">📦 ${escapeHtml(ort.name)}</div>
+                    <small style="color:#666;">${bestand.length} Artikel ${entnahme ? `&bull; <span style="color:#d35400; font-weight:bold;">Bei ${escapeHtml(entnahme.name)}</span>` : ''}</small>
                 </div>
-                <div style="display:flex; gap:6px;">
-                    ${ist >= 0 ? `
-                    <button class="btn" style="background:#27ae60; padding:8px 12px; width:auto; min-height:40px;" onclick="buchtArtikelZurueckInKiste(${z.id})">
-                        📥 Hier rein (+1)
-                    </button>
-                    ` : `
-                    <span style="display:inline-flex; align-items:center; padding:0 8px; color:#27ae60; font-weight:bold;">${ist === -3 ? '🔴 Nachkauf' : '✅ Vorhanden'}</span>
-                    `}
-                    <button class="btn" style="background:#3498db; padding:8px 10px; width:auto; min-height:40px;" onclick="schliesseScanHubModal(); oeffneKistenCheck(${z.lagerort_id})" title="Kiste öffnen">📦</button>
+                <div>
+                    <button class="btn" style="background:#16a085; padding:8px 14px; width:auto; min-height:40px;" onclick="schliesseScanHubModal(); oeffneKistenCheck(${ort.id})">Öffnen</button>
                 </div>
             </div>
         `;
     }).join('');
-}
-
-async function buchtArtikelZurueckInKiste(bestandId) {
-    const eintrag = aktuelleDaten.find(b => b.id === bestandId);
-    if (!eintrag) return;
-
-    const aktuell = Number(eintrag.ist_menge);
-    const soll = Number(eintrag.soll_menge) || 0;
-
-    if (soll > 0 && aktuell >= soll) {
-        showToast(`⚠️ "${eintrag.artikel?.name}" ist in "${eintrag.lagerorte?.name}" bereits vollzählig (${soll}/${soll})!`, 'warning');
-        return;
-    }
-
-    const neu = aktuell < 0 ? aktuell : (soll > 0 ? Math.min(soll, aktuell + 1) : aktuell + 1);
-
-    await dbClient.from('bestand').update({
-        menge: neu,
-        created_at: new Date().toISOString()
-    }).eq('id', bestandId);
-
-    if (navigator.vibrate) navigator.vibrate(120);
-    showToast(`✅ 1x "${eintrag.artikel?.name}" in "${eintrag.lagerorte?.name}" zurückgebucht (${neu}/${soll})!`);
-    await ladeAlles();
-    aktualisiereArtikelFinderListe($('artikel-finder-input').value);
 }
 
 // =========================================================================
@@ -1137,7 +1058,6 @@ async function verarbeiteUniversalScan(rawCode) {
     setTimeout(() => scanSperre.kisten = false, 1500);
 
     const raw = String(rawCode || '').trim();
-
     let ortCode = null;
     const mKisteUrl = /kistencheck=([^&\s]+)/i.exec(raw);
     const mKistePref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
@@ -1554,432 +1474,6 @@ window.handleMouseEnter = (e) => {
     if (t.dataset.hoverType === 'res') { $('hover-res-text').innerHTML = t.dataset.hoverContent; $('hover-res-info').style.display = 'block'; }
 };
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
-
-// =========================================================================
-// 9. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & QR-DRUCK
-// =========================================================================
-
-function kistenFilterSucheGeaendert() {
-    if (kistenAnsichtFilter === 'log') renderAuditLogListe();
-    else if (kistenAnsichtFilter === 'entnahmen') renderOffeneEntnahmenListe();
-    else renderKistenListe();
-}
-
-function setzeKistenAnsichtFilter(filterName) {
-    kistenAnsichtFilter = filterName;
-    ['alle', 'ausgeliehen', 'entnahmen', 'log'].forEach(f => {
-        const btn = $(`filter-kisten-${f}`);
-        if (btn) btn.classList.toggle('active', f === filterName);
-    });
-
-    const kistenTabelle = $('kisten-tabelle-bereich');
-    const entnahmenBereich = $('entnahmen-liste-bereich');
-    const auditBereich = $('audit-log-bereich');
-
-    if (kistenTabelle) kistenTabelle.style.display = (filterName === 'alle' || filterName === 'ausgeliehen') ? 'block' : 'none';
-    if (entnahmenBereich) entnahmenBereich.style.display = filterName === 'entnahmen' ? 'block' : 'none';
-    if (auditBereich) auditBereich.style.display = filterName === 'log' ? 'block' : 'none';
-
-    if (filterName === 'entnahmen') renderOffeneEntnahmenListe();
-    else if (filterName === 'log') renderAuditLogListe();
-    else renderKistenListe();
-}
-
-function renderKistenListe() {
-    const ziel = $('kisten-tabelle');
-    if (!ziel) return;
-
-    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-
-    let liste = alleLagerorte.filter(o => {
-        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
-            return false;
-        }
-        if (kistenAnsichtFilter === 'ausgeliehen') {
-            const bestand = gibKistenBestand(o.id);
-            const entnahme = ermittleKistenEntnahmeStatus(o.id);
-            const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-            return Boolean(entnahme || fehlt);
-        }
-        return true;
-    });
-
-    if (!liste.length) {
-        ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine passenden Kisten gefunden.</td></tr>';
-        return;
-    }
-
-    ziel.innerHTML = liste.map(o => {
-        const bestand = gibKistenBestand(o.id);
-        const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-        const entnahme = ermittleKistenEntnahmeStatus(o.id);
-
-        let statusCell = '';
-        if (entnahme) {
-            statusCell = `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahme.name)}</span>`;
-        } else if (fehlt) {
-            statusCell = `<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>`;
-        } else {
-            statusCell = `<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>`;
-        }
-
-        return `
-            <tr>
-                <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
-                <td>${bestand.length} Artikel</td>
-                <td>${statusCell}</td>
-                <td>
-                    <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
-                    <button class="btn" style="background:#3498db; padding:8px 12px; width:auto;" onclick="openOrteVerwalten(${o.id})">⚙️</button>
-                </td>
-            </tr>`;
-    }).join('');
-}
-
-function renderOffeneEntnahmenListe() {
-    const ziel = $('entnahmen-liste-bereich');
-    if (!ziel) return;
-
-    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-    const gefiltert = offeneEntnahmen.filter(e => {
-        if (!suchText) return true;
-        const nameMatch = (e.name || '').toLowerCase().includes(suchText);
-        const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        const matMatch = mats.some(m => (m.kiste_name || m.name || m.label || '').toLowerCase().includes(suchText));
-        return nameMatch || matMatch;
-    });
-
-    if (!gefiltert.length) {
-        ziel.innerHTML = `
-            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:25px; border-radius:10px; text-align:center;">
-                <h3 style="color:#1f7a37; margin:0 0 6px 0;">🎉 Alles im Lager vorhanden!</h3>
-                <p style="margin:0; color:#555;">Es sind aktuell keine offenen Entnahmen vermerkt.</p>
-            </div>
-        `;
-        return;
-    }
-
-    ziel.innerHTML = gefiltert.map(ent => {
-        const datum = new Date(ent.created_at).toLocaleString('de-DE');
-        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-
-        const itemsHtml = mats.map(m => {
-            if (m.kiste_name) {
-                return `<li><strong>📦 ${escapeHtml(m.kiste_name)}</strong> (Kiste komplett entnommen)</li>`;
-            }
-            return `<li><strong>${m.menge || 1}x</strong> ${escapeHtml(m.name || m.label || 'Material')}</li>`;
-        }).join('');
-
-        return `
-            <div class="entnahme-card">
-                <div class="entnahme-card-header">
-                    <div>
-                        <strong style="font-size:1.15em; color:#2c3e50;">👤 ${escapeHtml(ent.name)}</strong>
-                        <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">
-                            📅 Entnommen am: ${datum} ${ent.kontakt ? `&bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
-                        </div>
-                    </div>
-                    <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseEntnahmeKomplett('${ent.id}')">
-                        ✅ Vollständig zurückgebucht
-                    </button>
-                </div>
-                <div style="font-size:0.9em; color:#444;">
-                    <ul style="margin:6px 0; padding-left:20px;">
-                        ${itemsHtml}
-                    </ul>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function renderAuditLogListe() {
-    const ziel = $('audit-log-bereich');
-    if (!ziel) return;
-
-    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-    const gefiltert = auditLogs.filter(a => {
-        if (!suchText) return true;
-        const nameMatch = (a.name || '').toLowerCase().includes(suchText);
-        const mats = Array.isArray(a.materialien) ? a.materialien : [];
-        const matMatch = mats.some(m => (m.kiste_name || m.name || m.label || '').toLowerCase().includes(suchText));
-        return nameMatch || matMatch;
-    });
-
-    if (!gefiltert.length) {
-        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:25px;">Keine Log-Einträge gefunden.</p>';
-        return;
-    }
-
-    ziel.innerHTML = `
-        <div class="table-responsive">
-            <table>
-                <thead style="background-color: #2c3e50;">
-                    <tr>
-                        <th style="width:160px;">Datum &amp; Uhrzeit</th>
-                        <th style="width:130px;">Aktion</th>
-                        <th style="width:180px;">Person</th>
-                        <th>Details / Kisten / Material</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${gefiltert.map(log => {
-                        const datum = new Date(log.created_at).toLocaleString('de-DE');
-                        const mats = Array.isArray(log.materialien) ? log.materialien : [];
-                        const typ = log.ereignis || 'entnahme';
-                        
-                        let badgeHtml = '';
-                        if (typ === 'rueckgabe') badgeHtml = '<span class="audit-badge rueckgabe">📥 Rückgabe</span>';
-                        else if (typ === 'teilrueckgabe') badgeHtml = '<span class="audit-badge teilrueckgabe">🔄 Teilrückgabe</span>';
-                        else badgeHtml = '<span class="audit-badge entnahme">📤 Entnahme</span>';
-
-                        const detailsText = mats.map(m => {
-                            if (m.kiste_name) return `📦 ${escapeHtml(m.kiste_name)}`;
-                            return `${m.menge || 1}x ${escapeHtml(m.name || m.label || 'Material')}`;
-                        }).join(', ') || '–';
-
-                        return `
-                            <tr>
-                                <td><small>${datum}</small></td>
-                                <td>${badgeHtml}</td>
-                                <td><strong>👤 ${escapeHtml(log.name || 'Unbekannt')}</strong></td>
-                                <td>${detailsText}</td>
-                            </tr>
-                        `;
-                    }).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-}
-
-async function schliesseEntnahmeKomplett(entnahmeId) {
-    if (!confirm('Soll diese Entnahme als vollständig zurückgebracht verbucht und abgeschlossen werden?')) return;
-
-    const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
-    if (!ent) return;
-
-    const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-    for (const m of mats) {
-        if (m.kiste_id) {
-            const bestand = gibKistenBestand(m.kiste_id);
-            const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-                const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
-                return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
-            });
-            await Promise.all(updates);
-        }
-    }
-
-    await dbClient.from('lager_entnahme_audit').insert([{
-        entnahme_id: ent.id,
-        name: ent.name,
-        kontakt: ent.kontakt,
-        materialien: ent.materialien,
-        ereignis: 'rueckgabe',
-        created_at: new Date().toISOString()
-    }]).catch(() => {});
-
-    await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
-    showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
-    await ladeAlles();
-    renderOffeneEntnahmenListe();
-}
-
-function openNeuOrtModal() { $('neu-ort-name').value = ''; openModalById('neuOrtModal'); }
-async function speichereNeuenOrt() {
-    const name = $('neu-ort-name').value.trim();
-    if (!name) return;
-    await dbClient.from('lagerorte').insert([{ name }]);
-    closeModal('neuOrtModal');
-    showToast('Lagerort angelegt!');
-    await ladeAlles();
-    if ($('manage-ort-select')) {
-        populateSelect($('manage-ort-select'), alleLagerorte);
-        ortSelectChanged();
-    }
-}
-
-function openOrteVerwalten(preselectId = null) {
-    populateSelect($('manage-ort-select'), alleLagerorte, { selectedValue: preselectId });
-    ortSelectChanged();
-    openModalById('orteModal');
-}
-
-function ortSelectChanged() {
-    const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
-    if (ort) $('manage-ort-name').value = ort.name;
-    const statusEl = $('manage-ort-code-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
-    if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein Code hinterlegt (wird beim ersten NFC-Schreiben oder QR-Erstellen automatisch generiert).';
-    if (delBtn) delBtn.style.display = ort?.nfc_code ? 'block' : 'none';
-
-    const qrBox = $('manage-ort-qr-box');
-    if (qrBox) qrBox.style.display = 'none';
-}
-
-async function speichereOrt() {
-    const oId = $('manage-ort-select').value, nName = $('manage-ort-name').value.trim();
-    if (!oId || !nName) return;
-    await dbClient.from('lagerorte').update({ name: nName }).eq('id', oId);
-    closeModal('orteModal');
-    showToast('Lagerort umbenannt!');
-    await ladeAlles();
-}
-
-async function entferneNfcVonOrt() {
-    const oId = $('manage-ort-select').value;
-    await dbClient.from('lagerorte').update({ nfc_code: null }).eq('id', oId);
-    showToast('Code-Zuordnung entfernt.');
-    await ladeAlles();
-    ortSelectChanged();
-}
-
-async function zeigeEinzelKisteQr() {
-    const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
-    if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
-
-    const code = await holeOderErzeugeOrtCode(ort);
-    ortSelectChanged();
-
-    const qrBox = $('manage-ort-qr-box');
-    const preview = $('manage-ort-qr-preview');
-    if (!qrBox || !preview) return;
-
-    preview.innerHTML = '';
-    const url = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
-    new QRCode(preview, { text: url, width: 140, height: 140 });
-    qrBox.style.display = 'block';
-}
-
-function downloadEinzelKistenQr() {
-    const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
-    const canvas = $('manage-ort-qr-preview')?.querySelector('canvas');
-    if (!canvas || !ort) return;
-
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/png');
-    a.download = `QR_${ort.name.replace(/[^a-z0-9]/gi, '_')}.png`;
-    a.click();
-}
-
-function druckeEinzelKistenQr() {
-    const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
-    if (ort) druckeKistenEtiketten([ort]);
-}
-
-function openKistenEtikettenModal() {
-    kistenEtikettenAuswahlIds.clear();
-    const allChk = $('kisten-etiketten-alle');
-    if (allChk) allChk.checked = false;
-    const sInp = $('kisten-etiketten-suche');
-    if (sInp) sInp.value = '';
-    renderKistenEtikettenListe();
-    openModalById('kistenEtikettenModal');
-}
-
-function renderKistenEtikettenListe() {
-    const ziel = $('kisten-etiketten-liste');
-    if (!ziel) return;
-    const filter = ($('kisten-etiketten-suche')?.value || '').toLowerCase().trim();
-    const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
-
-    if (!liste.length) {
-        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine Kisten gefunden.</p>';
-        return;
-    }
-
-    ziel.innerHTML = liste.map(ort => {
-        const isChk = kistenEtikettenAuswahlIds.has(String(ort.id));
-        return `
-            <label class="kiste-etikett-zeile" style="cursor:pointer;">
-                <input type="checkbox" style="width:18px; height:18px;" ${isChk ? 'checked' : ''} onchange="toggleKistenEtikettAuswahl('${ort.id}', this.checked)">
-                <div style="flex:1;">
-                    <strong>📦 ${escapeHtml(ort.name)}</strong>
-                    <div style="font-size:0.8em; color:#7f8c8d;">${escapeHtml(ort.nfc_code || 'Code wird beim Druck automatisch vergeben')}</div>
-                </div>
-            </label>
-        `;
-    }).join('');
-
-    $('kisten-etiketten-count').textContent = kistenEtikettenAuswahlIds.size;
-    $('kisten-etiketten-drucken-btn').disabled = !kistenEtikettenAuswahlIds.size;
-}
-
-function toggleKistenEtikettAuswahl(id, chk) {
-    if (chk) kistenEtikettenAuswahlIds.add(String(id));
-    else kistenEtikettenAuswahlIds.delete(String(id));
-    $('kisten-etiketten-count').textContent = kistenEtikettenAuswahlIds.size;
-    $('kisten-etiketten-drucken-btn').disabled = !kistenEtikettenAuswahlIds.size;
-}
-
-function toggleAlleKistenEtiketten(chk) {
-    kistenEtikettenAuswahlIds.clear();
-    if (chk) alleLagerorte.forEach(o => kistenEtikettenAuswahlIds.add(String(o.id)));
-    renderKistenEtikettenListe();
-}
-
-async function druckeAusgewaehlteKistenEtiketten() {
-    const ausgewaehlt = alleLagerorte.filter(o => kistenEtikettenAuswahlIds.has(String(o.id)));
-    if (!ausgewaehlt.length) return;
-
-    for (const ort of ausgewaehlt) {
-        await holeOderErzeugeOrtCode(ort);
-    }
-    await ladeLagerorte();
-    druckeKistenEtiketten(ausgewaehlt);
-}
-
-function druckeKistenEtiketten(liste) {
-    const win = window.open('', '_blank');
-    const itemsHtml = liste.map(o => {
-        const code = o.nfc_code || `kiste-${o.id}`;
-        const link = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
-        return `
-            <div class="kiste-label-card">
-                <div class="kiste-label-qr" data-link="${link}"></div>
-                <div class="kiste-label-info">
-                    <div class="kiste-label-title">${escapeHtml(o.name)}</div>
-                    <div class="kiste-label-sub">📦 TRISPORT LAGER</div>
-                    <div class="kiste-label-code">${escapeHtml(code)}</div>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    win.document.write(`
-        <html><head><title>Kisten-Etiketten drucken</title>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
-        <style>
-            @page { size: A4 portrait; margin: 8mm 5mm; }
-            body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; }
-            .labels-grid { display: grid; grid-template-columns: repeat(3, 70mm); grid-auto-rows: 37mm; gap: 0; justify-content: center; }
-            .kiste-label-card { width: 70mm; height: 37mm; box-sizing: border-box; padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 3mm; border: 1px dashed #e2e8f0; page-break-inside: avoid; overflow: hidden; }
-            .kiste-label-qr { width: 29mm; height: 29mm; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-            .kiste-label-qr canvas, .kiste-label-qr img { width: 29mm !important; height: 29mm !important; }
-            .kiste-label-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
-            .kiste-label-title { font-size: 11.5px; font-weight: bold; color: #111; line-height: 1.25; word-break: break-word; max-height: 21mm; overflow: hidden; }
-            .kiste-label-sub { font-size: 7.5px; font-weight: bold; color: #e3000f; margin-top: 3px; letter-spacing: 0.4px; }
-            .kiste-label-code { font-size: 7px; color: #666; font-family: monospace; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .no-p { position: fixed; top: 10px; right: 10px; padding: 10px 18px; background: #e3000f; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-            @media print { .no-p { display: none; } .kiste-label-card { border: 1px dashed transparent; } }
-        </style>
-        </head><body>
-            <button class="no-p" onclick="window.print()">🖨️ Etiketten drucken</button>
-            <div class="labels-grid">${itemsHtml}</div>
-            <script>
-                window.onload = function() {
-                    document.querySelectorAll('.kiste-label-qr').forEach(el => {
-                        new QRCode(el, { text: el.dataset.link, width: 140, height: 140 });
-                    });
-                };
-            <\/script>
-        </body></html>`);
-    win.document.close();
-}
 
 // =========================================================================
 // 10. ARTIKEL ANLEGEN & BEARBEITEN

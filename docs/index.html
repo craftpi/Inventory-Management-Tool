@@ -325,8 +325,8 @@
         <div class="onboarding-step">
             <div class="onboarding-icon" style="background:#e8f8f5;">⚡</div>
             <div class="onboarding-text">
-                <h4>Zentraler Scan &amp; Rückgabe-Knopf</h4>
-                <p>Über den Knopf <strong>„⚡ Scannen &amp; Rückgabe“</strong> kannst du QR-Codes per Kamera scannen, NFC-Tags anhalten oder lose Teile ohne Code direkt per Namenssuche zurückbuchen.</p>
+                <h4>Kisten &amp; Verleih</h4>
+                <p>Scanne den Kistencode oder wähle die Kiste aus, um sie mit wenigen Klicks an einen Resortleiter auszugeben oder vollzählig zurückzunehmen.</p>
             </div>
         </div>
 
@@ -340,14 +340,6 @@
                     <span class="onboarding-pill bestand-status-pill ok">- = ausreichend (vorhanden)</span>
                     <span class="onboarding-pill bestand-status-pill warn">- = bald nachbestellen</span>
                 </div>
-            </div>
-        </div>
-
-        <div class="onboarding-step">
-            <div class="onboarding-icon" style="background:#f4ecf7;">✏️</div>
-            <div class="onboarding-text">
-                <h4>Neukäufe &amp; Bearbeiten</h4>
-                <p>Neues Material gekauft? Einfach im Bearbeiten-Modus oder direkt in der Tabelle die Zahl erhöhen – das ist ab sofort dein neuer Maximalbestand.</p>
             </div>
         </div>
 
@@ -386,7 +378,7 @@
             
             <div class="lager-controls-grid">
                 <div class="control-column">
-                    <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Scannen &amp; Rückgabe</button>
+                    <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Kiste scannen / suchen</button>
                     <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 </div>
 
@@ -523,20 +515,20 @@
     </div>
 </div>
 
-<!-- ZENTRALER SCAN- & RÜCKGABE-HUB -->
+<!-- ZENTRALER SCAN- & KISTEN-HUB -->
 <div id="scanHubModal" class="modal" onclick="if (event.target === this) schliesseScanHubModal()">
     <div class="modal-content" style="max-width: 680px;">
         <button type="button" class="modal-close-x" onclick="schliesseScanHubModal()">✕</button>
-        <h2 style="margin-top:0; color:#2c3e50;">⚡ Scannen &amp; Rückgabe</h2>
+        <h2 style="margin-top:0; color:#2c3e50;">⚡ Kiste scannen / suchen</h2>
         <p style="font-size:0.9em; color:#666; margin-bottom:14px;">
-            Kiste oder Artikel per Kamera / NFC erfassen – oder Gegenstand ohne Code direkt per Name zuordnen.
+            Kiste per Kamera erfassen, NFC-Tag anhalten oder direkt in der Liste auswählen.
         </p>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px;">
             <button class="btn" id="hub-kamera-btn" style="background:#27ae60; padding:12px; display:flex; flex-direction:column; align-items:center; gap:4px;" onclick="toggleHubKamera()">
                 <span style="font-size:1.5em;">📷</span>
                 <span id="hub-kamera-text">Kamera-Scan</span>
-                <small style="font-weight:normal; opacity:0.9;">QR- &amp; Barcode</small>
+                <small style="font-weight:normal; opacity:0.9;">QR-Code</small>
             </button>
             <button class="btn" id="hub-nfc-btn" style="background:#16a085; padding:12px; display:flex; flex-direction:column; align-items:center; gap:4px;" onclick="starteKistenNfc()">
                 <span style="font-size:1.5em;">📶</span>
@@ -551,17 +543,12 @@
         </div>
 
         <div style="display:flex; align-items:center; gap:10px; margin: 16px 0 12px 0; color:#7f8c8d; font-size:0.8em; font-weight:bold;">
-            <hr style="flex:1; border:0; border-top:1px solid #e2e8f0;"> ODER GEGENSTAND OHNE CODE ZUORDNEN <hr style="flex:1; border:0; border-top:1px solid #e2e8f0;">
+            <hr style="flex:1; border:0; border-top:1px solid #e2e8f0;"> ODER KISTE DIREKT AUSWÄHLEN <hr style="flex:1; border:0; border-top:1px solid #e2e8f0;">
         </div>
 
-        <input type="text" id="artikel-finder-input" placeholder="🔍 z.B. Flaschenöffner, Zewa, Messer, Stifte..." 
+        <input type="text" id="artikel-finder-input" placeholder="🔍 Kistenname oder Code suchen..." 
                oninput="aktualisiereArtikelFinderListe(this.value)" 
                style="width:100%; padding:12px; border:2px solid #3498db; border-radius:8px; font-size:1em; box-sizing:border-box; margin-bottom:10px;">
-
-        <div style="display:flex; gap:8px; margin-bottom:12px; font-size:0.85em;">
-            <button type="button" class="btn" id="finder-filter-fehlend" style="background:#e74c3c; padding:6px 12px; width:auto; min-height:34px;" onclick="setzeFinderFilter('fehlend')">Nur Fehlteile zeigen</button>
-            <button type="button" class="btn" id="finder-filter-alle" style="background:#95a5a6; padding:6px 12px; width:auto; min-height:34px;" onclick="setzeFinderFilter('alle')">Alle Artikel</button>
-        </div>
 
         <div id="artikel-finder-ergebnisse" style="max-height:42vh; overflow-y:auto;"></div>
 
