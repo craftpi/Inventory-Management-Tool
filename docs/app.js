@@ -655,23 +655,82 @@ async function kistenCheckArtikelHinzufuegen() {
     const art = alleArtikelInfos.find(a => a.name.toLowerCase() === val.toLowerCase());
     if (!art) return showToast(`Artikel "${val}" nicht gefunden.`, 'error');
 
-    const existiert = aktuelleDaten.some(b => b.artikel_id === art.id && String(b.lagerort_id) === String(kistenCheckAktuelleId));
-    if (existiert) return showToast('Dieser Artikel ist bereits dieser Kiste zugeordnet.', 'warning');
+    // "Sonstiger Lagerort" ermitteln
+    const sonstigOrt = alleLagerorte.find(o => 
+        o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
+        o.name.trim().toLowerCase() === 'sonstiges'
+    );
 
-    const startMenge = prompt(`Gesamt-Bestand für "${art.name}" in dieser Kiste:`, '1');
+    const sonstigEintrag = sonstigOrt 
+        ? aktuelleDaten.find(b => b.artikel_id === art.id && String(b.lagerort_id) === String(sonstigOrt.id))
+        : null;
+
+    const kistenEintrag = aktuelleDaten.find(b => 
+        b.artikel_id === art.id && String(b.lagerort_id) === String(kistenCheckAktuelleId)
+    );
+
+    const aktuellInKiste = kistenEintrag ? Number(kistenEintrag.soll_menge >= 0 ? kistenEintrag.soll_menge : kistenEintrag.menge) : 0;
+    const verfuegbarSonstige = sonstigEintrag ? Number(sonstigEintrag.soll_menge >= 0 ? sonstigEintrag.soll_menge : sonstigEintrag.menge) : 0;
+    const maxMoeglich = aktuellInKiste + verfuegbarSonstige;
+
+    if (maxMoeglich <= 0) {
+        return showToast(`Kein Bestand von "${art.name}" bei "Sonstiger Lagerort" vorhanden (0 verfügbar).`, 'warning');
+    }
+
+    const promptText = `Wie viele "${art.name}" sollen in dieser Kiste liegen?\n` +
+        `(Maximal ${maxMoeglich} Stück möglich: ${verfuegbarSonstige} bei "Sonstiger Lagerort"${aktuellInKiste > 0 ? ` + ${aktuellInKiste} bereits in dieser Kiste` : ''})`;
+
+    const startMenge = prompt(promptText, String(maxMoeglich));
     if (startMenge === null) return;
-    const mengeNum = werteMengeAus(startMenge);
 
-    await dbClient.from('bestand').insert([{
-        artikel_id: art.id,
-        lagerort_id: Number(kistenCheckAktuelleId),
-        menge: mengeNum,
-        alte_menge: mengeNum,
-        created_at: new Date().toISOString()
-    }]);
+    const zielMenge = werteMengeAus(startMenge);
+    if (zielMenge <= 0) {
+        return showToast('Bitte eine Menge größer als 0 eingeben.', 'warning');
+    }
+
+    if (zielMenge > maxMoeglich) {
+        return showToast(`Maximal ${maxMoeglich} Stück möglich!`, 'warning');
+    }
+
+    const diff = zielMenge - aktuellInKiste;
+    const neuerSonstigBestand = verfuegbarSonstige - diff;
+
+    // 1. Kistenbestand setzen (Update falls schon vorhanden, sonst Insert)
+    if (kistenEintrag) {
+        await dbClient.from('bestand').update({
+            menge: zielMenge,
+            alte_menge: zielMenge,
+            created_at: new Date().toISOString()
+        }).eq('id', kistenEintrag.id);
+    } else {
+        await dbClient.from('bestand').insert([{
+            artikel_id: art.id,
+            lagerort_id: Number(kistenCheckAktuelleId),
+            menge: zielMenge,
+            alte_menge: zielMenge,
+            created_at: new Date().toISOString()
+        }]);
+    }
+
+    // 2. Bestand bei "Sonstiger Lagerort" reduzieren oder Eintrag löschen wenn 0
+    if (sonstigEintrag) {
+        if (neuerSonstigBestand <= 0) {
+            await dbClient.from('bestand').delete().eq('id', sonstigEintrag.id);
+        } else {
+            await dbClient.from('bestand').update({
+                menge: neuerSonstigBestand,
+                alte_menge: neuerSonstigBestand,
+                created_at: new Date().toISOString()
+            }).eq('id', sonstigEintrag.id);
+        }
+    }
 
     inp.value = '';
-    showToast(`✅ "${art.name}" zur Kiste hinzugefügt!`);
+    if (neuerSonstigBestand > 0) {
+        showToast(`✅ ${zielMenge}x "${art.name}" in Kiste, ${neuerSonstigBestand}x verbleiben in Sonstige.`);
+    } else {
+        showToast(`✅ Alle ${zielMenge}x "${art.name}" in Kiste verschoben.`);
+    }
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
