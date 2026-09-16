@@ -706,7 +706,6 @@ async function entferneArtikelAusKiste(bestandId) {
     );
 
     if (existierenderEintrag) {
-        // Mengen zusammenführen, wenn bereits vorhanden
         let neueMenge;
         if (Number(existierenderEintrag.menge) < 0 || Number(eintrag.menge) < 0) {
             neueMenge = existierenderEintrag.menge;
@@ -722,7 +721,6 @@ async function entferneArtikelAusKiste(bestandId) {
 
         await dbClient.from('bestand').delete().eq('id', bestandId);
     } else {
-        // Lagerort des Eintrags umbiegen
         await dbClient.from('bestand').update({
             lagerort_id: sonstigOrt.id,
             created_at: new Date().toISOString()
@@ -1493,15 +1491,37 @@ async function artikelAnlegen() {
     const wichtig = Boolean($('new-wichtig')?.checked), typ = $('new-typ')?.value || 'zaehlbar';
     if (!name) return showToast('Bitte Namen eingeben.', 'warning');
 
-    const { data, error } = await dbClient.from('artikel').insert([{ name, kategorie: kat, einheit, wichtig, typ }]).select();
-    if (error) return showToast('Fehler: ' + error.message, 'error');
+    let artId = null;
+    let existierenderArtikel = alleArtikelInfos.find(a => a.name.trim().toLowerCase() === name.toLowerCase());
+
+    if (!existierenderArtikel) {
+        const { data: dbCheck } = await dbClient.from('artikel').select('*').ilike('name', name);
+        if (dbCheck && dbCheck.length > 0) existierenderArtikel = dbCheck[0];
+    }
+
+    if (existierenderArtikel) {
+        artId = existierenderArtikel.id;
+        const { error: updateErr } = await dbClient.from('artikel').update({
+            name,
+            kategorie: kat,
+            einheit,
+            wichtig,
+            typ
+        }).eq('id', artId);
+        if (updateErr) return showToast('Fehler beim Aktualisieren: ' + updateErr.message, 'error');
+        await dbClient.from('bestand').delete().eq('artikel_id', artId);
+    } else {
+        const { data, error } = await dbClient.from('artikel').insert([{ name, kategorie: kat, einheit, wichtig, typ }]).select();
+        if (error) return showToast('Fehler: ' + error.message, 'error');
+        artId = data[0].id;
+    }
 
     const inserts = Array.from(document.querySelectorAll('#new-orte-wrapper .lagerort-row')).map(row => {
         const menge = leseBestandswertAusZeile(row);
         const oldVal = werteMengeAus(row.querySelector('.new-menge')?.getAttribute('data-old-value') || '0');
         const soll = menge < 0 ? oldVal : menge;
         return {
-            artikel_id: data[0].id,
+            artikel_id: artId,
             lagerort_id: row.querySelector('.new-ort').value,
             menge: menge < 0 ? menge : soll,
             alte_menge: soll
@@ -1510,7 +1530,7 @@ async function artikelAnlegen() {
 
     if (inserts.length) await dbClient.from('bestand').insert(inserts);
     closeModal('artikelModal');
-    showToast('Artikel gespeichert!');
+    showToast(existierenderArtikel ? 'Artikel reaktiviert und gespeichert!' : 'Artikel gespeichert!');
     await ladeAlles();
 }
 
