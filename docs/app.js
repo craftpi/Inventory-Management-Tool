@@ -1408,6 +1408,10 @@ async function speichereNeuenOrt() {
     closeModal('neuOrtModal');
     showToast('Lagerort angelegt!');
     await ladeAlles();
+    if ($('manage-ort-select')) {
+        populateSelect($('manage-ort-select'), alleLagerorte);
+        ortSelectChanged();
+    }
 }
 
 function openOrteVerwalten(preselectId = null) {

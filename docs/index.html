@@ -120,6 +120,7 @@
         }
         .modal.modal-visible { opacity: 1; }
         #bestaetigungModal { z-index: 10050; }
+        #neuOrtModal { z-index: 10020; }
         .modal-content {
             background-color: white;
             margin: 5vh auto;
@@ -412,10 +413,9 @@
                 </div>
             </div>
 
-            <!-- Bearbeiten-Toolbar (liegt separat darunter mit automatischem Zeilenumbruch) -->
+            <!-- Bearbeiten-Toolbar (ohne + Neuer Lagerort) -->
             <div class="lager-edit-bar lager-edit-only" style="display:none;">
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
-                <button class="btn" style="background-color: #27ae60;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
                 <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
                 <button class="btn" style="background-color: #8e44ad;" onclick="oeffneEtikettenTool()">🏷️ Artikel-Etiketten</button>
             </div>
@@ -721,6 +721,10 @@
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('orteModal')">✕</button>
         <h2>⚙️ Lagerorte / Kisten verwalten</h2>
+        
+        <!-- Hierhin verschoben -->
+        <button type="button" class="btn" style="background-color: #27ae60; width: 100%; margin-bottom: 18px;" onclick="openNeuOrtModal()">+ Neuer Lagerort</button>
+
         <div class="form-group">
             <label>Lagerort / Kiste auswählen</label>
             <select id="manage-ort-select" onchange="ortSelectChanged()"></select>
