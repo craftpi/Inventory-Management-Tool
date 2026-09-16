@@ -122,6 +122,7 @@
         #bestaetigungModal { z-index: 10050; }
         #neuOrtModal { z-index: 10020; }
         #kistenEtikettenModal { z-index: 10025; }
+        #entnahmePersonModal { z-index: 10030; }
         .modal-content {
             background-color: white;
             margin: 5vh auto;
@@ -193,6 +194,13 @@
 
         .kiste-item-card { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; background: #fff; }
         .kiste-item-card.fehlend { border-color: #fca5a5; background: #fef2f2; }
+
+        .kisten-filter-pill-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+        .btn-kisten-filter { flex: 1; min-width: 140px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
+        .btn-kisten-filter.active { background: #e3000f; }
+
+        .entnahme-card { border: 1px solid #d9e3ec; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+        .entnahme-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 1px solid #edf2f7; padding-bottom: 8px; }
 
         @media (max-width: 600px) {
             body { padding: 8px 4px; }
@@ -362,7 +370,7 @@
 
     <div class="modus-switch">
         <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Lager-Modus</button>
-        <button class="btn btn-modus" id="tab-kisten" onclick="wechsleModus('kisten')">🧰 Kisten &amp; Lagerorte</button>
+        <button class="btn btn-modus" id="tab-kisten" onclick="wechsleModus('kisten')">🧰 Kisten &amp; Verleih</button>
         <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Packlisten</button>
     </div>
 
@@ -373,15 +381,12 @@
         <div class="action-bar">
             <input type="text" id="such-filter" placeholder="🔍 Artikel, Ort, IDs oder Kategorie suchen..." onkeyup="wendeFilterAn()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
             
-            <!-- Feste 2 Spalten für Scannen/Bearbeiten und Filter -->
             <div class="lager-controls-grid">
-                <!-- Spalte 1: Aktionen (Scannen oben, Bearbeiten darunter) -->
                 <div class="control-column">
                     <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Scannen &amp; Rückgabe</button>
                     <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 </div>
 
-                <!-- Spalte 2: Filter (Kategorien oben, Orte darunter) -->
                 <div class="control-column">
                     <select id="kategorie-filter" class="btn" style="background-color: #34495e; cursor: pointer;" onchange="wendeFilterAn()">
                         <option value="ALLE">Alle Kategorien</option>
@@ -392,7 +397,6 @@
                 </div>
             </div>
 
-            <!-- Bearbeiten-Toolbar (ohne Artikel-Etiketten und ohne + Neuer Lagerort) -->
             <div class="lager-edit-bar lager-edit-only" style="display:none;">
                 <button class="btn" onclick="openModal()">+ Neuer Artikel</button>
                 <button class="btn" style="background-color: #7f8c8d;" onclick="openOrteVerwalten()">⚙️ Lagerorte verwalten</button>
@@ -425,40 +429,47 @@
 
     <div id="ansicht-kisten" style="display: none;">
         <p class="subtitle">
-            Jede Kiste ist ein Lagerort mit festem Soll-Inhalt. Scanne den NFC-Tag oder QR-Code, um den Inhalt zu prüfen,
-            die Kiste komplett auszubuchen oder zurückzugeben.
+            Kisten und deren Inhalte im Überblick. Erfasse Entnahmen an Resortleiter oder prüfe Rückgaben.
         </p>
         <div class="action-bar">
-            <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste oder Code suchen..." onkeyup="renderKistenListe()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
-            <div class="action-group">
-                <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Kiste scannen / suchen</button>
-                <button class="btn" style="background-color: #27ae60;" onclick="openOrteVerwalten()">⚙️ Lagerorte / NFC verwalten</button>
+            <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste, Code oder Entleiher suchen..." onkeyup="renderKistenListe()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
+            
+            <div class="kisten-filter-pill-bar">
+                <button class="btn btn-kisten-filter active" id="filter-kisten-alle" onclick="setzeKistenAnsichtFilter('alle')">📦 Alle Kisten</button>
+                <button class="btn btn-kisten-filter" id="filter-kisten-ausgeliehen" onclick="setzeKistenAnsichtFilter('ausgeliehen')">📤 Unterwegs</button>
+                <button class="btn btn-kisten-filter" id="filter-kisten-entnahmen" onclick="setzeKistenAnsichtFilter('entnahmen')">📋 Wer hat was? (Offen)</button>
+                <button class="btn" style="background-color: #27ae60; width:auto; min-height:38px; padding:8px 12px;" onclick="openOrteVerwalten()">⚙️ Kisten &amp; QR verwalten</button>
             </div>
         </div>
-        <div class="table-responsive">
+
+        <div id="kisten-tabelle-bereich" class="table-responsive">
             <table>
                 <thead style="background-color: #2c3e50;">
-                    <tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status</th><th>Aktionen</th></tr>
+                    <tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status / Entleiher</th><th>Aktionen</th></tr>
                 </thead>
                 <tbody id="kisten-tabelle"><tr><td colspan="4" style="padding:30px; text-align:center;">Lade Kisten...</td></tr></tbody>
             </table>
         </div>
+
+        <div id="entnahmen-liste-bereich" style="display:none;"></div>
     </div>
 
     <div id="ansicht-event" style="display: none;">
         <p class="subtitle">Packlisten für Veranstaltungen und Resorts. Die Verfügbarkeit berechnet sich automatisch.</p>
         <div class="action-bar">
-            <div class="action-group">
-                <button class="btn" id="btn-event-edit" style="background-color: #f39c12;" onclick="toggleEventEditMode()">✏️ Bearbeiten: AUS</button>
-                <div class="packlisten-wrapper" style="display: flex; gap: 5px; flex: 2; width: 100%;">
+            <div class="action-group" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <button class="btn" id="btn-event-edit" style="background-color: #f39c12; width:auto;" onclick="toggleEventEditMode()">✏️ Bearbeiten: AUS</button>
+                <button class="btn" style="background-color: #8e44ad; width:auto;" onclick="startEinkaufsliste()">🛒 Einkaufsliste</button>
+
+                <div class="packlisten-wrapper" style="display: flex; gap: 5px; flex: 2; min-width: 250px;">
                     <select id="packlisten-auswahl" class="btn" style="background-color: #34495e; cursor: pointer; flex: 1; min-width: 0;" onchange="zeigePackliste()">
                         <option value="">-- Wähle Resort / Packliste --</option>
                     </select>
                     <button class="btn event-edit-only" style="display:none; background-color: #95a5a6; padding: 10px; width: auto;" onclick="umbenennePackliste()">✏️</button>
                     <button class="btn event-edit-only" style="display:none; background-color: #c0392b; padding: 10px; width: auto;" onclick="loeschePackliste()">🗑️</button>
                 </div>
-                <button class="btn" style="background-color: #8e44ad;" onclick="startEinkaufsliste()">🛒 Einkaufsliste</button>
-                <button class="btn event-edit-only" style="display:none; background-color: #27ae60;" onclick="neuePacklisteAnlegen()">+ Neue Liste</button>
+
+                <button class="btn event-edit-only" style="display:none; background-color: #27ae60; width:auto;" onclick="neuePacklisteAnlegen()">+ Neue Liste</button>
             </div>
         </div>
         <div id="packliste-details" style="display: none;">
@@ -481,6 +492,31 @@
 <!-- =========================================================================
      MODALS
      ========================================================================= -->
+
+<!-- MODAL: PERSONEN-AUSWAHL FÜR ENTNAHME -->
+<div id="entnahmePersonModal" class="modal" onclick="if (event.target === this) closeModal('entnahmePersonModal')">
+    <div class="modal-content" style="max-width: 480px;">
+        <button type="button" class="modal-close-x" onclick="closeModal('entnahmePersonModal')">✕</button>
+        <h2 id="entnahme-modal-titel" style="margin-top:0; color:#2c3e50;">📤 Material ausbuchen</h2>
+        <p id="entnahme-modal-sub" style="font-size:0.9em; color:#666; margin-bottom:15px;"></p>
+        
+        <div class="form-group">
+            <label for="entnahme-person-select">Wer nimmt das Material mit?</label>
+            <select id="entnahme-person-select" onchange="entnahmePersonSelectChanged()"></select>
+        </div>
+
+        <div class="form-group" id="entnahme-custom-person-wrap" style="display:none;">
+            <label for="entnahme-custom-name">Neuer Name / Helfer</label>
+            <input type="text" id="entnahme-custom-name" placeholder="Vorname Nachname">
+            <input type="text" id="entnahme-custom-kontakt" placeholder="Telefon / E-Mail (optional)" style="margin-top:8px;">
+        </div>
+
+        <div class="flex-buttons" style="margin-top:20px;">
+            <button class="btn btn-save" onclick="bestaetigeEntnahme()">📤 Ausbuchen bestätigen</button>
+            <button class="btn btn-cancel" onclick="closeModal('entnahmePersonModal')">Abbrechen</button>
+        </div>
+    </div>
+</div>
 
 <!-- ZENTRALER SCAN- & RÜCKGABE-HUB -->
 <div id="scanHubModal" class="modal" onclick="if (event.target === this) schliesseScanHubModal()">
@@ -530,14 +566,17 @@
     </div>
 </div>
 
+<!-- KISTEN-CHECK MODAL -->
 <div id="kistenCheckModal" class="modal" onclick="if (event.target === this) schliesseKistenCheckModal()">
     <div class="modal-content" style="max-width: 680px;">
         <button type="button" class="modal-close-x" onclick="schliesseKistenCheckModal()" title="Schließen">✕</button>
         <h2 id="kisten-check-titel" style="margin-top:0; color:#2c3e50;">📦 Kisteninhalt</h2>
         <p style="font-family:monospace; color:#7f8c8d; margin-top:-8px;" id="kisten-check-code"></p>
 
+        <div id="kiste-ausgeliehen-banner" style="display:none; background:#fff3cd; border:1px solid #ffeeba; color:#856404; padding:10px; border-radius:8px; margin-bottom:14px; font-size:0.92em;"></div>
+
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:16px;">
-            <button class="btn" style="background:#c0392b;" onclick="ganzeKisteAusbuchen()">
+            <button class="btn" style="background:#c0392b;" onclick="frageKisteAusbuchen()">
                 📤 Ganze Kiste entnehmen
             </button>
             <button class="btn" style="background:#27ae60;" onclick="ganzeKisteZurueckbuchen()">
@@ -570,6 +609,7 @@
     </div>
 </div>
 
+<!-- NEUER ARTIKEL MODAL -->
 <div id="artikelModal" class="modal" onclick="if (event.target === this) closeModal('artikelModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('artikelModal')">✕</button>
@@ -635,6 +675,7 @@
     </div>
 </div>
 
+<!-- ARTIKEL BEARBEITEN MODAL -->
 <div id="editModal" class="modal" onclick="if (event.target === this) closeModal('editModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('editModal')">✕</button>
@@ -683,6 +724,7 @@
     </div>
 </div>
 
+<!-- NEUER ORT MODAL -->
 <div id="neuOrtModal" class="modal" onclick="if (event.target === this) closeModal('neuOrtModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('neuOrtModal')">✕</button>
@@ -695,6 +737,7 @@
     </div>
 </div>
 
+<!-- ORTE VERWALTEN MODAL -->
 <div id="orteModal" class="modal" onclick="if (event.target === this) closeModal('orteModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('orteModal')">✕</button>
@@ -738,7 +781,7 @@
     </div>
 </div>
 
-<!-- Sammeldruck Modal für Kisten -->
+<!-- SAMMELDRUCK MODAL FÜR KISTEN -->
 <div id="kistenEtikettenModal" class="modal" onclick="if (event.target === this) closeModal('kistenEtikettenModal')">
     <div class="modal-content" style="max-width: 650px;">
         <button type="button" class="modal-close-x" onclick="closeModal('kistenEtikettenModal')">✕</button>
@@ -760,6 +803,7 @@
     </div>
 </div>
 
+<!-- KOMMENTAR MODAL -->
 <div id="kommentarModal" class="modal" onclick="if (event.target === this) closeModal('kommentarModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('kommentarModal')">✕</button>
@@ -775,6 +819,7 @@
     </div>
 </div>
 
+<!-- PACKLISTEN ITEM MODAL -->
 <div id="packItemModal" class="modal" onclick="if (event.target === this) closeModal('packItemModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('packItemModal')">✕</button>
@@ -803,6 +848,7 @@
     </div>
 </div>
 
+<!-- EINKAUFSLISTE MODAL -->
 <div id="kauflisteModal" class="modal" onclick="if (event.target === this) closeModal('kauflisteModal')">
     <div class="modal-content" style="max-width: 520px;">
         <button type="button" class="modal-close-x" onclick="closeModal('kauflisteModal')">✕</button>

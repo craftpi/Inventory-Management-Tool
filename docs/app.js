@@ -28,10 +28,12 @@ let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 
 // App-Datenzustände
 let aktuelleDaten = [], packlisten = [], packlistenPositionen = [], alleArtikelInfos = [], alleLagerorte = [];
+let alleBenutzerVorlagen = [], offeneEntnahmen = [];
 let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
 let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
 let aktiverRegalFilter = '';
 let finderFilterModus = 'fehlend';
+let kistenAnsichtFilter = 'alle';
 let kistenEtikettenAuswahlIds = new Set();
 let einkaufslisteArray = [];
 let autoFehlbestandListe = [];
@@ -45,9 +47,10 @@ let aktiverNfcModus = null;
 let nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
 let hubKameraAktiv = false;
+let ausbuchenPendingAktion = null;
 
 // =========================================================================
-// 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN (DAS ORIGINAL-SYSTEM)
+// 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
 // =========================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -262,7 +265,7 @@ function toggleNachkaufCheckbox(chk) {
 }
 
 // =========================================================================
-// 3. AUTH & ONBOARDING / HILFE
+// 3. AUTH & LOGIN-SPERRE
 // =========================================================================
 function pruefeLoginSperre() {
     try {
@@ -400,6 +403,8 @@ async function ladeAlles() {
     await ladeLagerorte();
     await ladePacklistenDaten();
     await ladeBestand();
+    await ladeEntnahmeDaten();
+    bereinigeAlteLogs();
     wendeFilterAn();
     if (aktuellerModus === 'event') zeigePackliste();
     if (aktuellerModus === 'kisten') renderKistenListe();
@@ -455,6 +460,26 @@ async function ladeBestand() {
     aktualisiereFilterDropdown(aktuelleDaten);
 }
 
+async function ladeEntnahmeDaten() {
+    try {
+        const { data: bData } = await dbClient.from('lager_entnahme_benutzer_vorlagen').select('*').order('name');
+        alleBenutzerVorlagen = bData || [];
+
+        const { data: eData } = await dbClient.from('lager_entnahmen').select('*').order('created_at', { ascending: false });
+        offeneEntnahmen = eData || [];
+    } catch (err) {
+        console.warn('Fehler beim Laden der Entnahmedaten:', err);
+    }
+}
+
+async function bereinigeAlteLogs() {
+    try {
+        const einJahrVorher = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+        await dbClient.from('lager_entnahmen').delete().lt('created_at', einJahrVorher);
+        await dbClient.from('lager_entnahme_audit').delete().lt('created_at', einJahrVorher).catch(() => {});
+    } catch (e) {}
+}
+
 function aktualisiereFilterDropdown(daten) {
     const katDropdown = $('kategorie-filter'), datalist = $('kategorie-liste'), comboDropdown = $('ort-filter-combo');
     const artikelDatalist = $('kategorie-artikel-liste');
@@ -477,12 +502,20 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. DAS VEREINHEITLICHTE KISTEN-SYSTEM (INHALT, ENTNAHME & RÜCKGABE)
+// 5. DAS VEREINHEITLICHTE KISTEN- & ENTNAHME-SYSTEM
 // =========================================================================
 
 function gibKistenBestand(lid) {
     return aktuelleDaten.filter(z => String(z.lagerort_id) === String(lid))
         .sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de'));
+}
+
+function ermittleKistenEntnahmeStatus(lid) {
+    const entnahme = offeneEntnahmen.find(e => {
+        const mats = Array.isArray(e.materialien) ? e.materialien : [];
+        return mats.some(m => String(m.kiste_id) === String(lid));
+    });
+    return entnahme || null;
 }
 
 function oeffneKistenCheck(lid) {
@@ -492,6 +525,17 @@ function oeffneKistenCheck(lid) {
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
     $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
+
+    const entnahme = ermittleKistenEntnahmeStatus(lid);
+    const banner = $('kiste-ausgeliehen-banner');
+    if (banner) {
+        if (entnahme) {
+            banner.style.display = 'block';
+            banner.innerHTML = `⚠️ <strong>Aktuell ausgeliehen an:</strong> ${escapeHtml(entnahme.name)} (${new Date(entnahme.created_at).toLocaleString('de-DE')}) ${entnahme.kontakt ? `&bull; 📞 ${escapeHtml(entnahme.kontakt)}` : ''}`;
+        } else {
+            banner.style.display = 'none';
+        }
+    }
 
     renderKistenInhaltListe(lid);
     $('kisten-check-edit-bereich').style.display = 'none';
@@ -513,7 +557,7 @@ function renderKistenInhaltListe(lid) {
         const ist = Number(z.ist_menge);
         const soll = Number(z.soll_menge);
         const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
-        const istSonder = ist < 0;
+        const istVerbrauch = (z.artikel?.typ === 'verbrauch') || (ist < 0);
         const einheit = z.artikel?.einheit || 'Stück';
 
         const card = document.createElement('div');
@@ -529,8 +573,23 @@ function renderKistenInhaltListe(lid) {
             else statusText += ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
         }
 
-        const canMinus = ist > 0;
-        const canPlus = ist < soll;
+        let bedienElementeHtml = '';
+        if (istVerbrauch) {
+            bedienElementeHtml = `
+                <div style="display:flex; gap:6px;">
+                    <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)" title="Ausreichend vorhanden">🟢 Voll/Ausreichend</button>
+                    <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)" title="Auf Einkaufsliste setzen">🔴 Nachkaufen</button>
+                </div>
+            `;
+        } else {
+            const canMinus = ist > 0;
+            const canPlus = ist < soll;
+            bedienElementeHtml = `
+                <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück ausbuchen' : 'Bereits 0 vorhanden'}">−</button>
+                <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
+                <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : 'Bereits vollzählig'}">+</button>
+            `;
+        }
 
         card.innerHTML = `
             <div style="flex:1;">
@@ -538,13 +597,7 @@ function renderKistenInhaltListe(lid) {
                 <div style="font-size:0.85em; color:#555; margin-top:3px;">${statusText}</div>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
-                ${!istSonder ? `
-                    <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück ausbuchen' : 'Bereits 0 vorhanden'}">−</button>
-                    <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
-                    <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : 'Bereits vollzählig'}">+</button>
-                ` : `
-                    <span class="bestand-status-pill ${ist === -3 ? 'warn' : (ist === -2 ? 'ok' : '')}" style="font-size:0.9em;">${ist === -1 ? '∞' : '-'}</span>
-                `}
+                ${bedienElementeHtml}
                 <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
             </div>
         `;
@@ -552,25 +605,123 @@ function renderKistenInhaltListe(lid) {
     });
 }
 
-async function ganzeKisteAusbuchen() {
-    if (!kistenCheckAktuelleId) return;
-    if (!confirm('Soll die gesamte Kiste als entnommen ausgebucht werden (Bestand aller zählbaren Artikel wird 0)?')) return;
+async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
+    await dbClient.from('bestand').update({
+        menge: statusWert,
+        alte_menge: statusWert,
+        created_at: new Date().toISOString()
+    }).eq('id', bestandId);
 
-    const bestand = gibKistenBestand(kistenCheckAktuelleId);
-    const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-        return dbClient.from('bestand').update({
-            menge: 0,
-            alte_menge: z.soll_menge || z.ist_menge,
-            created_at: new Date().toISOString()
-        }).eq('id', z.id);
-    });
-
-    await Promise.all(updates);
-    showToast('📤 Ganze Kiste als entnommen ausgebucht!');
+    showToast(statusWert === -3 ? '🔴 Auf Einkaufsliste gesetzt!' : '🟢 Als ausreichend markiert!');
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
+// -------------------------------------------------------------------------
+// Entnahme mit Personenerfassung (Punkt 3 & 5)
+// -------------------------------------------------------------------------
+function frageKisteAusbuchen() {
+    if (!kistenCheckAktuelleId) return;
+    const ort = alleLagerorte.find(o => String(o.id) === String(kistenCheckAktuelleId));
+    if (!ort) return;
+
+    ausbuchenPendingAktion = {
+        typ: 'kiste',
+        kisteId: kistenCheckAktuelleId,
+        kisteName: ort.name
+    };
+
+    $('entnahme-modal-titel').innerText = `📤 Kiste ausbuchen: ${ort.name}`;
+    $('entnahme-modal-sub').innerText = 'Bitte gib an, welcher Resortleiter oder Helfer die Kiste mitnimmt:';
+
+    befuellePersonenSelect();
+    openModalById('entnahmePersonModal');
+}
+
+function befuellePersonenSelect() {
+    const sel = $('entnahme-person-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- Person auswählen --</option>';
+    alleBenutzerVorlagen.forEach(v => {
+        sel.add(new Option(`👤 ${v.name} ${v.kontakt ? `(${v.kontakt})` : ''}`, v.id));
+    });
+    sel.add(new Option('➕ Anderer Name / Neuer Helfer...', 'custom'));
+    $('entnahme-custom-person-wrap').style.display = 'none';
+}
+
+function entnahmePersonSelectChanged() {
+    const val = $('entnahme-person-select').value;
+    $('entnahme-custom-person-wrap').style.display = val === 'custom' ? 'block' : 'none';
+}
+
+async function bestaetigeEntnahme() {
+    const selVal = $('entnahme-person-select').value;
+    let name = '', kontakt = '', vorlageId = null;
+
+    if (!selVal) return showToast('Bitte wähle eine Person aus.', 'warning');
+
+    if (selVal === 'custom') {
+        name = $('entnahme-custom-name').value.trim();
+        kontakt = $('entnahme-custom-kontakt').value.trim();
+        if (!name) return showToast('Bitte Namen eingeben.', 'warning');
+        const { data: newV } = await dbClient.from('lager_entnahme_benutzer_vorlagen').insert([{ name, kontakt }]).select();
+        if (newV && newV.length) vorlageId = newV[0].id;
+    } else {
+        const v = alleBenutzerVorlagen.find(b => String(b.id) === String(selVal));
+        if (v) { name = v.name; kontakt = v.kontakt || ''; vorlageId = v.id; }
+    }
+
+    if (ausbuchenPendingAktion?.typ === 'kiste') {
+        const kId = ausbuchenPendingAktion.kisteId;
+        const bestand = gibKistenBestand(kId);
+
+        // 1. Zählbare Bestände auf 0 buchen
+        const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+            return dbClient.from('bestand').update({
+                menge: 0,
+                alte_menge: z.soll_menge || z.ist_menge,
+                created_at: new Date().toISOString()
+            }).eq('id', z.id);
+        });
+        await Promise.all(updates);
+
+        // 2. In lager_entnahmen & Audit eintragen
+        const entnahmePayload = {
+            name,
+            kontakt,
+            benutzer_vorlage_id: vorlageId,
+            materialien: [{
+                kiste_id: Number(kId),
+                kiste_name: ausbuchenPendingAktion.kisteName,
+                artikel: bestand.map(b => ({
+                    bestand_id: b.id,
+                    artikel_id: b.artikel_id,
+                    name: b.artikel?.name,
+                    menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge,
+                    typ: b.artikel?.typ || 'zaehlbar'
+                }))
+            }],
+            created_at: new Date().toISOString()
+        };
+
+        await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+        await dbClient.from('lager_entnahme_audit').insert([{
+            ...entnahmePayload,
+            ereignis: 'entnahme'
+        }]).catch(() => {});
+
+        showToast(`📤 "${ausbuchenPendingAktion.kisteName}" an ${name} ausgebucht!`);
+    }
+
+    closeModal('entnahmePersonModal');
+    ausbuchenPendingAktion = null;
+    await ladeAlles();
+    if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+}
+
+// -------------------------------------------------------------------------
+// Rückgabe der Kiste
+// -------------------------------------------------------------------------
 async function ganzeKisteZurueckbuchen() {
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
@@ -582,12 +733,30 @@ async function ganzeKisteZurueckbuchen() {
             created_at: new Date().toISOString()
         }).eq('id', z.id);
     });
-
     await Promise.all(updates);
+
+    // Offene Entnahme für diese Kiste schließen & im Audit protokollieren
+    const offene = offeneEntnahmen.filter(e => {
+        const mats = Array.isArray(e.materialien) ? e.materialien : [];
+        return mats.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId));
+    });
+
+    for (const ent of offene) {
+        await dbClient.from('lager_entnahme_audit').insert([{
+            entnahme_id: ent.id,
+            name: ent.name,
+            kontakt: ent.kontakt,
+            materialien: ent.materialien,
+            ereignis: 'rueckgabe',
+            created_at: new Date().toISOString()
+        }]).catch(() => {});
+        await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+    }
+
     if (navigator.vibrate) navigator.vibrate(200);
-    showToast('✅ Kiste vollständig zurückgebucht!');
+    showToast('✅ Kiste vollständig zurückgebucht & Entnahme abgeschlossen!');
     await ladeAlles();
-    renderKistenInhaltListe(kistenCheckAktuelleId);
+    oeffneKistenCheck(kistenCheckAktuelleId);
 }
 
 async function aendereArtikelMengeInKiste(bestandId, delta) {
@@ -683,13 +852,8 @@ async function kistenCheckArtikelHinzufuegen() {
     if (startMenge === null) return;
 
     const zielMenge = werteMengeAus(startMenge);
-    if (zielMenge <= 0) {
-        return showToast('Bitte eine Menge größer als 0 eingeben.', 'warning');
-    }
-
-    if (zielMenge > maxMoeglich) {
-        return showToast(`Maximal ${maxMoeglich} Stück möglich!`, 'warning');
-    }
+    if (zielMenge <= 0) return showToast('Bitte eine Menge größer als 0 eingeben.', 'warning');
+    if (zielMenge > maxMoeglich) return showToast(`Maximal ${maxMoeglich} Stück möglich!`, 'warning');
 
     const diff = zielMenge - aktuellInKiste;
     const neuerSonstigBestand = verfuegbarSonstige - diff;
@@ -723,11 +887,7 @@ async function kistenCheckArtikelHinzufuegen() {
     }
 
     inp.value = '';
-    if (neuerSonstigBestand > 0) {
-        showToast(`✅ ${zielMenge}x "${art.name}" in Kiste, ${neuerSonstigBestand}x verbleiben in Sonstige.`);
-    } else {
-        showToast(`✅ Alle ${zielMenge}x "${art.name}" in Kiste verschoben.`);
-    }
+    showToast(`✅ Bestände für "${art.name}" aktualisiert.`);
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
@@ -745,10 +905,7 @@ async function entferneArtikelAusKiste(bestandId) {
 
     if (!sonstigOrt) {
         const { data: neuerOrt, error: ortErr } = await dbClient.from('lagerorte').insert([{ name: 'Sonstiger Lagerort' }]).select();
-        if (ortErr || !neuerOrt || !neuerOrt.length) {
-            showToast('Fehler: Lagerort "Sonstiger Lagerort" konnte nicht angelegt werden.', 'error');
-            return;
-        }
+        if (ortErr || !neuerOrt || !neuerOrt.length) return showToast('Fehler beim Anlegen von Sonstiger Lagerort', 'error');
         sonstigOrt = neuerOrt[0];
         await ladeLagerorte();
     }
@@ -792,7 +949,7 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. DER ZENTRALE SCAN- & RÜCKGABE-HUB (MODAL-LOGIK)
+// 6. SCAN- & RÜCKGABE-HUB (EINFACH FÜR HELFER)
 // =========================================================================
 
 function oeffneScanHubModal(vorbelegterSuchbegriff = '') {
@@ -811,11 +968,8 @@ function schliesseScanHubModal() {
 }
 
 async function toggleHubKamera() {
-    if (hubKameraAktiv) {
-        stoppeHubKamera();
-    } else {
-        await starteHubKamera();
-    }
+    if (hubKameraAktiv) stoppeHubKamera();
+    else await starteHubKamera();
 }
 
 async function starteHubKamera() {
@@ -865,9 +1019,6 @@ function stoppeHubKamera() {
     if (btnText) btnText.innerText = 'Kamera-Scan';
     hubKameraAktiv = false;
 }
-
-function oeffneWoGehoertDasHinModal(vorbelegterSuchbegriff = '') { oeffneScanHubModal(vorbelegterSuchbegriff); }
-function oeffneKistenKameraModal() { oeffneScanHubModal(); starteHubKamera(); }
 
 function setzeFinderFilter(modus) {
     finderFilterModus = modus;
@@ -999,26 +1150,6 @@ async function verarbeiteUniversalScan(rawCode) {
         if (navigator.vibrate) navigator.vibrate(120);
         schliesseScanHubModal();
         oeffneKistenCheck(ort.id);
-        return;
-    }
-
-    let artikelId = null;
-    const mArtUrl = /rueckgabe=([^&\s]+)/i.exec(raw);
-    const mArtPref = /^artikel:(.+)$/i.exec(raw);
-    if (mArtUrl) artikelId = mArtUrl[1].trim();
-    else if (mArtPref) artikelId = mArtPref[1].trim();
-
-    if (artikelId) {
-        schliesseScanHubModal();
-        const bestandsEintraege = aktuelleDaten.filter(b => String(b.artikel_id) === String(artikelId));
-        if (bestandsEintraege.length === 1) {
-            await buchtArtikelZurueckInKiste(bestandsEintraege[0].id);
-        } else if (bestandsEintraege.length > 1) {
-            const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
-            oeffneScanHubModal(art?.name || '');
-        } else {
-            showToast('Artikel hat keinen festen Lagerort.', 'warning');
-        }
         return;
     }
 
@@ -1425,36 +1556,163 @@ window.handleMouseEnter = (e) => {
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
 
 // =========================================================================
-// 9. KISTEN-ANSICHT & ORTE VERWALTEN & KISTEN-QR
+// 9. KISTEN-ANSICHT, OFFENE ENTNAHMEN & QR-DRUCK
 // =========================================================================
+
+function setzeKistenAnsichtFilter(filterName) {
+    kistenAnsichtFilter = filterName;
+    ['alle', 'ausgeliehen', 'entnahmen'].forEach(f => {
+        const btn = $(`filter-kisten-${f}`);
+        if (btn) btn.classList.toggle('active', f === filterName);
+    });
+
+    const kistenTabelle = $('kisten-tabelle-bereich');
+    const entnahmenBereich = $('entnahmen-liste-bereich');
+
+    if (filterName === 'entnahmen') {
+        if (kistenTabelle) kistenTabelle.style.display = 'none';
+        if (entnahmenBereich) {
+            entnahmenBereich.style.display = 'block';
+            renderOffeneEntnahmenListe();
+        }
+    } else {
+        if (kistenTabelle) kistenTabelle.style.display = 'block';
+        if (entnahmenBereich) entnahmenBereich.style.display = 'none';
+        renderKistenListe();
+    }
+}
 
 function renderKistenListe() {
     const ziel = $('kisten-tabelle');
     if (!ziel) return;
 
-    const filter = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-    const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
+    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
+
+    let liste = alleLagerorte.filter(o => {
+        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
+            return false;
+        }
+        if (kistenAnsichtFilter === 'ausgeliehen') {
+            const bestand = gibKistenBestand(o.id);
+            const entnahme = ermittleKistenEntnahmeStatus(o.id);
+            const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
+            return Boolean(entnahme || fehlt);
+        }
+        return true;
+    });
 
     if (!liste.length) {
-        ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine Kisten gefunden.</td></tr>';
+        ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine passenden Kisten gefunden.</td></tr>';
         return;
     }
 
     ziel.innerHTML = liste.map(o => {
         const bestand = gibKistenBestand(o.id);
         const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
+        const entnahme = ermittleKistenEntnahmeStatus(o.id);
+
+        let statusCell = '';
+        if (entnahme) {
+            statusCell = `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahme.name)}</span>`;
+        } else if (fehlt) {
+            statusCell = `<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>`;
+        } else {
+            statusCell = `<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>`;
+        }
 
         return `
             <tr>
                 <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
                 <td>${bestand.length} Artikel</td>
-                <td>${fehlt ? '<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>' : '<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>'}</td>
+                <td>${statusCell}</td>
                 <td>
                     <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
                     <button class="btn" style="background:#3498db; padding:8px 12px; width:auto;" onclick="openOrteVerwalten(${o.id})">⚙️</button>
                 </td>
             </tr>`;
     }).join('');
+}
+
+function renderOffeneEntnahmenListe() {
+    const ziel = $('entnahmen-liste-bereich');
+    if (!ziel) return;
+
+    if (!offeneEntnahmen.length) {
+        ziel.innerHTML = `
+            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:25px; border-radius:10px; text-align:center;">
+                <h3 style="color:#1f7a37; margin:0 0 6px 0;">🎉 Alles im Lager vorhanden!</h3>
+                <p style="margin:0; color:#555;">Es sind aktuell keine offenen Entnahmen vermerkt.</p>
+            </div>
+        `;
+        return;
+    }
+
+    ziel.innerHTML = offeneEntnahmen.map(ent => {
+        const datum = new Date(ent.created_at).toLocaleString('de-DE');
+        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+
+        const itemsHtml = mats.map(m => {
+            if (m.kiste_name) {
+                return `<li><strong>📦 ${escapeHtml(m.kiste_name)}</strong> (Kiste komplett entnommen)</li>`;
+            }
+            return `<li><strong>${m.menge || 1}x</strong> ${escapeHtml(m.name || m.label || 'Material')}</li>`;
+        }).join('');
+
+        return `
+            <div class="entnahme-card">
+                <div class="entnahme-card-header">
+                    <div>
+                        <strong style="font-size:1.15em; color:#2c3e50;">👤 ${escapeHtml(ent.name)}</strong>
+                        <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">
+                            📅 Entnommen am: ${datum} ${ent.kontakt ? `&bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
+                        </div>
+                    </div>
+                    <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseEntnahmeKomplett('${ent.id}')">
+                        ✅ Vollständig zurückgebucht
+                    </button>
+                </div>
+                <div style="font-size:0.9em; color:#444;">
+                    <ul style="margin:6px 0; padding-left:20px;">
+                        ${itemsHtml}
+                    </ul>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function schliesseEntnahmeKomplett(entnahmeId) {
+    if (!confirm('Soll diese Entnahme als vollständig zurückgebracht verbucht und abgeschlossen werden?')) return;
+
+    const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
+    if (!ent) return;
+
+    // Kisten-Inhalte wieder vollsetzen falls Kiste geliehen war
+    const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+    for (const m of mats) {
+        if (m.kiste_id) {
+            const bestand = gibKistenBestand(m.kiste_id);
+            const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+                const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
+                return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
+            });
+            await Promise.all(updates);
+        }
+    }
+
+    await dbClient.from('lager_entnahme_audit').insert([{
+        entnahme_id: ent.id,
+        name: ent.name,
+        kontakt: ent.kontakt,
+        materialien: ent.materialien,
+        ereignis: 'rueckgabe',
+        created_at: new Date().toISOString()
+    }]).catch(() => {});
+
+    await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+    showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
+    await ladeAlles();
+    renderOffeneEntnahmenListe();
 }
 
 function openNeuOrtModal() { $('neu-ort-name').value = ''; openModalById('neuOrtModal'); }
@@ -1625,97 +1883,18 @@ function druckeKistenEtiketten(liste) {
         <html><head><title>Kisten-Etiketten drucken</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
         <style>
-            @page {
-                size: A4 portrait;
-                margin: 8mm 5mm;
-            }
-            body {
-                margin: 0;
-                padding: 0;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-                background: #fff;
-            }
-            .labels-grid {
-                display: grid;
-                grid-template-columns: repeat(3, 70mm);
-                grid-auto-rows: 37mm;
-                gap: 0;
-                justify-content: center;
-            }
-            .kiste-label-card {
-                width: 70mm;
-                height: 37mm;
-                box-sizing: border-box;
-                padding: 2.5mm 3.5mm;
-                display: flex;
-                align-items: center;
-                gap: 3mm;
-                border: 1px dashed #e2e8f0;
-                page-break-inside: avoid;
-                overflow: hidden;
-            }
-            .kiste-label-qr {
-                width: 29mm;
-                height: 29mm;
-                flex-shrink: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .kiste-label-qr canvas, .kiste-label-qr img {
-                width: 29mm !important;
-                height: 29mm !important;
-            }
-            .kiste-label-info {
-                flex: 1;
-                min-width: 0;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-            }
-            .kiste-label-title {
-                font-size: 11.5px;
-                font-weight: bold;
-                color: #111;
-                line-height: 1.25;
-                word-break: break-word;
-                max-height: 21mm;
-                overflow: hidden;
-            }
-            .kiste-label-sub {
-                font-size: 7.5px;
-                font-weight: bold;
-                color: #e3000f;
-                margin-top: 3px;
-                letter-spacing: 0.4px;
-            }
-            .kiste-label-code {
-                font-size: 7px;
-                color: #666;
-                font-family: monospace;
-                margin-top: 2px;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-            .no-p {
-                position: fixed;
-                top: 10px;
-                right: 10px;
-                padding: 10px 18px;
-                background: #e3000f;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-size: 14px;
-                font-weight: bold;
-                cursor: pointer;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-            }
-            @media print {
-                .no-p { display: none; }
-                .kiste-label-card { border: 1px dashed transparent; }
-            }
+            @page { size: A4 portrait; margin: 8mm 5mm; }
+            body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; }
+            .labels-grid { display: grid; grid-template-columns: repeat(3, 70mm); grid-auto-rows: 37mm; gap: 0; justify-content: center; }
+            .kiste-label-card { width: 70mm; height: 37mm; box-sizing: border-box; padding: 2.5mm 3.5mm; display: flex; align-items: center; gap: 3mm; border: 1px dashed #e2e8f0; page-break-inside: avoid; overflow: hidden; }
+            .kiste-label-qr { width: 29mm; height: 29mm; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+            .kiste-label-qr canvas, .kiste-label-qr img { width: 29mm !important; height: 29mm !important; }
+            .kiste-label-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+            .kiste-label-title { font-size: 11.5px; font-weight: bold; color: #111; line-height: 1.25; word-break: break-word; max-height: 21mm; overflow: hidden; }
+            .kiste-label-sub { font-size: 7.5px; font-weight: bold; color: #e3000f; margin-top: 3px; letter-spacing: 0.4px; }
+            .kiste-label-code { font-size: 7px; color: #666; font-family: monospace; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .no-p { position: fixed; top: 10px; right: 10px; padding: 10px 18px; background: #e3000f; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+            @media print { .no-p { display: none; } .kiste-label-card { border: 1px dashed transparent; } }
         </style>
         </head><body>
             <button class="no-p" onclick="window.print()">🖨️ Etiketten drucken</button>
@@ -1946,7 +2125,7 @@ async function speichereKommentar() {
 }
 
 // =========================================================================
-// 11. EVENT-MODUS & PACKLISTEN & EXCEL
+// 11. EVENT-MODUS & PACKLISTEN (PUNKT 1 & 2)
 // =========================================================================
 function wechsleModus(modus) {
     aktuellerModus = modus;
@@ -1955,7 +2134,7 @@ function wechsleModus(modus) {
         if (v) v.style.display = m === modus ? 'block' : 'none';
         if (t) t.className = m === modus ? 'btn btn-modus active' : 'btn btn-modus';
     });
-    if (modus === 'kisten') renderKistenListe();
+    if (modus === 'kisten') setzeKistenAnsichtFilter(kistenAnsichtFilter);
     if (modus === 'event') zeigePackliste();
 }
 
@@ -1984,6 +2163,10 @@ function zeigePackliste() {
             if (verfuegbar < pos.menge) status = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
         }
 
+        const mengeZelle = isEventEditMode 
+            ? `<input type="text" class="menge-input" value="${pos.menge}" onchange="speicherePackMengeDirekt(${pos.id}, this.value)" style="width:65px; height:34px; padding:4px;">` 
+            : `<strong>${pos.menge}</strong>`;
+
         let actionCell = isEventEditMode ? `
             <button class="btn" style="background:#3498db; padding:4px 8px; font-size:0.8em; margin-left:8px;" onclick="openPackItemModal(${pos.id})" title="Position bearbeiten">✏️</button>
             <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:4px;" onclick="loeschePackPosition(${pos.id})" title="Löschen">🗑️</button>
@@ -1992,11 +2175,23 @@ function zeigePackliste() {
         tbody.innerHTML += `
             <tr>
                 <td><strong>${escapeHtml(name)}</strong></td>
-                <td>${pos.menge}</td>
+                <td>${mengeZelle}</td>
                 <td>${verfuegbar}</td>
                 <td>${status} ${actionCell}</td>
             </tr>`;
     });
+}
+
+async function speicherePackMengeDirekt(posId, rawVal) {
+    const neueMenge = werteMengeAus(rawVal) || 1;
+    const { error } = await dbClient.from('packlisten_positionen').update({ menge: neueMenge }).eq('id', posId);
+    if (error) {
+        showToast('Fehler beim Speichern: ' + error.message, 'error');
+    } else {
+        showToast(`Menge auf ${neueMenge} geändert!`);
+        await ladePacklistenDaten();
+        zeigePackliste();
+    }
 }
 
 function toggleEventEditMode() {
