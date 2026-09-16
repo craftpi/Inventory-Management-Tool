@@ -507,7 +507,7 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. KISTEN- & ENTNAHME-SYSTEM
+// 5. KISTEN- & ENTNAHME-SYSTEM (MIT STRIKTER PERSONENABFRAGE)
 // =========================================================================
 
 function gibKistenBestand(lid) {
@@ -591,9 +591,9 @@ function renderKistenInhaltListe(lid) {
             const canMinus = ist > 0;
             const canPlus = ist < soll;
             bedienElementeHtml = `
-                <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück ausbuchen' : 'Bereits 0 vorhanden'}">−</button>
+                <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück entnehmen (mit Personenerfassung)' : 'Bereits 0 vorhanden'}">−</button>
                 <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
-                <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : 'Bereits vollzählig'}">+</button>
+                <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="1 Stück einbuchen">+</button>
             `;
         }
 
@@ -624,7 +624,7 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 }
 
 // -------------------------------------------------------------------------
-// Entnahme mit Personenerfassung (Punkt 3)
+// Entnahme mit strikter Personenabfrage für Kisten und Einzelartikel
 // -------------------------------------------------------------------------
 function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
@@ -642,6 +642,58 @@ function frageKisteAusbuchen() {
 
     befuellePersonenSelect();
     openModalById('entnahmePersonModal');
+}
+
+function aendereArtikelMengeInKiste(bestandId, delta) {
+    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+    if (!eintrag) return;
+    const aktuell = Number(eintrag.ist_menge);
+    if (aktuell < 0) return;
+
+    if (delta > 0) {
+        // Einbuchen/Rückgabe direkt ausführen
+        ausfuehrenArtikelEinbuchung(bestandId, delta);
+        return;
+    }
+
+    if (delta < 0 && aktuell <= 0) {
+        showToast('Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!', 'warning');
+        return;
+    }
+
+    // Entnahme von Einzelteilen -> Zwingend Person abfragen!
+    ausbuchenPendingAktion = {
+        typ: 'artikel_einzeln',
+        bestandId: bestandId,
+        delta: delta,
+        artikelName: eintrag.artikel?.name || 'Artikel',
+        kisteId: eintrag.lagerort_id,
+        kisteName: eintrag.lagerorte?.name || 'Kiste'
+    };
+
+    $('entnahme-modal-titel').innerText = `📤 Entnahme: 1x ${eintrag.artikel?.name || 'Artikel'}`;
+    $('entnahme-modal-sub').innerText = 'Bitte gib an, wer diesen Gegenstand entnimmt:';
+
+    befuellePersonenSelect();
+    openModalById('entnahmePersonModal');
+}
+
+async function ausfuehrenArtikelEinbuchung(bestandId, delta) {
+    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+    if (!eintrag) return;
+    const aktuell = Number(eintrag.ist_menge);
+    const soll = Number(eintrag.soll_menge) || 0;
+
+    const neu = soll > 0 ? Math.min(soll, Math.max(0, aktuell + delta)) : Math.max(0, aktuell + delta);
+    await dbClient.from('bestand').update({
+        menge: neu,
+        created_at: new Date().toISOString()
+    }).eq('id', bestandId);
+
+    if (navigator.vibrate) navigator.vibrate(60);
+    showToast(`✅ Bestandsänderung gespeichert.`);
+    await ladeAlles();
+    renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
 function befuellePersonenSelect() {
@@ -715,6 +767,44 @@ async function bestaetigeEntnahme() {
         }]).catch(() => {});
 
         showToast(`📤 "${ausbuchenPendingAktion.kisteName}" an ${name} ausgebucht!`);
+    } else if (ausbuchenPendingAktion?.typ === 'artikel_einzeln') {
+        const { bestandId, delta, artikelName, kisteId, kisteName } = ausbuchenPendingAktion;
+        const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+        if (eintrag) {
+            const aktuell = Number(eintrag.ist_menge);
+            const neu = Math.max(0, aktuell + delta);
+
+            await dbClient.from('bestand').update({
+                menge: neu,
+                created_at: new Date().toISOString()
+            }).eq('id', bestandId);
+
+            const entnahmePayload = {
+                name,
+                kontakt,
+                benutzer_vorlage_id: vorlageId,
+                materialien: [{
+                    kiste_id: Number(kisteId),
+                    kiste_name: kisteName,
+                    artikel: [{
+                        bestand_id: bestandId,
+                        artikel_id: eintrag.artikel_id,
+                        name: artikelName,
+                        menge: Math.abs(delta),
+                        typ: eintrag.artikel?.typ || 'zaehlbar'
+                    }]
+                }],
+                created_at: new Date().toISOString()
+            };
+
+            await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+            await dbClient.from('lager_entnahme_audit').insert([{
+                ...entnahmePayload,
+                ereignis: 'entnahme'
+            }]).catch(() => {});
+
+            showToast(`📤 1x "${artikelName}" an ${name} ausgebucht!`);
+        }
     }
 
     closeModal('entnahmePersonModal');
@@ -762,42 +852,13 @@ async function ganzeKisteZurueckbuchen() {
     oeffneKistenCheck(kistenCheckAktuelleId);
 }
 
-async function aendereArtikelMengeInKiste(bestandId, delta) {
-    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
-    if (!eintrag) return;
-    const aktuell = Number(eintrag.ist_menge);
-    if (aktuell < 0) return;
-
-    const soll = Number(eintrag.soll_menge) || 0;
-
-    if (delta > 0 && soll > 0 && aktuell >= soll) {
-        showToast(`Bereits vollzählig (${soll} von ${soll} im Lager). Mehr kann nicht eingebucht werden.`, 'warning');
-        return;
-    }
-    if (delta < 0 && aktuell <= 0) {
-        showToast(`Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!`, 'warning');
-        return;
-    }
-
-    const neu = soll > 0 ? Math.min(soll, Math.max(0, aktuell + delta)) : Math.max(0, aktuell + delta);
-
-    await dbClient.from('bestand').update({
-        menge: neu,
-        created_at: new Date().toISOString()
-    }).eq('id', bestandId);
-
-    if (navigator.vibrate) navigator.vibrate(60);
-    await ladeAlles();
-    renderKistenInhaltListe(kistenCheckAktuelleId);
-}
-
 async function speichereKisteMengeInput(bId, rawVal) {
     const eintrag = (aktuelleDaten || []).find(b => b.id === bId);
     if (!eintrag) return;
     const soll = Number(eintrag.soll_menge) || 0;
     let val = werteMengeAus(rawVal);
     if (soll > 0 && val > soll) {
-        showToast(`Maximal ${soll} ${eintrag.artikel?.einheit || 'Stück'} möglich! Höhere Mengen bitte im Hauptfenster eintragen.`, 'warning');
+        showToast(`Maximal ${soll} ${eintrag.artikel?.einheit || 'Stück'} möglich!`, 'warning');
         val = soll;
     }
     if (val < 0) val = 0;
