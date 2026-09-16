@@ -717,7 +717,6 @@
 
         <hr style="margin: 18px 0; border: 0; border-top: 1px solid #eee;">
         
-        <!-- Kombiniertes NFC & QR System für Kisten -->
         <p style="font-weight: bold; margin-bottom: 6px;">🏷️ QR-Code &amp; NFC für diese Kiste</p>
         <p id="manage-ort-code-status" style="font-size: 0.85em; color: #666; margin-bottom: 12px;"></p>
         
@@ -727,7 +726,6 @@
         </div>
         <button type="button" id="manage-ort-nfc-entfernen-btn" class="btn" style="background-color: #95a5a6; width: 100%; margin-bottom: 12px; display:none;" onclick="entferneNfcVonOrt()">🔌 Code-Zuordnung entfernen</button>
 
-        <!-- Einzel-QR-Vorschau -->
         <div id="manage-ort-qr-box" style="display:none; text-align:center; padding:14px; background:#f8fafc; border:1px solid #d9e3ec; border-radius:8px; margin-bottom:16px;">
             <div id="manage-ort-qr-preview" style="display:inline-block; background:#fff; padding:8px; border:1px dashed #ccc; border-radius:6px;"></div>
             <div style="margin-top:10px; display:flex; gap:8px; justify-content:center;">
@@ -780,7 +778,8 @@
 <div id="packItemModal" class="modal" onclick="if (event.target === this) closeModal('packItemModal')">
     <div class="modal-content">
         <button type="button" class="modal-close-x" onclick="closeModal('packItemModal')">✕</button>
-        <h2>Packliste ergänzen</h2>
+        <h2 id="pack-modal-title">Packliste ergänzen</h2>
+        <input type="hidden" id="pack-pos-id">
         <div class="form-group">
             <label>Art des Eintrags</label>
             <select id="pack-typ" onchange="togglePackTyp()">
@@ -798,7 +797,7 @@
         </div>
         <div class="form-group"><label>Menge</label><input type="text" id="pack-menge" value="1"></div>
         <div class="flex-buttons">
-            <button class="btn btn-save" onclick="packPositionSpeichern()">Hinzufügen</button>
+            <button class="btn btn-save" id="pack-modal-save-btn" onclick="packPositionSpeichern()">Hinzufügen</button>
             <button class="btn btn-cancel" onclick="closeModal('packItemModal')">Abbrechen</button>
         </div>
     </div>

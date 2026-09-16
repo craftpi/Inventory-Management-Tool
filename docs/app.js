@@ -1984,7 +1984,10 @@ function zeigePackliste() {
             if (verfuegbar < pos.menge) status = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
         }
 
-        let actionCell = isEventEditMode ? `<button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:8px;" onclick="loeschePackPosition(${pos.id})">🗑️</button>` : '';
+        let actionCell = isEventEditMode ? `
+            <button class="btn" style="background:#3498db; padding:4px 8px; font-size:0.8em; margin-left:8px;" onclick="openPackItemModal(${pos.id})" title="Position bearbeiten">✏️</button>
+            <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:4px;" onclick="loeschePackPosition(${pos.id})" title="Löschen">🗑️</button>
+        ` : '';
 
         tbody.innerHTML += `
             <tr>
@@ -2004,11 +2007,41 @@ function toggleEventEditMode() {
     zeigePackliste();
 }
 
-function openPackItemModal() {
+function openPackItemModal(posId = null) {
     if (!$('packlisten-auswahl')?.value) return showToast('Bitte wähle zuerst eine Packliste aus.', 'warning');
-    $('pack-artikel-input').value = '';
-    $('pack-eigener-name').value = '';
-    $('pack-menge').value = '1';
+
+    const idInp = $('pack-pos-id');
+    const titleEl = $('pack-modal-title');
+    const btnEl = $('pack-modal-save-btn');
+
+    if (posId) {
+        const pos = packlistenPositionen.find(p => p.id === posId);
+        if (!pos) return;
+        if (idInp) idInp.value = pos.id;
+        if (titleEl) titleEl.innerText = 'Position bearbeiten';
+        if (btnEl) btnEl.innerText = 'Speichern';
+
+        if (pos.artikel_id) {
+            $('pack-typ').value = 'lager';
+            $('pack-artikel-input').value = pos.artikel?.name || '';
+            $('pack-eigener-name').value = '';
+        } else {
+            $('pack-typ').value = 'custom';
+            $('pack-eigener-name').value = pos.eigener_name || '';
+            $('pack-artikel-input').value = '';
+        }
+        $('pack-menge').value = pos.menge;
+    } else {
+        if (idInp) idInp.value = '';
+        if (titleEl) titleEl.innerText = 'Packliste ergänzen';
+        if (btnEl) btnEl.innerText = 'Hinzufügen';
+        $('pack-typ').value = 'lager';
+        $('pack-artikel-input').value = '';
+        $('pack-eigener-name').value = '';
+        $('pack-menge').value = '1';
+    }
+
+    togglePackTyp();
     openModalById('packItemModal');
 }
 
@@ -2022,23 +2055,41 @@ async function packPositionSpeichern() {
     const plId = $('packlisten-auswahl').value;
     const typ = $('pack-typ').value;
     const menge = werteMengeAus($('pack-menge').value) || 1;
+    const editId = $('pack-pos-id')?.value;
 
-    const payload = { packliste_id: Number(plId), menge };
+    let artikelId = null;
+    let eigenerName = null;
 
     if (typ === 'lager') {
         const artName = $('pack-artikel-input').value.trim();
         const art = alleArtikelInfos.find(a => a.name.toLowerCase() === artName.toLowerCase());
         if (!art) return showToast('Artikel nicht im Lager gefunden.', 'warning');
-        payload.artikel_id = art.id;
+        artikelId = art.id;
     } else {
         const cName = $('pack-eigener-name').value.trim();
         if (!cName) return showToast('Bitte Namen eingeben.', 'warning');
-        payload.eigener_name = cName;
+        eigenerName = cName;
     }
 
-    await dbClient.from('packlisten_positionen').insert([payload]);
+    const payload = {
+        packliste_id: Number(plId),
+        menge,
+        artikel_id: artikelId,
+        eigener_name: eigenerName
+    };
+
+    if (editId) {
+        const { error } = await dbClient.from('packlisten_positionen').update(payload).eq('id', editId);
+        if (error) return showToast('Fehler beim Aktualisieren: ' + error.message, 'error');
+        showToast('Position aktualisiert!');
+    } else {
+        const { error } = await dbClient.from('packlisten_positionen').insert([payload]);
+        if (error) return showToast('Fehler beim Hinzufügen: ' + error.message, 'error');
+        showToast('Position hinzugefügt!');
+    }
+
     closeModal('packItemModal');
-    showToast('Position hinzugefügt!');
+    if ($('pack-pos-id')) $('pack-pos-id').value = '';
     await ladePacklistenDaten();
     zeigePackliste();
 }
