@@ -677,9 +677,59 @@ async function kistenCheckArtikelHinzufuegen() {
 }
 
 async function entferneArtikelAusKiste(bestandId) {
-    if (!confirm('Diesen Artikel wirklich aus dieser Kiste entfernen?')) return;
-    await dbClient.from('bestand').delete().eq('id', bestandId);
-    showToast('Artikel entfernt.');
+    if (!confirm('Diesen Artikel wirklich aus dieser Kiste entfernen und auf "Sonstiger Lagerort" setzen?')) return;
+
+    const eintrag = aktuelleDaten.find(b => b.id === bestandId);
+    if (!eintrag) return;
+
+    // "Sonstiger Lagerort" ermitteln oder anlegen
+    let sonstigOrt = alleLagerorte.find(o => 
+        o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
+        o.name.trim().toLowerCase() === 'sonstiges'
+    );
+
+    if (!sonstigOrt) {
+        const { data: neuerOrt, error: ortErr } = await dbClient.from('lagerorte').insert([{ name: 'Sonstiger Lagerort' }]).select();
+        if (ortErr || !neuerOrt || !neuerOrt.length) {
+            showToast('Fehler: Lagerort "Sonstiger Lagerort" konnte nicht angelegt werden.', 'error');
+            return;
+        }
+        sonstigOrt = neuerOrt[0];
+        await ladeLagerorte();
+    }
+
+    // Prüfen, ob für diesen Artikel bereits ein Eintrag an "Sonstiger Lagerort" existiert
+    const existierenderEintrag = aktuelleDaten.find(b => 
+        b.artikel_id === eintrag.artikel_id && 
+        String(b.lagerort_id) === String(sonstigOrt.id) && 
+        b.id !== bestandId
+    );
+
+    if (existierenderEintrag) {
+        // Mengen zusammenführen, wenn bereits vorhanden
+        let neueMenge;
+        if (Number(existierenderEintrag.menge) < 0 || Number(eintrag.menge) < 0) {
+            neueMenge = existierenderEintrag.menge;
+        } else {
+            neueMenge = Number(existierenderEintrag.menge) + Number(eintrag.menge);
+        }
+
+        await dbClient.from('bestand').update({
+            menge: neueMenge,
+            alte_menge: neueMenge,
+            created_at: new Date().toISOString()
+        }).eq('id', existierenderEintrag.id);
+
+        await dbClient.from('bestand').delete().eq('id', bestandId);
+    } else {
+        // Lagerort des Eintrags umbiegen
+        await dbClient.from('bestand').update({
+            lagerort_id: sonstigOrt.id,
+            created_at: new Date().toISOString()
+        }).eq('id', bestandId);
+    }
+
+    showToast(`Artikel auf "${sonstigOrt.name}" verschoben.`);
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
@@ -797,9 +847,8 @@ function aktualisiereArtikelFinderListe(suchbegriff = '') {
         const fehlt = (soll > 0 && ist >= 0 && ist < soll);
 
         if (term) {
-            const matches = (b.artikel?.name || '').toLowerCase().includes(term) ||
-                            (b.lagerorte?.name || '').toLowerCase().includes(term) ||
-                            (b.artikel?.kategorie || '').toLowerCase().includes(term);
+            const matches = [b.artikel?.name, b.lagerorte?.name, b.artikel?.kategorie]
+                .some(field => (field || '').toLowerCase().includes(term));
             if (!matches) return false;
         }
 
@@ -1140,7 +1189,6 @@ function tabelleAktualisieren(daten) {
             artMap.get(z.artikel_id).bestaende.push(z);
         });
 
-        // WICHTIGE ÄNDERUNG: Wir zählen unterschiedliche Artikel (IDs) pro Prefix, NICHT Standorte!
         const prefixArtikelSets = {};
         const prefixSums = {};
         const prefixInf = {};
@@ -1173,7 +1221,6 @@ function tabelleAktualisieren(daten) {
             grp.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
             const parts = grp.artikel.name.trim().split(' ');
 
-            // Nur gruppieren, wenn mindestens 2 VERSCHIEDENE ARTIKEL mit diesem Wort beginnen!
             const hatMehrereVerschiedeneArtikel = parts.length > 1 && prefixArtikelSets[parts[0]] && prefixArtikelSets[parts[0]].size > 1;
             const pref = hatMehrereVerschiedeneArtikel ? parts[0] : null;
 
@@ -1201,7 +1248,6 @@ function tabelleAktualisieren(daten) {
                 if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
             };
 
-            // Nur abschneiden, wenn es wirklich mehrere unterschiedliche Artikel unter diesem Prefix gibt
             const displayName = hatMehrereVerschiedeneArtikel ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
             const wichtigBadge = grp.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
             const hatKommentar = Boolean(grp.artikel.kommentar?.trim());
