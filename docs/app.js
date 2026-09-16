@@ -700,12 +700,28 @@ function gibKistenBestand(lid) {
         .sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de'));
 }
 
-function ermittleKistenEntnahmeStatus(lid) {
-    const entnahme = (offeneEntnahmen || []).find(e => {
+function ermittleAlleKistenEntnahmen(lid) {
+    return (offeneEntnahmen || []).filter(e => {
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
         return mats.some(m => String(m.kiste_id) === String(lid));
     });
-    return entnahme || null;
+}
+
+function ermittleKistenStatusCell(lid, bestand) {
+    const entnahmen = ermittleAlleKistenEntnahmen(lid);
+    const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
+
+    if (!entnahmen.length) {
+        if (fehlt) return '<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>';
+        return '<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>';
+    }
+
+    const istGanzeKiste = entnahmen.length === 1 && entnahmen[0].materialien?.some(m => String(m.kiste_id) === String(lid) && m.ganze_kiste);
+    if (istGanzeKiste) {
+        return `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahmen[0].name)}</span>`;
+    }
+
+    return '<span style="color:#e67e22; font-weight:bold;">⚠️ Teilentnahme (siehe Prüfen)</span>';
 }
 
 function oeffneKistenCheck(lid) {
@@ -731,14 +747,36 @@ function oeffneKistenCheck(lid) {
         }
     }
 
-    const entnahme = ermittleKistenEntnahmeStatus(lid);
+    const boxEntnahmen = ermittleAlleKistenEntnahmen(lid);
     const banner = $('kiste-ausgeliehen-banner');
     if (banner) {
-        if (entnahme) {
-            banner.style.display = 'block';
-            banner.innerHTML = `⚠️ <strong>Aktuell ausgeliehen an:</strong> ${escapeHtml(entnahme.name)} (${new Date(entnahme.created_at).toLocaleString('de-DE')}) ${entnahme.kontakt ? `&bull; 📞 ${escapeHtml(entnahme.kontakt)}` : ''}`;
-        } else {
+        if (!boxEntnahmen.length) {
             banner.style.display = 'none';
+        } else {
+            banner.style.display = 'block';
+            let bannerHtml = `⚠️ <strong>Offene Entnahmen aus dieser Kiste (${boxEntnahmen.length}):</strong><div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">`;
+            boxEntnahmen.forEach(ent => {
+                const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+                const kistenMats = mats.filter(m => String(m.kiste_id) === String(lid));
+                const details = kistenMats.map(m => {
+                    if (m.ganze_kiste) return '<strong>Ganze Kiste</strong>';
+                    if (Array.isArray(m.artikel) && m.artikel.length) {
+                        return m.artikel.map(a => `<strong>${a.menge || 1}x</strong> ${escapeHtml(a.name || 'Artikel')}`).join(', ');
+                    }
+                    return 'Teilentnahme';
+                }).join('; ') || 'Teilentnahme';
+
+                const datum = new Date(ent.created_at).toLocaleString('de-DE');
+                bannerHtml += `
+                    <div style="font-size:0.92em; padding:4px 0; border-bottom:1px dashed #f0ad4e;">
+                        👤 <strong>${escapeHtml(ent.name)}</strong>: ${details} 
+                        <span style="color:#7f8c8d; font-size:0.85em;">(${datum})</span>
+                        ${ent.kontakt ? ` &bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
+                    </div>
+                `;
+            });
+            bannerHtml += `</div>`;
+            banner.innerHTML = bannerHtml;
         }
     }
 
@@ -876,6 +914,7 @@ async function frageKisteAusbuchen() {
             materialien: [{
                 kiste_id: Number(kistenCheckAktuelleId),
                 kiste_name: ort.name,
+                ganze_kiste: true,
                 artikel: bestand.map(b => ({
                     bestand_id: b.id,
                     artikel_id: b.artikel_id,
@@ -946,6 +985,7 @@ async function aendereArtikelMengeInKiste(bestandId, delta) {
             materialien: [{
                 kiste_id: Number(eintrag.lagerort_id),
                 kiste_name: eintrag.lagerorte?.name || 'Kiste',
+                ganze_kiste: false,
                 artikel: [{
                     bestand_id: bestandId,
                     artikel_id: eintrag.artikel_id,
@@ -1765,17 +1805,7 @@ function renderKistenListe() {
 
     ziel.innerHTML = liste.map(o => {
         const bestand = gibKistenBestand(o.id);
-        const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-        const entnahme = ermittleKistenEntnahmeStatus(o.id);
-
-        let statusCell = '';
-        if (entnahme) {
-            statusCell = `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahme.name)}</span>`;
-        } else if (fehlt) {
-            statusCell = `<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>`;
-        } else {
-            statusCell = `<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>`;
-        }
+        const statusCell = ermittleKistenStatusCell(o.id, bestand);
 
         return `
             <tr>
@@ -1800,7 +1830,13 @@ function renderKistenUnterwegsKombiniert() {
         if (!suchText) return true;
         const nameMatch = (e.name || '').toLowerCase().includes(suchText);
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        const matMatch = mats.some(m => (m.kiste_name || m.name || m.label || '').toLowerCase().includes(suchText));
+        const matMatch = mats.some(m => {
+            if (m.kiste_name && m.kiste_name.toLowerCase().includes(suchText)) return true;
+            if (Array.isArray(m.artikel)) {
+                return m.artikel.some(a => (a.name || '').toLowerCase().includes(suchText));
+            }
+            return (m.name || m.label || '').toLowerCase().includes(suchText);
+        });
         return nameMatch || matMatch;
     });
 
@@ -1809,9 +1845,9 @@ function renderKistenUnterwegsKombiniert() {
             return false;
         }
         const bestand = gibKistenBestand(o.id);
-        const entnahme = ermittleKistenEntnahmeStatus(o.id);
+        const entnahmen = ermittleAlleKistenEntnahmen(o.id);
         const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-        return Boolean(entnahme || fehlt);
+        return Boolean(entnahmen.length || fehlt);
     });
 
     let html = '';
@@ -1837,6 +1873,15 @@ function renderKistenUnterwegsKombiniert() {
             const datum = new Date(ent.created_at).toLocaleString('de-DE');
             const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
             const itemsHtml = mats.map(m => {
+                if (Array.isArray(m.artikel) && m.artikel.length > 0) {
+                    if (m.ganze_kiste) {
+                        return `<li><strong>📦 ${escapeHtml(m.kiste_name || 'Kiste')}</strong> (Kiste komplett entnommen)</li>`;
+                    } else {
+                        return m.artikel.map(a => 
+                            `<li><strong>${a.menge || 1}x</strong> ${escapeHtml(a.name || 'Artikel')} <span style="color:#7f8c8d; font-size:0.9em;">(aus 📦 ${escapeHtml(m.kiste_name || 'Kiste')})</span></li>`
+                        ).join('');
+                    }
+                }
                 if (m.kiste_name) {
                     return `<li><strong>📦 ${escapeHtml(m.kiste_name)}</strong> (Kiste komplett entnommen)</li>`;
                 }
@@ -1883,17 +1928,7 @@ function renderKistenUnterwegsKombiniert() {
                     <tbody>
                         ${kistenGefiltert.map(o => {
                             const bestand = gibKistenBestand(o.id);
-                            const entnahme = ermittleKistenEntnahmeStatus(o.id);
-                            const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-
-                            let statusCell = '';
-                            if (entnahme) {
-                                statusCell = `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahme.name)}</span>`;
-                            } else if (fehlt) {
-                                statusCell = `<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>`;
-                            } else {
-                                statusCell = `<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>`;
-                            }
+                            const statusCell = ermittleKistenStatusCell(o.id, bestand);
 
                             return `
                                 <tr>
@@ -1924,7 +1959,13 @@ function renderAuditLogListe() {
         if (!suchText) return true;
         const nameMatch = (a.name || '').toLowerCase().includes(suchText);
         const mats = Array.isArray(a.materialien) ? a.materialien : [];
-        const matMatch = mats.some(m => (m.kiste_name || m.name || m.label || '').toLowerCase().includes(suchText));
+        const matMatch = mats.some(m => {
+            if (m.kiste_name && m.kiste_name.toLowerCase().includes(suchText)) return true;
+            if (Array.isArray(m.artikel)) {
+                return m.artikel.some(art => (art.name || '').toLowerCase().includes(suchText));
+            }
+            return (m.name || m.label || '').toLowerCase().includes(suchText);
+        });
         return nameMatch || matMatch;
     });
 
@@ -1956,6 +1997,10 @@ function renderAuditLogListe() {
                         else badgeHtml = '<span class="audit-badge entnahme">📤 Entnahme</span>';
 
                         const detailsText = mats.map(m => {
+                            if (Array.isArray(m.artikel) && m.artikel.length > 0) {
+                                if (m.ganze_kiste) return `📦 ${escapeHtml(m.kiste_name || 'Kiste')} (Ganze Kiste)`;
+                                return m.artikel.map(a => `${a.menge || 1}x ${escapeHtml(a.name || 'Artikel')} (aus ${escapeHtml(m.kiste_name || 'Kiste')})`).join(', ');
+                            }
                             if (m.kiste_name) return `📦 ${escapeHtml(m.kiste_name)}`;
                             return `${m.menge || 1}x ${escapeHtml(m.name || m.label || 'Material')}`;
                         }).join(', ') || '–';
