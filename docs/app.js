@@ -771,10 +771,14 @@ async function bestaetigeEntnahme() {
             const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
             if (insErr) throw insErr;
 
-            await dbClient.from('lager_entnahme_audit').insert([{
-                ...entnahmePayload,
-                ereignis: 'entnahme'
-            }]).catch(() => {});
+            try {
+                await dbClient.from('lager_entnahme_audit').insert([{
+                    ...entnahmePayload,
+                    ereignis: 'entnahme'
+                }]);
+            } catch (auditErr) {
+                console.warn('Audit log insert failed (ignored):', auditErr);
+            }
 
             showToast(`📤 "${ausbuchenPendingAktion.kisteName}" an ${name} ausgebucht!`);
         } else if (ausbuchenPendingAktion.typ === 'artikel_einzeln') {
@@ -811,10 +815,14 @@ async function bestaetigeEntnahme() {
                 const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
                 if (insErr) throw insErr;
 
-                await dbClient.from('lager_entnahme_audit').insert([{
-                    ...entnahmePayload,
-                    ereignis: 'entnahme'
-                }]).catch(() => {});
+                try {
+                    await dbClient.from('lager_entnahme_audit').insert([{
+                        ...entnahmePayload,
+                        ereignis: 'entnahme'
+                    }]);
+                } catch (auditErr) {
+                    console.warn('Audit log insert failed (ignored):', auditErr);
+                }
 
                 showToast(`📤 1x "${artikelName}" an ${name} ausgebucht!`);
             }
@@ -852,14 +860,16 @@ async function ganzeKisteZurueckbuchen() {
     });
 
     for (const ent of offene) {
-        await dbClient.from('lager_entnahme_audit').insert([{
-            entnahme_id: ent.id,
-            name: ent.name,
-            kontakt: ent.kontakt,
-            materialien: ent.materialien,
-            ereignis: 'rueckgabe',
-            created_at: new Date().toISOString()
-        }]).catch(() => {});
+        try {
+            await dbClient.from('lager_entnahme_audit').insert([{
+                entnahme_id: ent.id,
+                name: ent.name,
+                kontakt: ent.kontakt,
+                materialien: ent.materialien,
+                ereignis: 'rueckgabe',
+                created_at: new Date().toISOString()
+            }]);
+        } catch (e) {}
         await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
     }
 
@@ -1777,14 +1787,16 @@ async function schliesseEntnahmeKomplett(entnahmeId) {
         }
     }
 
-    await dbClient.from('lager_entnahme_audit').insert([{
-        entnahme_id: ent.id,
-        name: ent.name,
-        kontakt: ent.kontakt,
-        materialien: ent.materialien,
-        ereignis: 'rueckgabe',
-        created_at: new Date().toISOString()
-    }]).catch(() => {});
+    try {
+        await dbClient.from('lager_entnahme_audit').insert([{
+            entnahme_id: ent.id,
+            name: ent.name,
+            kontakt: ent.kontakt,
+            materialien: ent.materialien,
+            ereignis: 'rueckgabe',
+            created_at: new Date().toISOString()
+        }]);
+    } catch (e) {}
 
     await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
     showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
