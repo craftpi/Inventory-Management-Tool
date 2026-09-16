@@ -120,7 +120,7 @@
         #bestaetigungModal { z-index: 10050; }
         #neuOrtModal { z-index: 10020; }
         #kistenEtikettenModal { z-index: 10025; }
-        #entnahmePersonModal { z-index: 10030; }
+        #kistenBenutzerModal { z-index: 10030; }
         .modal-content {
             background-color: white;
             margin: 5vh auto;
@@ -423,13 +423,31 @@
         </div>
     </div>
 
-    <!-- KISTEN & VERLEIH (NEU INTEGRIERTER SCAN-HUB) -->
+    <!-- KISTEN & VERLEIH (MIT AKTIVEM BENUTZER-BANNER & SCHNELLWAHL) -->
     <div id="ansicht-kisten" style="display: none;">
         <p class="subtitle">
             Kisten und deren Inhalte im Überblick. Scanne Code/NFC oder erfasse Entnahmen an Resortleiter.
         </p>
+
+        <!-- AKTIVER BENUTZER BANNER -->
+        <div id="kisten-benutzer-banner" style="display:flex; justify-content:space-between; align-items:center; background:#edf4fc; border:1px solid #c8ddf6; border-radius:8px; padding:10px 14px; margin-bottom:12px; gap:10px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="font-size:1.4em;" id="kisten-benutzer-icon">👤</span>
+                <div>
+                    <div style="font-size:0.75em; color:#5f6b77; font-weight:bold; letter-spacing:0.5px;">AKTIVER BENUTZER (SITZUNG):</div>
+                    <div style="font-size:1.05em; font-weight:bold; color:#2c3e50;">
+                        <span id="kisten-aktiver-benutzer-name">Kein Benutzer gewählt</span>
+                        <span id="kisten-aktiver-benutzer-badge"></span>
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="btn" style="background:#34495e; padding:6px 14px; font-size:0.85em; width:auto; min-height:36px;" onclick="kistenBenutzerZuruecksetzen()">
+                🔄 Benutzer wechseln
+            </button>
+        </div>
+
         <div class="action-bar">
-            <!-- DIREKTER SCANN- & SUCH-HUB IM KISTEN-REITER (ERFÜLLT PUNKT 4) -->
+            <!-- DIREKTER SCAN- & SUCH-HUB IM KISTEN-REITER -->
             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
                 <button class="btn" style="background:#27ae60; padding:10px; font-size:0.9em;" onclick="oeffneKistenKameraModal()">📷 Kamera-Scan</button>
                 <button class="btn" style="background:#16a085; padding:10px; font-size:0.9em;" id="tab-nfc-btn" onclick="starteKistenNfc()">📶 NFC-Scan</button>
@@ -503,27 +521,55 @@
      MODALS
      ========================================================================= -->
 
-<!-- MODAL: PERSONEN-AUSWAHL FÜR ENTNAHME -->
-<div id="entnahmePersonModal" class="modal" onclick="if (event.target === this) closeModal('entnahmePersonModal')">
-    <div class="modal-content" style="max-width: 480px;">
-        <button type="button" class="modal-close-x" onclick="closeModal('entnahmePersonModal')">✕</button>
-        <h2 id="entnahme-modal-titel" style="margin-top:0; color:#2c3e50;">📤 Material ausbuchen</h2>
-        <p id="entnahme-modal-sub" style="font-size:0.9em; color:#666; margin-bottom:15px;"></p>
-        
-        <div class="form-group">
-            <label for="entnahme-person-select">Wer nimmt das Material mit?</label>
-            <select id="entnahme-person-select" onchange="entnahmePersonSelectChanged()"></select>
+<!-- MODAL: BENUTZERAUSWAHL & -VERWALTUNG FÜR KISTEN & VERLEIH -->
+<div id="kistenBenutzerModal" class="modal" onclick="if (event.target === this) schliesseKistenBenutzerModal()">
+    <div class="modal-content" style="max-width: 520px;">
+        <button type="button" class="modal-close-x" onclick="schliesseKistenBenutzerModal()">✕</button>
+        <h2 style="margin-top:0; color:#2c3e50;">👤 Kisten- &amp; Verleih-Benutzer</h2>
+        <p style="font-size:0.9em; color:#666; margin-bottom:14px;">
+            Wähle aus, wer Material entnimmt oder zurückbucht. Dieser Benutzer bleibt für deine gesamte Sitzung aktiv.
+        </p>
+
+        <!-- Helfer-Account Schnellwahl -->
+        <div style="background:#eafaf1; border:1px solid #a3e4d7; border-radius:8px; padding:12px; margin-bottom:16px; text-align:center;">
+            <p style="margin:0 0 8px 0; font-size:0.88em; color:#145a32; font-weight:bold;">
+                Material am Ende einer Veranstaltung wieder einbuchen?
+            </p>
+            <button type="button" class="btn" style="background:#27ae60; width:100%; font-size:0.95em;" onclick="waehleHelferAccount()">
+                🤝 Als Helfer fortfahren (Nur Einbuchen / Rückgabe)
+            </button>
+            <div style="font-size:0.75em; color:#27ae60; margin-top:4px;">* Ausbuchen ist für Helfer vollständig gesperrt</div>
         </div>
 
-        <div class="form-group" id="entnahme-custom-person-wrap" style="display:none;">
-            <label for="entnahme-custom-name">Neuer Name / Helfer</label>
-            <input type="text" id="entnahme-custom-name" placeholder="Vorname Nachname">
-            <input type="text" id="entnahme-custom-kontakt" placeholder="Telefon / E-Mail (optional)" style="margin-top:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <strong style="color:#2c3e50; font-size:0.95em;">Vorhandene Personen / Resortleiter:</strong>
+            <button type="button" class="btn" style="background:#3498db; padding:4px 10px; font-size:0.8em; width:auto; min-height:30px;" onclick="toggleNeuerBenutzerForm()">
+                ➕ Neuer Name
+            </button>
         </div>
 
-        <div class="flex-buttons" style="margin-top:20px;">
-            <button class="btn btn-save" onclick="bestaetigeEntnahme()">📤 Ausbuchen bestätigen</button>
-            <button class="btn btn-cancel" onclick="closeModal('entnahmePersonModal')">Abbrechen</button>
+        <!-- Formular: Neuer Benutzer -->
+        <div id="kisten-neuer-benutzer-form" style="display:none; background:#f8fafc; border:1px solid #d9e3ec; border-radius:8px; padding:12px; margin-bottom:12px;">
+            <div class="form-group" style="margin-bottom:8px;">
+                <label for="kisten-neuer-benutzer-name" style="font-size:0.85em;">Name / Person *</label>
+                <input type="text" id="kisten-neuer-benutzer-name" placeholder="Vorname Nachname" style="padding:8px;">
+            </div>
+            <div class="form-group" style="margin-bottom:10px;">
+                <label for="kisten-neuer-benutzer-kontakt" style="font-size:0.85em;">Kontakt (optional)</label>
+                <input type="text" id="kisten-neuer-benutzer-kontakt" placeholder="Telefon oder E-Mail" style="padding:8px;">
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-save" style="padding:8px; font-size:0.9em;" onclick="speichereUndWaehleNeuenBenutzer()">Speichern &amp; Auswählen</button>
+                <button type="button" class="btn btn-cancel" style="padding:8px; font-size:0.9em;" onclick="toggleNeuerBenutzerForm()">Abbrechen</button>
+            </div>
+        </div>
+
+        <!-- Suchfeld & Liste -->
+        <input type="text" id="kisten-benutzer-such-input" placeholder="🔍 Person suchen…" oninput="renderKistenBenutzerAuswahlListe()" style="width:100%; padding:8px 12px; border:1px solid #ccc; border-radius:6px; margin-bottom:10px; font-size:0.95em;">
+        <div id="kisten-benutzer-liste" style="max-height: 38vh; overflow-y: auto; display: flex; flex-direction: column;"></div>
+
+        <div class="flex-buttons" style="margin-top:16px;">
+            <button type="button" class="btn btn-cancel" style="width:100%;" onclick="schliesseKistenBenutzerModal()">Schließen</button>
         </div>
     </div>
 </div>
@@ -538,7 +584,7 @@
         <div id="kiste-ausgeliehen-banner" style="display:none; background:#fff3cd; border:1px solid #ffeeba; color:#856404; padding:10px; border-radius:8px; margin-bottom:14px; font-size:0.92em;"></div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:16px;">
-            <button class="btn" style="background:#c0392b;" onclick="frageKisteAusbuchen()">
+            <button id="kiste-ausbuchen-btn" class="btn" style="background:#c0392b;" onclick="frageKisteAusbuchen()">
                 📤 Ganze Kiste entnehmen
             </button>
             <button class="btn" style="background:#27ae60;" onclick="ganzeKisteZurueckbuchen()">

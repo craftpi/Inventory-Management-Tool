@@ -8,7 +8,8 @@ const STORAGE_KEYS = {
     SESSION: 'trilager_local_session_v2',
     ATTEMPTS: 'trilager_login_attempts_v1',
     LOCK: 'trilager_login_lock_until_v1',
-    ONBOARDING: 'lager_onboarding_v1_gesehen'
+    ONBOARDING: 'lager_onboarding_v1_gesehen',
+    KISTEN_BENUTZER: 'trilager_kisten_aktiver_benutzer_v1'
 };
 
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -47,6 +48,10 @@ let nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
 let hubKameraAktiv = false;
 let ausbuchenPendingAktion = null;
+
+// Aktiver Kisten-Benutzer (Sitzung) & Auto-Refresh Timer
+let aktiverKistenBenutzer = null;
+let unterwegsRefreshInterval = null;
 
 // =========================================================================
 // 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
@@ -377,12 +382,15 @@ async function handleLogin() {
         $('login-overlay').style.display = 'none';
         speichereLokaleSession({ username: data.username, token: data.token });
         showToast('Erfolgreich angemeldet!');
+        ladeKistenBenutzerSession();
         await ladeAlles();
         pruefeUndZeigeOnboarding();
     }
 }
 
 function handleLogout() {
+    stoppeUnterwegsAutoRefresh();
+    speichereKistenBenutzerSession(null);
     window.localStorage.removeItem(STORAGE_KEYS.SESSION);
     setzeAuthToken(null);
     $('login-overlay').style.display = 'flex';
@@ -507,8 +515,185 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. KISTEN- & ENTNAHME-SYSTEM (MIT PFLICHT-BENUTZERABFRAGE)
+// 5. KISTEN-, BENUTZER- & ENTNAHME-SYSTEM
 // =========================================================================
+
+function ladeKistenBenutzerSession() {
+    try {
+        const raw = window.sessionStorage.getItem(STORAGE_KEYS.KISTEN_BENUTZER);
+        if (raw) aktiverKistenBenutzer = JSON.parse(raw);
+    } catch (e) {
+        aktiverKistenBenutzer = null;
+    }
+    aktualisiereKistenBenutzerUI();
+}
+
+function speichereKistenBenutzerSession(user) {
+    aktiverKistenBenutzer = user;
+    try {
+        if (user) window.sessionStorage.setItem(STORAGE_KEYS.KISTEN_BENUTZER, JSON.stringify(user));
+        else window.sessionStorage.removeItem(STORAGE_KEYS.KISTEN_BENUTZER);
+    } catch (e) {}
+    aktualisiereKistenBenutzerUI();
+}
+
+function aktualisiereKistenBenutzerUI() {
+    const banner = $('kisten-benutzer-banner');
+    const nameEl = $('kisten-aktiver-benutzer-name');
+    const badgeEl = $('kisten-aktiver-benutzer-badge');
+    const iconEl = $('kisten-benutzer-icon');
+    if (!banner || !nameEl) return;
+
+    if (!aktiverKistenBenutzer) {
+        nameEl.innerText = 'Kein Benutzer ausgewählt';
+        nameEl.style.color = '#c0392b';
+        if (badgeEl) badgeEl.innerHTML = '';
+        if (iconEl) iconEl.innerText = '⚠️';
+        banner.style.background = '#fef5e7';
+        banner.style.borderColor = '#f9e79f';
+    } else if (aktiverKistenBenutzer.isHelper) {
+        nameEl.innerText = aktiverKistenBenutzer.name;
+        nameEl.style.color = '#27ae60';
+        if (badgeEl) badgeEl.innerHTML = ' <span class="audit-badge rueckgabe" style="margin-left:6px;">Nur Einbuchen</span>';
+        if (iconEl) iconEl.innerText = '🤝';
+        banner.style.background = '#edf8f0';
+        banner.style.borderColor = '#a3e4d7';
+    } else {
+        nameEl.innerText = aktiverKistenBenutzer.name;
+        nameEl.style.color = '#2c3e50';
+        if (badgeEl) badgeEl.innerHTML = aktiverKistenBenutzer.kontakt ? ` <small style="color:#7f8c8d; font-weight:normal;">(${escapeHtml(aktiverKistenBenutzer.kontakt)})</small>` : '';
+        if (iconEl) iconEl.innerText = '👤';
+        banner.style.background = '#edf4fc';
+        banner.style.borderColor = '#c8ddf6';
+    }
+}
+
+function oeffneKistenBenutzerModal() {
+    renderKistenBenutzerAuswahlListe();
+    const wrap = $('kisten-neuer-benutzer-form');
+    if (wrap) wrap.style.display = 'none';
+    const nameInp = $('kisten-neuer-benutzer-name');
+    if (nameInp) nameInp.value = '';
+    const kontaktInp = $('kisten-neuer-benutzer-kontakt');
+    if (kontaktInp) kontaktInp.value = '';
+    openModalById('kistenBenutzerModal');
+}
+
+function schliesseKistenBenutzerModal() {
+    closeModal('kistenBenutzerModal');
+}
+
+function toggleNeuerBenutzerForm() {
+    const el = $('kisten-neuer-benutzer-form');
+    if (!el) return;
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    if (el.style.display === 'block') $('kisten-neuer-benutzer-name')?.focus();
+}
+
+function waehleKistenBenutzer(vorlageId) {
+    const v = (alleBenutzerVorlagen || []).find(b => String(b.id) === String(vorlageId));
+    if (!v) return;
+    speichereKistenBenutzerSession({
+        id: v.id,
+        name: v.name,
+        kontakt: v.kontakt || '',
+        isHelper: false
+    });
+    schliesseKistenBenutzerModal();
+    showToast(`👤 Angemeldet als: ${v.name}`);
+    if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+}
+
+function waehleHelferAccount() {
+    speichereKistenBenutzerSession({
+        id: null,
+        name: 'Helfer',
+        kontakt: '',
+        isHelper: true
+    });
+    schliesseKistenBenutzerModal();
+    showToast('🤝 Als Helfer angemeldet (Ausbuchen ist gesperrt)');
+    if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+}
+
+function kistenBenutzerZuruecksetzen() {
+    speichereKistenBenutzerSession(null);
+    showToast('Benutzer zurückgesetzt.');
+    oeffneKistenBenutzerModal();
+}
+
+async function speichereUndWaehleNeuenBenutzer() {
+    const name = ($('kisten-neuer-benutzer-name')?.value || '').trim();
+    const kontakt = ($('kisten-neuer-benutzer-kontakt')?.value || '').trim();
+    if (!name) return showToast('Bitte einen Namen eingeben!', 'warning');
+
+    const { data, error } = await dbClient.from('lager_entnahme_benutzer_vorlagen').insert([{ name, kontakt }]).select();
+    if (error) return showToast('Fehler beim Anlegen: ' + error.message, 'error');
+
+    await ladeEntnahmeDaten();
+    const neu = (data && data[0]) ? data[0] : { id: null, name, kontakt };
+    speichereKistenBenutzerSession({
+        id: neu.id,
+        name: neu.name,
+        kontakt: neu.kontakt || '',
+        isHelper: false
+    });
+    schliesseKistenBenutzerModal();
+    showToast(`👤 Angelegt & ausgewählt: ${name}`);
+    if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+}
+
+async function loescheBenutzerVorlage(id, name, ev) {
+    if (ev) ev.stopPropagation();
+    if (!confirm(`Möchtest du den Benutzer "${name}" wirklich unwiderruflich löschen?`)) return;
+
+    const { error } = await dbClient.from('lager_entnahme_benutzer_vorlagen').delete().eq('id', id);
+    if (error) return showToast('Fehler beim Löschen: ' + error.message, 'error');
+
+    showToast(`Benutzer "${name}" gelöscht.`);
+    if (aktiverKistenBenutzer && String(aktiverKistenBenutzer.id) === String(id)) {
+        speichereKistenBenutzerSession(null);
+    }
+    await ladeEntnahmeDaten();
+    renderKistenBenutzerAuswahlListe();
+}
+
+function renderKistenBenutzerAuswahlListe() {
+    const container = $('kisten-benutzer-liste');
+    if (!container) return;
+    const suchText = ($('kisten-benutzer-such-input')?.value || '').toLowerCase().trim();
+
+    const liste = (alleBenutzerVorlagen || []).filter(v => {
+        if (!suchText) return true;
+        return (v.name || '').toLowerCase().includes(suchText) || (v.kontakt || '').toLowerCase().includes(suchText);
+    });
+
+    if (!liste.length) {
+        container.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine passenden Personen gefunden.</p>';
+        return;
+    }
+
+    container.innerHTML = liste.map(v => {
+        const isCurrent = aktiverKistenBenutzer && !aktiverKistenBenutzer.isHelper && String(aktiverKistenBenutzer.id) === String(v.id);
+        const escapedName = escapeHtml(v.name).replace(/'/g, "\\'");
+        return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border:1px solid ${isCurrent ? '#3498db' : '#e2e8f0'}; background:${isCurrent ? '#ebf5fb' : '#fff'}; border-radius:8px; margin-bottom:8px; gap:8px;">
+                <div style="flex:1; cursor:pointer;" onclick="waehleKistenBenutzer('${v.id}')">
+                    <strong style="color:#2c3e50; font-size:1.02em;">👤 ${escapeHtml(v.name)}</strong>
+                    ${v.kontakt ? `<div style="font-size:0.82em; color:#7f8c8d; margin-top:2px;">📞 ${escapeHtml(v.kontakt)}</div>` : ''}
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <button type="button" class="btn" style="background:${isCurrent ? '#2980b9' : '#27ae60'}; padding:6px 12px; font-size:0.85em; width:auto; min-height:36px;" onclick="waehleKistenBenutzer('${v.id}')">
+                        ${isCurrent ? '✓ Aktiv' : 'Auswählen'}
+                    </button>
+                    <button type="button" class="btn" style="background:#e74c3c; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="loescheBenutzerVorlage('${v.id}', '${escapedName}', event)" title="Benutzer löschen">
+                        🗑️
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
 
 function gibKistenBestand(lid) {
     return (aktuelleDaten || []).filter(z => String(z.lagerort_id) === String(lid))
@@ -530,6 +715,21 @@ function oeffneKistenCheck(lid) {
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
     $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
+
+    const ausbuchenBtn = $('kiste-ausbuchen-btn');
+    if (ausbuchenBtn) {
+        if (aktiverKistenBenutzer?.isHelper) {
+            ausbuchenBtn.disabled = true;
+            ausbuchenBtn.style.opacity = '0.4';
+            ausbuchenBtn.style.cursor = 'not-allowed';
+            ausbuchenBtn.title = 'Helfer können keine Kisten ausbuchen';
+        } else {
+            ausbuchenBtn.disabled = false;
+            ausbuchenBtn.style.opacity = '1';
+            ausbuchenBtn.style.cursor = 'pointer';
+            ausbuchenBtn.title = 'Ganze Kiste ausbuchen';
+        }
+    }
 
     const entnahme = ermittleKistenEntnahmeStatus(lid);
     const banner = $('kiste-ausgeliehen-banner');
@@ -558,6 +758,8 @@ function renderKistenInhaltListe(lid) {
         wrapper.innerHTML = '<p style="color:#7f8c8d; text-align:center; padding:15px;">Diese Kiste hat noch keine zugeordneten Artikel.</p>';
         return;
     }
+
+    const isHelper = aktiverKistenBenutzer?.isHelper;
 
     bestand.forEach(z => {
         const ist = Number(z.ist_menge);
@@ -588,10 +790,18 @@ function renderKistenInhaltListe(lid) {
                 </div>
             `;
         } else {
-            const canMinus = ist > 0;
+            const canMinus = ist > 0 && !isHelper;
             const canPlus = ist < soll;
+
+            let minusButton = '';
+            if (isHelper) {
+                minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; opacity:0.35; cursor:not-allowed;" title="Helfer können nicht ausbuchen" disabled>−</button>`;
+            } else {
+                minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück entnehmen' : 'Bereits 0 vorhanden'}">−</button>`;
+            }
+
             bedienElementeHtml = `
-                <button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück entnehmen (mit Personenerfassung)' : 'Bereits 0 vorhanden'}">−</button>
+                ${minusButton}
                 <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
                 <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="1 Stück einbuchen">+</button>
             `;
@@ -624,58 +834,147 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 }
 
 // -------------------------------------------------------------------------
-// Entnahme mit strikter Personenabfrage (für Kisten und Einzelartikel)
+// Entnahme & Einbuchen mit fixem Sitzungs-Benutzer
 // -------------------------------------------------------------------------
-function frageKisteAusbuchen() {
+async function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
     const ort = (alleLagerorte || []).find(o => String(o.id) === String(kistenCheckAktuelleId));
     if (!ort) return;
 
-    ausbuchenPendingAktion = {
-        typ: 'kiste',
-        kisteId: kistenCheckAktuelleId,
-        kisteName: ort.name
-    };
+    if (!aktiverKistenBenutzer) {
+        showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning');
+        oeffneKistenBenutzerModal();
+        return;
+    }
 
-    $('entnahme-modal-titel').innerText = `📤 Kiste ausbuchen: ${ort.name}`;
-    $('entnahme-modal-sub').innerText = 'Bitte gib an, welcher Resortleiter oder Helfer die Kiste mitnimmt:';
+    if (aktiverKistenBenutzer.isHelper) {
+        return showToast('Helfer-Account: Ausbuchen ist gesperrt! Helfer können nur Material einbuchen.', 'warning');
+    }
 
-    befuellePersonenSelect();
-    openModalById('entnahmePersonModal');
+    const bestand = gibKistenBestand(kistenCheckAktuelleId);
+    const verfuegbare = bestand.filter(z => Number(z.ist_menge) > 0);
+    if (!verfuegbare.length) {
+        return showToast('In dieser Kiste ist aktuell kein Material zum Ausbuchen vorhanden.', 'warning');
+    }
+
+    if (!confirm(`Ganze Kiste "${ort.name}" an ${aktiverKistenBenutzer.name} ausbuchen?`)) return;
+
+    try {
+        const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+            return dbClient.from('bestand').update({
+                menge: 0,
+                alte_menge: z.soll_menge || z.ist_menge,
+                created_at: new Date().toISOString()
+            }).eq('id', z.id);
+        });
+        await Promise.all(updates);
+
+        const entnahmePayload = {
+            name: aktiverKistenBenutzer.name,
+            kontakt: aktiverKistenBenutzer.kontakt || '',
+            benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
+            materialien: [{
+                kiste_id: Number(kistenCheckAktuelleId),
+                kiste_name: ort.name,
+                artikel: bestand.map(b => ({
+                    bestand_id: b.id,
+                    artikel_id: b.artikel_id,
+                    name: b.artikel?.name,
+                    menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge,
+                    typ: b.artikel?.typ || 'zaehlbar'
+                }))
+            }],
+            created_at: new Date().toISOString()
+        };
+
+        const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+        if (insErr) throw insErr;
+
+        try {
+            await dbClient.from('lager_entnahme_audit').insert([{
+                ...entnahmePayload,
+                ereignis: 'entnahme'
+            }]);
+        } catch (auditErr) {}
+
+        showToast(`📤 "${ort.name}" an ${aktiverKistenBenutzer.name} ausgebucht!`);
+        await ladeAlles();
+        oeffneKistenCheck(kistenCheckAktuelleId);
+    } catch (err) {
+        console.error('Fehler beim Ausbuchen der Kiste:', err);
+        showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
+    }
 }
 
-function aendereArtikelMengeInKiste(bestandId, delta) {
+async function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
     if (!eintrag) return;
     const aktuell = Number(eintrag.ist_menge);
     if (aktuell < 0) return;
 
     if (delta > 0) {
-        // Einbuchen/Rückgabe direkt ausführen ohne Personabfrage
-        ausfuehrenArtikelEinbuchung(bestandId, delta);
+        await ausfuehrenArtikelEinbuchung(bestandId, delta);
         return;
     }
 
     if (delta < 0 && aktuell <= 0) {
-        showToast('Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!', 'warning');
+        return showToast('Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!', 'warning');
+    }
+
+    if (!aktiverKistenBenutzer) {
+        showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning');
+        oeffneKistenBenutzerModal();
         return;
     }
 
-    // Entnahme von Einzelteilen -> Zwingend Person abfragen!
-    ausbuchenPendingAktion = {
-        typ: 'artikel_einzeln',
-        bestandId: bestandId,
-        delta: delta,
-        artikelName: eintrag.artikel?.name || 'Artikel',
-        kisteId: eintrag.lagerort_id,
-        kisteName: eintrag.lagerorte?.name || 'Kiste'
-    };
+    if (aktiverKistenBenutzer.isHelper) {
+        return showToast('Helfer-Account: Ausbuchen ist gesperrt! Helfer können nur Material einbuchen.', 'warning');
+    }
 
-    $('entnahme-modal-titel').innerText = `📤 Entnahme: 1x ${eintrag.artikel?.name || 'Artikel'}`;
-    $('entnahme-modal-sub').innerText = 'Bitte gib an, wer diesen Gegenstand entnimmt:';
+    try {
+        const neu = Math.max(0, aktuell + delta);
+        const { error: updErr } = await dbClient.from('bestand').update({
+            menge: neu,
+            created_at: new Date().toISOString()
+        }).eq('id', bestandId);
+        if (updErr) throw updErr;
 
-    befuellePersonenSelect();
-    openModalById('entnahmePersonModal');
+        const entnahmePayload = {
+            name: aktiverKistenBenutzer.name,
+            kontakt: aktiverKistenBenutzer.kontakt || '',
+            benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
+            materialien: [{
+                kiste_id: Number(eintrag.lagerort_id),
+                kiste_name: eintrag.lagerorte?.name || 'Kiste',
+                artikel: [{
+                    bestand_id: bestandId,
+                    artikel_id: eintrag.artikel_id,
+                    name: eintrag.artikel?.name || 'Artikel',
+                    menge: Math.abs(delta),
+                    typ: eintrag.artikel?.typ || 'zaehlbar'
+                }]
+            }],
+            created_at: new Date().toISOString()
+        };
+
+        const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+        if (insErr) throw insErr;
+
+        try {
+            await dbClient.from('lager_entnahme_audit').insert([{
+                ...entnahmePayload,
+                ereignis: 'entnahme'
+            }]);
+        } catch (auditErr) {}
+
+        if (navigator.vibrate) navigator.vibrate(60);
+        showToast(`📤 1x "${eintrag.artikel?.name}" an ${aktiverKistenBenutzer.name} ausgebucht!`);
+        await ladeAlles();
+        renderKistenInhaltListe(kistenCheckAktuelleId);
+    } catch (err) {
+        console.error('Fehler in aendereArtikelMengeInKiste:', err);
+        showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
+    }
 }
 
 async function ausfuehrenArtikelEinbuchung(bestandId, delta) {
@@ -694,148 +993,6 @@ async function ausfuehrenArtikelEinbuchung(bestandId, delta) {
     showToast(`✅ Bestandsänderung gespeichert.`);
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
-}
-
-function befuellePersonenSelect() {
-    const sel = $('entnahme-person-select');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">-- Person auswählen --</option>';
-    (alleBenutzerVorlagen || []).forEach(v => {
-        sel.add(new Option(`👤 ${v.name} ${v.kontakt ? `(${v.kontakt})` : ''}`, v.id));
-    });
-    sel.add(new Option('➕ Anderer Name / Neuer Helfer...', 'custom'));
-    $('entnahme-custom-person-wrap').style.display = 'none';
-}
-
-function entnahmePersonSelectChanged() {
-    const val = $('entnahme-person-select').value;
-    $('entnahme-custom-person-wrap').style.display = val === 'custom' ? 'block' : 'none';
-}
-
-async function bestaetigeEntnahme() {
-    if (!ausbuchenPendingAktion) {
-        showToast('Keine aktive Entnahmeaktion gefunden.', 'error');
-        closeModal('entnahmePersonModal');
-        return;
-    }
-
-    const selVal = $('entnahme-person-select').value;
-    let name = '', kontakt = '', vorlageId = null;
-
-    if (!selVal) return showToast('Bitte wähle eine Person aus.', 'warning');
-
-    try {
-        if (selVal === 'custom') {
-            name = $('entnahme-custom-name').value.trim();
-            kontakt = $('entnahme-custom-kontakt').value.trim();
-            if (!name) return showToast('Bitte Namen eingeben.', 'warning');
-            const { data: newV, error: vErr } = await dbClient.from('lager_entnahme_benutzer_vorlagen').insert([{ name, kontakt }]).select();
-            if (vErr) throw vErr;
-            if (newV && newV.length) vorlageId = newV[0].id;
-        } else {
-            const v = (alleBenutzerVorlagen || []).find(b => String(b.id) === String(selVal));
-            if (v) { name = v.name; kontakt = v.kontakt || ''; vorlageId = v.id; }
-        }
-
-        if (ausbuchenPendingAktion.typ === 'kiste') {
-            const kId = ausbuchenPendingAktion.kisteId;
-            const bestand = gibKistenBestand(kId);
-
-            const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-                return dbClient.from('bestand').update({
-                    menge: 0,
-                    alte_menge: z.soll_menge || z.ist_menge,
-                    created_at: new Date().toISOString()
-                }).eq('id', z.id);
-            });
-            await Promise.all(updates);
-
-            const entnahmePayload = {
-                name,
-                kontakt,
-                benutzer_vorlage_id: vorlageId,
-                materialien: [{
-                    kiste_id: Number(kId),
-                    kiste_name: ausbuchenPendingAktion.kisteName,
-                    artikel: bestand.map(b => ({
-                        bestand_id: b.id,
-                        artikel_id: b.artikel_id,
-                        name: b.artikel?.name,
-                        menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge,
-                        typ: b.artikel?.typ || 'zaehlbar'
-                    }))
-                }],
-                created_at: new Date().toISOString()
-            };
-
-            const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
-            if (insErr) throw insErr;
-
-            try {
-                await dbClient.from('lager_entnahme_audit').insert([{
-                    ...entnahmePayload,
-                    ereignis: 'entnahme'
-                }]);
-            } catch (auditErr) {
-                console.warn('Audit log insert failed (ignored):', auditErr);
-            }
-
-            showToast(`📤 "${ausbuchenPendingAktion.kisteName}" an ${name} ausgebucht!`);
-        } else if (ausbuchenPendingAktion.typ === 'artikel_einzeln') {
-            const { bestandId, delta, artikelName, kisteId, kisteName } = ausbuchenPendingAktion;
-            const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
-            if (eintrag) {
-                const aktuell = Number(eintrag.ist_menge);
-                const neu = Math.max(0, aktuell + delta);
-
-                const { error: updErr } = await dbClient.from('bestand').update({
-                    menge: neu,
-                    created_at: new Date().toISOString()
-                }).eq('id', bestandId);
-                if (updErr) throw updErr;
-
-                const entnahmePayload = {
-                    name,
-                    kontakt,
-                    benutzer_vorlage_id: vorlageId,
-                    materialien: [{
-                        kiste_id: Number(kisteId),
-                        kiste_name: kisteName,
-                        artikel: [{
-                            bestand_id: bestandId,
-                            artikel_id: eintrag.artikel_id,
-                            name: artikelName,
-                            menge: Math.abs(delta),
-                            typ: eintrag.artikel?.typ || 'zaehlbar'
-                        }]
-                    }],
-                    created_at: new Date().toISOString()
-                };
-
-                const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
-                if (insErr) throw insErr;
-
-                try {
-                    await dbClient.from('lager_entnahme_audit').insert([{
-                        ...entnahmePayload,
-                        ereignis: 'entnahme'
-                    }]);
-                } catch (auditErr) {
-                    console.warn('Audit log insert failed (ignored):', auditErr);
-                }
-
-                showToast(`📤 1x "${artikelName}" an ${name} ausgebucht!`);
-            }
-        }
-
-        closeModal('entnahmePersonModal');
-        ausbuchenPendingAktion = null;
-        await ladeAlles();
-        if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
-    } catch (err) {
-        console.error('Fehler in bestaetigeEntnahme:', err);
-        showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
-    }
 }
 
 // -------------------------------------------------------------------------
@@ -889,6 +1046,12 @@ async function speichereKisteMengeInput(bId, rawVal) {
         val = soll;
     }
     if (val < 0) val = 0;
+
+    if (aktiverKistenBenutzer?.isHelper && val < Number(eintrag.ist_menge)) {
+        showToast('Helfer dürfen Bestände nicht verringern (nur einbuchen)!', 'warning');
+        renderKistenInhaltListe(kistenCheckAktuelleId);
+        return;
+    }
 
     await dbClient.from('bestand').update({
         menge: val,
@@ -1519,7 +1682,7 @@ window.handleMouseEnter = (e) => {
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
 
 // =========================================================================
-// 8. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & QR-DRUCK
+// 8. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & AUTO-REFRESH
 // =========================================================================
 
 function kistenFilterSucheGeaendert() {
@@ -1543,9 +1706,43 @@ function setzeKistenAnsichtFilter(filterName) {
     if (kombiniertBereich) kombiniertBereich.style.display = (kistenAnsichtFilter === 'unterwegs_wer') ? 'block' : 'none';
     if (auditBereich) auditBereich.style.display = (kistenAnsichtFilter === 'log') ? 'block' : 'none';
 
-    if (kistenAnsichtFilter === 'unterwegs_wer') renderKistenUnterwegsKombiniert();
-    else if (kistenAnsichtFilter === 'log') renderAuditLogListe();
-    else renderKistenListe();
+    if (kistenAnsichtFilter === 'unterwegs_wer') {
+        renderKistenUnterwegsKombiniert();
+        starteUnterwegsAutoRefresh();
+    } else {
+        stoppeUnterwegsAutoRefresh();
+        if (kistenAnsichtFilter === 'log') renderAuditLogListe();
+        else renderKistenListe();
+    }
+}
+
+function starteUnterwegsAutoRefresh() {
+    stoppeUnterwegsAutoRefresh();
+    unterwegsRefreshInterval = setInterval(async () => {
+        if (aktuellerModus === 'kisten' && kistenAnsichtFilter === 'unterwegs_wer') {
+            const activeEl = document.activeElement;
+            const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+            if (!isTyping) {
+                await ladeBestand();
+                await ladeEntnahmeDaten();
+                renderKistenUnterwegsKombiniert();
+            }
+        }
+    }, 15000);
+}
+
+function stoppeUnterwegsAutoRefresh() {
+    if (unterwegsRefreshInterval) {
+        clearInterval(unterwegsRefreshInterval);
+        unterwegsRefreshInterval = null;
+    }
+}
+
+async function manuelleAktualisierungUnterwegs() {
+    showToast('Aktualisiere Entnahmen...');
+    await ladeBestand();
+    await ladeEntnahmeDaten();
+    renderKistenUnterwegsKombiniert();
 }
 
 function renderKistenListe() {
@@ -1619,7 +1816,16 @@ function renderKistenUnterwegsKombiniert() {
 
     let html = '';
 
-    html += `<div class="kombiniert-subtitel">👤 Aktive Entleiher &amp; Resortleiter (${offeneGefiltert.length})</div>`;
+    html += `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+            <div class="kombiniert-subtitel" style="margin:0;">👤 Aktive Entleiher &amp; Resortleiter (${offeneGefiltert.length})</div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:0.8em; color:#27ae60; font-weight:bold;">● Live-Aktualisierung (15s)</span>
+                <button type="button" class="btn" style="background:#34495e; padding:4px 10px; font-size:0.8em; width:auto; min-height:30px;" onclick="manuelleAktualisierungUnterwegs()">🔄 Jetzt aktualisieren</button>
+            </div>
+        </div>
+    `;
+
     if (!offeneGefiltert.length) {
         html += `
             <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px; margin-bottom:18px;">
@@ -1999,7 +2205,7 @@ function druckeKistenEtiketten(liste) {
 }
 
 // =========================================================================
-// 10. ARTIKEL ANLEGEN & BEARBEITEN
+// 9. ARTIKEL ANLEGEN & BEARBEITEN
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;
@@ -2222,7 +2428,14 @@ function wechsleModus(modus) {
         if (v) v.style.display = m === modus ? 'block' : 'none';
         if (t) t.className = m === modus ? 'btn btn-modus active' : 'btn btn-modus';
     });
-    if (modus === 'kisten') setzeKistenAnsichtFilter(kistenAnsichtFilter);
+
+    if (modus === 'kisten') {
+        if (!aktiverKistenBenutzer) oeffneKistenBenutzerModal();
+        setzeKistenAnsichtFilter(kistenAnsichtFilter);
+    } else {
+        stoppeUnterwegsAutoRefresh();
+    }
+
     if (modus === 'event') zeigePackliste();
 }
 
@@ -2596,6 +2809,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (session) {
         setzeAuthToken(session.token);
         $('login-overlay').style.display = 'none';
+        ladeKistenBenutzerSession();
         await ladeAlles();
         pruefeUndZeigeOnboarding();
 
