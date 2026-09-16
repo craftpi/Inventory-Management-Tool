@@ -32,7 +32,7 @@ let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
 let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
 let aktiverRegalFilter = '';
 let finderFilterModus = 'fehlend';
-let etikettenAuswahlIds = new Set();
+let kistenEtikettenAuswahlIds = new Set();
 let einkaufslisteArray = [];
 let autoFehlbestandListe = [];
 let eigeneVorschlaegeListe = [];
@@ -655,7 +655,6 @@ async function kistenCheckArtikelHinzufuegen() {
     const art = alleArtikelInfos.find(a => a.name.toLowerCase() === val.toLowerCase());
     if (!art) return showToast(`Artikel "${val}" nicht gefunden.`, 'error');
 
-    // "Sonstiger Lagerort" ermitteln
     const sonstigOrt = alleLagerorte.find(o => 
         o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
         o.name.trim().toLowerCase() === 'sonstiges'
@@ -695,7 +694,6 @@ async function kistenCheckArtikelHinzufuegen() {
     const diff = zielMenge - aktuellInKiste;
     const neuerSonstigBestand = verfuegbarSonstige - diff;
 
-    // 1. Kistenbestand setzen (Update falls schon vorhanden, sonst Insert)
     if (kistenEintrag) {
         await dbClient.from('bestand').update({
             menge: zielMenge,
@@ -712,7 +710,6 @@ async function kistenCheckArtikelHinzufuegen() {
         }]);
     }
 
-    // 2. Bestand bei "Sonstiger Lagerort" reduzieren oder Eintrag löschen wenn 0
     if (sonstigEintrag) {
         if (neuerSonstigBestand <= 0) {
             await dbClient.from('bestand').delete().eq('id', sonstigEintrag.id);
@@ -741,7 +738,6 @@ async function entferneArtikelAusKiste(bestandId) {
     const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
 
-    // "Sonstiger Lagerort" ermitteln oder anlegen
     let sonstigOrt = alleLagerorte.find(o => 
         o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
         o.name.trim().toLowerCase() === 'sonstiges'
@@ -757,7 +753,6 @@ async function entferneArtikelAusKiste(bestandId) {
         await ladeLagerorte();
     }
 
-    // Prüfen, ob für diesen Artikel bereits ein Eintrag an "Sonstiger Lagerort" existiert
     const existierenderEintrag = aktuelleDaten.find(b => 
         b.artikel_id === eintrag.artikel_id && 
         String(b.lagerort_id) === String(sonstigOrt.id) && 
@@ -1086,19 +1081,23 @@ function aktualisiereNfcUI(aktiv) {
     }
 }
 
+async function holeOderErzeugeOrtCode(ort) {
+    if (!ort) return null;
+    if (ort.nfc_code) return ort.nfc_code;
+    const slug = String(ort.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+    const code = `kiste-${slug}-${ort.id}`;
+    await dbClient.from('lagerorte').update({ nfc_code: code }).eq('id', ort.id);
+    ort.nfc_code = code;
+    return code;
+}
+
 async function schreibeNfcTagFuerOrt() {
     const oId = $('manage-ort-select').value;
     const ort = alleLagerorte.find(o => String(o.id) === String(oId));
     if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
 
-    let code = ort.nfc_code;
-    if (!code) {
-        const slug = String(ort.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
-        code = `kiste-${slug}-${ort.id}`;
-        await dbClient.from('lagerorte').update({ nfc_code: code }).eq('id', ort.id);
-        await ladeLagerorte();
-        ortSelectChanged();
-    }
+    const code = await holeOderErzeugeOrtCode(ort);
+    ortSelectChanged();
 
     const url = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
 
@@ -1115,7 +1114,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE: HAUPTERFASSUNG DER GESAMTMENGE & KORREKTE GRUPPIERUNG)
+// 8. LAGER-MODUS (TABELLE & SORTIERUNG)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -1239,7 +1238,6 @@ function tabelleAktualisieren(daten) {
         tbody.appendChild(headerTr);
         if (!isOpen) return;
 
-        // Nach Artikel-ID gruppieren (mehrere Standorte landen im selben Objekt)
         const artMap = new Map();
         zeilen.forEach(z => {
             if (!artMap.has(z.artikel_id)) artMap.set(z.artikel_id, { artikel: z.artikel, bestaende: [] });
@@ -1427,7 +1425,7 @@ window.handleMouseEnter = (e) => {
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
 
 // =========================================================================
-// 9. KISTEN-ANSICHT & ORTE VERWALTEN
+// 9. KISTEN-ANSICHT & ORTE VERWALTEN & KISTEN-QR
 // =========================================================================
 
 function renderKistenListe() {
@@ -1448,7 +1446,7 @@ function renderKistenListe() {
 
         return `
             <tr>
-                <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Tag')}</small></td>
+                <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
                 <td>${bestand.length} Artikel</td>
                 <td>${fehlt ? '<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>' : '<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>'}</td>
                 <td>
@@ -1478,14 +1476,19 @@ function openOrteVerwalten(preselectId = null) {
     ortSelectChanged();
     openModalById('orteModal');
 }
+
 function ortSelectChanged() {
     const selId = $('manage-ort-select').value;
     const ort = alleLagerorte.find(o => String(o.id) === String(selId));
     if (ort) $('manage-ort-name').value = ort.name;
-    const statusEl = $('manage-ort-nfc-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
-    if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein NFC-Tag verknüpft.';
+    const statusEl = $('manage-ort-code-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
+    if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein Code hinterlegt (wird beim ersten NFC-Schreiben oder QR-Erstellen automatisch generiert).';
     if (delBtn) delBtn.style.display = ort?.nfc_code ? 'block' : 'none';
+
+    const qrBox = $('manage-ort-qr-box');
+    if (qrBox) qrBox.style.display = 'none';
 }
+
 async function speichereOrt() {
     const oId = $('manage-ort-select').value, nName = $('manage-ort-name').value.trim();
     if (!oId || !nName) return;
@@ -1494,12 +1497,238 @@ async function speichereOrt() {
     showToast('Lagerort umbenannt!');
     await ladeAlles();
 }
+
 async function entferneNfcVonOrt() {
     const oId = $('manage-ort-select').value;
     await dbClient.from('lagerorte').update({ nfc_code: null }).eq('id', oId);
-    showToast('NFC-Tag entfernt.');
+    showToast('Code-Zuordnung entfernt.');
     await ladeAlles();
     ortSelectChanged();
+}
+
+async function zeigeEinzelKisteQr() {
+    const selId = $('manage-ort-select').value;
+    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
+
+    const code = await holeOderErzeugeOrtCode(ort);
+    ortSelectChanged();
+
+    const qrBox = $('manage-ort-qr-box');
+    const preview = $('manage-ort-qr-preview');
+    if (!qrBox || !preview) return;
+
+    preview.innerHTML = '';
+    const url = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
+    new QRCode(preview, { text: url, width: 140, height: 140 });
+    qrBox.style.display = 'block';
+}
+
+function downloadEinzelKistenQr() {
+    const selId = $('manage-ort-select').value;
+    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    const canvas = $('manage-ort-qr-preview')?.querySelector('canvas');
+    if (!canvas || !ort) return;
+
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `QR_${ort.name.replace(/[^a-z0-9]/gi, '_')}.png`;
+    a.click();
+}
+
+function druckeEinzelKistenQr() {
+    const selId = $('manage-ort-select').value;
+    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    if (ort) druckeKistenEtiketten([ort]);
+}
+
+function openKistenEtikettenModal() {
+    kistenEtikettenAuswahlIds.clear();
+    const allChk = $('kisten-etiketten-alle');
+    if (allChk) allChk.checked = false;
+    const sInp = $('kisten-etiketten-suche');
+    if (sInp) sInp.value = '';
+    renderKistenEtikettenListe();
+    openModalById('kistenEtikettenModal');
+}
+
+function renderKistenEtikettenListe() {
+    const ziel = $('kisten-etiketten-liste');
+    if (!ziel) return;
+    const filter = ($('kisten-etiketten-suche')?.value || '').toLowerCase().trim();
+    const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
+
+    if (!liste.length) {
+        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine Kisten gefunden.</p>';
+        return;
+    }
+
+    ziel.innerHTML = liste.map(ort => {
+        const isChk = kistenEtikettenAuswahlIds.has(String(ort.id));
+        return `
+            <label class="kiste-etikett-zeile" style="cursor:pointer;">
+                <input type="checkbox" style="width:18px; height:18px;" ${isChk ? 'checked' : ''} onchange="toggleKistenEtikettAuswahl('${ort.id}', this.checked)">
+                <div style="flex:1;">
+                    <strong>📦 ${escapeHtml(ort.name)}</strong>
+                    <div style="font-size:0.8em; color:#7f8c8d;">${escapeHtml(ort.nfc_code || 'Code wird beim Druck automatisch vergeben')}</div>
+                </div>
+            </label>
+        `;
+    }).join('');
+
+    $('kisten-etiketten-count').textContent = kistenEtikettenAuswahlIds.size;
+    $('kisten-etiketten-drucken-btn').disabled = !kistenEtikettenAuswahlIds.size;
+}
+
+function toggleKistenEtikettAuswahl(id, chk) {
+    if (chk) kistenEtikettenAuswahlIds.add(String(id));
+    else kistenEtikettenAuswahlIds.delete(String(id));
+    $('kisten-etiketten-count').textContent = kistenEtikettenAuswahlIds.size;
+    $('kisten-etiketten-drucken-btn').disabled = !kistenEtikettenAuswahlIds.size;
+}
+
+function toggleAlleKistenEtiketten(chk) {
+    kistenEtikettenAuswahlIds.clear();
+    if (chk) alleLagerorte.forEach(o => kistenEtikettenAuswahlIds.add(String(o.id)));
+    renderKistenEtikettenListe();
+}
+
+async function druckeAusgewaehlteKistenEtiketten() {
+    const ausgewaehlt = alleLagerorte.filter(o => kistenEtikettenAuswahlIds.has(String(o.id)));
+    if (!ausgewaehlt.length) return;
+
+    for (const ort of ausgewaehlt) {
+        await holeOderErzeugeOrtCode(ort);
+    }
+    await ladeLagerorte();
+    druckeKistenEtiketten(ausgewaehlt);
+}
+
+function druckeKistenEtiketten(liste) {
+    const win = window.open('', '_blank');
+    const itemsHtml = liste.map(o => {
+        const code = o.nfc_code || `kiste-${o.id}`;
+        const link = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
+        return `
+            <div class="kiste-label-card">
+                <div class="kiste-label-qr" data-link="${link}"></div>
+                <div class="kiste-label-info">
+                    <div class="kiste-label-title">${escapeHtml(o.name)}</div>
+                    <div class="kiste-label-sub">📦 TRISPORT LAGER</div>
+                    <div class="kiste-label-code">${escapeHtml(code)}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    win.document.write(`
+        <html><head><title>Kisten-Etiketten drucken</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+        <style>
+            @page {
+                size: A4 portrait;
+                margin: 8mm 5mm;
+            }
+            body {
+                margin: 0;
+                padding: 0;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                background: #fff;
+            }
+            .labels-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 70mm);
+                grid-auto-rows: 37mm;
+                gap: 0;
+                justify-content: center;
+            }
+            .kiste-label-card {
+                width: 70mm;
+                height: 37mm;
+                box-sizing: border-box;
+                padding: 2.5mm 3.5mm;
+                display: flex;
+                align-items: center;
+                gap: 3mm;
+                border: 1px dashed #e2e8f0;
+                page-break-inside: avoid;
+                overflow: hidden;
+            }
+            .kiste-label-qr {
+                width: 29mm;
+                height: 29mm;
+                flex-shrink: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .kiste-label-qr canvas, .kiste-label-qr img {
+                width: 29mm !important;
+                height: 29mm !important;
+            }
+            .kiste-label-info {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+            }
+            .kiste-label-title {
+                font-size: 11.5px;
+                font-weight: bold;
+                color: #111;
+                line-height: 1.25;
+                word-break: break-word;
+                max-height: 21mm;
+                overflow: hidden;
+            }
+            .kiste-label-sub {
+                font-size: 7.5px;
+                font-weight: bold;
+                color: #e3000f;
+                margin-top: 3px;
+                letter-spacing: 0.4px;
+            }
+            .kiste-label-code {
+                font-size: 7px;
+                color: #666;
+                font-family: monospace;
+                margin-top: 2px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .no-p {
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                padding: 10px 18px;
+                background: #e3000f;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+                cursor: pointer;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            }
+            @media print {
+                .no-p { display: none; }
+                .kiste-label-card { border: 1px dashed transparent; }
+            }
+        </style>
+        </head><body>
+            <button class="no-p" onclick="window.print()">🖨️ Etiketten drucken</button>
+            <div class="labels-grid">${itemsHtml}</div>
+            <script>
+                window.onload = function() {
+                    document.querySelectorAll('.kiste-label-qr').forEach(el => {
+                        new QRCode(el, { text: el.dataset.link, width: 140, height: 140 });
+                    });
+                };
+            <\/script>
+        </body></html>`);
+    win.document.close();
 }
 
 // =========================================================================
@@ -1959,67 +2188,10 @@ async function downloadExcel() {
 }
 
 // =========================================================================
-// 12. ETIKETTEN- & QR-TOOLS, FEEDBACK
+// 12. REGAL-QR & FEEDBACK
 // =========================================================================
 
-function oeffneEtikettenTool() { window.open('?etiketten=1', '_blank'); }
 function oeffneQrGeneratorFenster() { window.open('?qrgen=1', '_blank'); }
-
-function renderArtikelEtikettenListe() {
-    const ziel = $('etiketten-liste');
-    if (!ziel) return;
-    const filter = ($('etiketten-suche')?.value || '').toLowerCase().trim();
-    const liste = alleArtikelInfos.filter(a => !filter || a.name.toLowerCase().includes(filter));
-
-    ziel.innerHTML = liste.map(art => {
-        const chk = etikettenAuswahlIds.has(String(art.id));
-        return `
-            <div class="etikett-zeile ${chk ? 'ist-ausgewaehlt' : ''}">
-                <input type="checkbox" ${chk ? 'checked' : ''} onchange="toggleEtikettAuswahl('${art.id}', this.checked)">
-                <div class="etikett-qr" id="etikett-qr-${art.id}"></div>
-                <div style="flex:1;"><strong>${escapeHtml(art.name)}</strong><br><small>${escapeHtml(art.kategorie || '')} &bull; ${formatArtikelId(art.id)}</small></div>
-            </div>`;
-    }).join('') || '<p style="text-align:center;">Keine Artikel.</p>';
-
-    liste.forEach(art => {
-        const c = $(`etikett-qr-${art.id}`);
-        if (c) new QRCode(c, { text: `https://trilager.pius-s.de?rueckgabe=${art.id}`, width: 90, height: 90 });
-    });
-}
-
-function toggleEtikettAuswahl(id, chk) {
-    if (chk) etikettenAuswahlIds.add(String(id)); else etikettenAuswahlIds.delete(String(id));
-    $('etiketten-auswahl-count').textContent = etikettenAuswahlIds.size;
-    $('etiketten-auswahl-drucken-btn').disabled = !etikettenAuswahlIds.size;
-}
-function toggleAlleEtikettenAuswahl(chk) {
-    alleArtikelInfos.forEach(a => toggleEtikettAuswahl(a.id, chk));
-    renderArtikelEtikettenListe();
-}
-
-function druckeAusgewaehlteEtiketten() { druckeEtiketten(alleArtikelInfos.filter(a => etikettenAuswahlIds.has(String(a.id)))); }
-function druckeAlleEtiketten() { druckeEtiketten(alleArtikelInfos); }
-
-function druckeEtiketten(liste) {
-    const win = window.open('', '_blank');
-    const items = liste.map(a => `
-        <div style="width:42mm; display:flex; flex-direction:column; align-items:center; padding:3mm; border:1px dashed #bbb; page-break-inside:avoid; text-align:center;">
-            <div class="p-qr" data-link="https://trilager.pius-s.de?rueckgabe=${a.id}"></div>
-            <div style="font-size:11px; font-weight:bold; margin-top:2mm;">${escapeHtml(a.name)}</div>
-            <div style="font-size:9px; color:#666;">${formatArtikelId(a.id)}</div>
-        </div>`).join('');
-
-    win.document.write(`
-        <html><head><title>Etiketten drucken</title>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
-        <style>body{margin:0; padding:10mm; display:grid; grid-template-columns:repeat(4, 1fr); gap:5mm; font-family:sans-serif;} @media print{.no-p{display:none;}}</style>
-        </head><body>
-            <button class="no-p" onclick="window.print()" style="position:fixed; top:10px; right:10px; padding:10px;">🖨️ Drucken</button>
-            ${items}
-            <script>window.onload=function(){document.querySelectorAll('.p-qr').forEach(el=>new QRCode(el,{text:el.dataset.link,width:180,height:180}));};<\/script>
-        </body></html>`);
-    win.document.close();
-}
 
 function aktualisiereRegalQrVorschau() {
     const val = $('regal-qr-input')?.value.trim();
@@ -2083,14 +2255,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('formular-ansicht').style.display = 'block';
         $('login-overlay').style.display = 'none';
         document.querySelector('.container').style.display = 'none';
-        return;
-    }
-    if (urlParams.get('etiketten') === '1') {
-        $('etiketten-ansicht').style.display = 'block';
-        $('login-overlay').style.display = 'none';
-        document.querySelector('.container').style.display = 'none';
-        const s = holeLokaleSession();
-        if (s) { setzeAuthToken(s.token); await ladeBestand(); renderArtikelEtikettenListe(); }
         return;
     }
 
