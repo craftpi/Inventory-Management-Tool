@@ -953,55 +953,7 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. DIREKTE KISTEN-SUCHE & KAMERA IM KISTEN-REITER
-// =========================================================================
-
-function oeffneKistenKameraModal() {
-    const wrap = $('hub-camera-wrapper');
-    const status = $('hub-scanner-status');
-    const btnText = $('hub-kamera-text');
-    
-    wrap.style.display = 'block';
-    status.style.display = 'block';
-    status.innerText = 'Kamera startet…';
-    if (btnText) btnText.innerText = '✕ Kamera stoppen';
-    hubKameraAktiv = true;
-
-    if (aktiverQrScanner) {
-        try { aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {}
-    }
-
-    aktiverQrScanner = new Html5Qrcode('hub-qr-reader');
-    aktiverQrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decoded) => {
-            status.innerText = 'Erkannt: ' + decoded;
-            stoppeHubKamera();
-            verarbeiteUniversalScan(decoded);
-        },
-        () => {}
-    ).catch(err => {
-        showToast('Kamera konnte nicht gestartet werden: ' + err.message, 'error');
-        stoppeHubKamera();
-    });
-}
-
-function stoppeHubKamera() {
-    if (aktiverQrScanner) {
-        aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; });
-    }
-    const wrap = $('hub-camera-wrapper');
-    const status = $('hub-scanner-status');
-    const btnText = $('hub-kamera-text');
-    if (wrap) wrap.style.display = 'none';
-    if (status) status.style.display = 'none';
-    if (btnText) btnText.innerText = 'Kamera-Scan';
-    hubKameraAktiv = false;
-}
-
-// =========================================================================
-// 7. HARDWARE SCANNING (NFC & QR UNIVERSAL-SCAN)
+// 6. HARDWARE SCANNING (NFC & QR UNIVERSAL-SCAN)
 // =========================================================================
 
 async function verarbeiteUniversalScan(rawCode) {
@@ -1116,7 +1068,7 @@ async function schreibeNfcTagFuerOrt() {
 }
 
 // =========================================================================
-// 8. LAGER-MODUS (TABELLE & SORTIERUNG)
+// 7. LAGER-MODUS (TABELLE & SORTIERUNG)
 // =========================================================================
 
 function wendeFilterAn() {
@@ -1427,7 +1379,7 @@ window.handleMouseEnter = (e) => {
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
 
 // =========================================================================
-// 9. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & QR-DRUCK
+// 8. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & QR-DRUCK
 // =========================================================================
 
 function kistenFilterSucheGeaendert() {
@@ -1439,7 +1391,7 @@ function kistenFilterSucheGeaendert() {
 function setzeKistenAnsichtFilter(filterName) {
     kistenAnsichtFilter = filterName || 'alle';
     ['alle', 'unterwegs_wer', 'log'].forEach(f => {
-        const btn = $(`filter-kisten-${f}`);
+        const btn = $(`filter-kisten-${f.replace('_', '-')}`);
         if (btn) btn.classList.toggle('active', f === kistenAnsichtFilter);
     });
 
@@ -1501,12 +1453,14 @@ function renderKistenListe() {
     }).join('');
 }
 
+// Kombinierter Filter: Zeigt Personen-Karten oben UND Kisten-Tabelle unten
 function renderKistenUnterwegsKombiniert() {
     const ziel = $('kisten-unterwegs-kombiniert-bereich');
     if (!ziel) return;
 
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
 
+    // 1. Offene Entnahmen filtern
     const offeneGefiltert = (offeneEntnahmen || []).filter(e => {
         if (!suchText) return true;
         const nameMatch = (e.name || '').toLowerCase().includes(suchText);
@@ -1515,6 +1469,7 @@ function renderKistenUnterwegsKombiniert() {
         return nameMatch || matMatch;
     });
 
+    // 2. Kisten filtern, die unterwegs sind oder Fehlteile haben
     const kistenGefiltert = (alleLagerorte || []).filter(o => {
         if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
             return false;
@@ -1527,6 +1482,7 @@ function renderKistenUnterwegsKombiniert() {
 
     let html = '';
 
+    // TEIL 1: Personen-Fokus
     html += `<div class="kombiniert-subtitel">👤 Aktive Entleiher &amp; Resortleiter (${offeneGefiltert.length})</div>`;
     if (!offeneGefiltert.length) {
         html += `
@@ -1568,6 +1524,7 @@ function renderKistenUnterwegsKombiniert() {
         }).join('');
     }
 
+    // TEIL 2: Kisten-Fokus
     html += `<div class="kombiniert-subtitel" style="margin-top:24px;">📦 Fehlende oder unvollständige Kisten (${kistenGefiltert.length})</div>`;
     if (!kistenGefiltert.length) {
         html += `
@@ -1902,6 +1859,581 @@ function druckeKistenEtiketten(liste) {
             <\/script>
         </body></html>`);
     win.document.close();
+}
+
+// =========================================================================
+// 9. ARTIKEL ANLEGEN & BEARBEITEN
+// =========================================================================
+function toggleEditMode() {
+    isEditMode = !isEditMode;
+    $('btn-edit-mode').innerText = isEditMode ? '✏️ Bearbeiten: AN' : '✏️ Bearbeiten: AUS';
+    $('btn-edit-mode').style.backgroundColor = isEditMode ? '#e67e22' : '#f39c12';
+    document.querySelectorAll('.lager-edit-only').forEach(el => el.style.display = isEditMode ? '' : 'none');
+    wendeFilterAn();
+}
+
+function openModal() {
+    $('new-name').value = '';
+    $('new-kategorie').value = '';
+    $('new-einheit').value = 'Stück';
+    if ($('new-wichtig')) $('new-wichtig').checked = false;
+    if ($('new-typ')) $('new-typ').value = 'zaehlbar';
+
+    const wrapper = $('new-orte-wrapper');
+    const rows = wrapper.querySelectorAll('.lagerort-row');
+    for (let i = 1; i < rows.length; i++) rows[i].remove();
+
+    const first = rows[0];
+    const input = first.querySelector('.new-menge');
+    input.value = '0';
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(first, 'zahl');
+
+    openModalById('artikelModal');
+}
+
+function addOrtRow() {
+    const wrapper = $('new-orte-wrapper');
+    const newRow = wrapper.querySelector('.lagerort-row').cloneNode(true);
+    const input = newRow.querySelector('.new-menge');
+    input.value = '0';
+    aktualisiereMengeEingabeFarbe(input);
+    setzeBestandStatus(newRow, 'zahl');
+    wrapper.appendChild(newRow);
+}
+
+function removeNewOrtRow(btn) {
+    const wrapper = $('new-orte-wrapper');
+    if (wrapper.querySelectorAll('.lagerort-row').length > 1) btn.closest('.lagerort-row').remove();
+    else showToast('Ein Artikel muss mindestens einen Lagerort haben!', 'warning');
+}
+
+async function artikelAnlegen() {
+    const name = $('new-name').value.trim(), kat = $('new-kategorie').value.trim(), einheit = $('new-einheit').value;
+    const wichtig = Boolean($('new-wichtig')?.checked), typ = $('new-typ')?.value || 'zaehlbar';
+    if (!name) return showToast('Bitte Namen eingeben.', 'warning');
+
+    let artId = null;
+    let existierenderArtikel = (alleArtikelInfos || []).find(a => a.name.trim().toLowerCase() === name.toLowerCase());
+
+    if (!existierenderArtikel) {
+        const { data: dbCheck } = await dbClient.from('artikel').select('*').ilike('name', name);
+        if (dbCheck && dbCheck.length > 0) existierenderArtikel = dbCheck[0];
+    }
+
+    if (existierenderArtikel) {
+        artId = existierenderArtikel.id;
+        const { error: updateErr } = await dbClient.from('artikel').update({
+            name,
+            kategorie: kat,
+            einheit,
+            wichtig,
+            typ
+        }).eq('id', artId);
+        if (updateErr) return showToast('Fehler beim Aktualisieren: ' + updateErr.message, 'error');
+        await dbClient.from('bestand').delete().eq('artikel_id', artId);
+    } else {
+        const { data, error } = await dbClient.from('artikel').insert([{ name, kategorie: kat, einheit, wichtig, typ }]).select();
+        if (error) return showToast('Fehler: ' + error.message, 'error');
+        artId = data[0].id;
+    }
+
+    const inserts = Array.from(document.querySelectorAll('#new-orte-wrapper .lagerort-row')).map(row => {
+        const menge = leseBestandswertAusZeile(row);
+        const oldVal = werteMengeAus(row.querySelector('.new-menge')?.getAttribute('data-old-value') || '0');
+        const soll = menge < 0 ? oldVal : menge;
+        return {
+            artikel_id: artId,
+            lagerort_id: row.querySelector('.new-ort').value,
+            menge: menge < 0 ? menge : soll,
+            alte_menge: soll
+        };
+    });
+
+    if (inserts.length) await dbClient.from('bestand').insert(inserts);
+    closeModal('artikelModal');
+    showToast(existierenderArtikel ? 'Artikel reaktiviert und gespeichert!' : 'Artikel gespeichert!');
+    await ladeAlles();
+}
+
+function addEditOrtRow(data = null) {
+    const wrapper = $('edit-orte-wrapper');
+    const div = document.createElement('div');
+    div.className = 'edit-ort-row';
+    div.style = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+
+    const options = (alleLagerorte || []).map(o => `<option value="${o.id}" ${(data?.lagerort_id == o.id) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('');
+
+    let displayVal = '0', status = 'zahl';
+    if (data) {
+        const m = Number(data.menge);
+        if (m === -1) { displayVal = '∞'; status = 'inf'; }
+        else if (m === -2) { displayVal = '-'; status = 'strich-ok'; }
+        else if (m === -3) { displayVal = '-'; status = 'strich-warn'; }
+        else {
+            displayVal = (data.soll_menge !== undefined && data.soll_menge >= 0) ? data.soll_menge : (data.alte_menge ?? m);
+        }
+    }
+
+    div.innerHTML = `
+        <div class="bestand-row-stack" style="width:100%;">
+            <select class="edit-ort-select" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;">${options}</select>
+            <div class="bestand-action-row" style="flex-wrap:nowrap; width:100%;">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;" title="Gesamtbestand im Verein">
+                <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background:#95a5a6; padding:10px; width:auto; min-width:68px; font-weight:bold;" onclick="toggleBestandInf(this)">∞</button>
+                <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background:#95a5a6; padding:10px; width:auto; min-width:44px; font-weight:bold;" onclick="toggleBestandMinus(this)">-</button>
+            </div>
+            <label class="bestand-nachkauf-wrap"><input type="checkbox" class="bestand-nachkauf-checkbox" onchange="toggleNachkaufCheckbox(this)"><span>Auf Nachkaufen setzen</span></label>
+        </div>
+        <button type="button" class="btn" style="background:#e74c3c; padding:8px 12px; width:auto;" onclick="this.closest('.edit-ort-row').remove()">🗑️</button>`;
+    
+    setzeBestandStatus(div, status, status === 'strich-warn');
+    wrapper.appendChild(div);
+}
+
+async function openEditModal(artikelId) {
+    if (!isEditMode) return;
+    const art = (alleArtikelInfos || []).find(a => a.id === artikelId);
+    const bestaende = (aktuelleDaten || []).filter(b => b.artikel_id === artikelId);
+
+    $('edit-artikel-id').value = artikelId;
+    $('edit-name').value = art.name;
+    $('edit-kategorie').value = art.kategorie || '';
+    $('edit-einheit').value = art.einheit || 'Stück';
+    $('edit-typ').value = art.typ || 'zaehlbar';
+    $('edit-wichtig').checked = Boolean(art.wichtig);
+
+    const wrapper = $('edit-orte-wrapper');
+    wrapper.innerHTML = '';
+    if (bestaende.length) bestaende.forEach(b => addEditOrtRow(b));
+    else addEditOrtRow();
+
+    openModalById('editModal');
+}
+
+async function speichereBearbeitung() {
+    const aid = $('edit-artikel-id').value;
+    const name = $('edit-name').value.trim(), kat = $('edit-kategorie').value.trim(), einheit = $('edit-einheit').value;
+    const typ = $('edit-typ').value, wichtig = $('edit-wichtig').checked;
+
+    await dbClient.from('artikel').update({ name, kategorie: kat, einheit, typ, wichtig }).eq('id', aid);
+
+    const alteBestaende = (aktuelleDaten || []).filter(b => String(b.artikel_id) === String(aid));
+    await dbClient.from('bestand').delete().eq('artikel_id', aid);
+
+    const inserts = Array.from(document.querySelectorAll('#edit-orte-wrapper .edit-ort-row')).map(row => {
+        const oid = row.querySelector('.edit-ort-select').value;
+        const neuesSoll = leseBestandswertAusZeile(row);
+        const oldVal = werteMengeAus(row.querySelector('.edit-menge-input')?.getAttribute('data-old-value') || '0');
+        const soll = neuesSoll < 0 ? oldVal : neuesSoll;
+
+        const vorher = alteBestaende.find(b => String(b.lagerort_id) === String(oid));
+        let neuesIst = soll;
+        if (vorher && vorher.soll_menge > 0 && soll > 0) {
+            const diff = soll - vorher.soll_menge;
+            neuesIst = Math.max(0, Math.min(soll, (vorher.ist_menge >= 0 ? vorher.ist_menge : soll) + diff));
+        }
+
+        return {
+            artikel_id: Number(aid),
+            lagerort_id: Number(oid),
+            menge: neuesSoll < 0 ? neuesSoll : neuesIst,
+            alte_menge: soll
+        };
+    });
+
+    if (inserts.length) await dbClient.from('bestand').insert(inserts);
+    closeModal('editModal');
+    showToast('Artikel aktualisiert!');
+    await ladeAlles();
+}
+
+async function artikelLoeschen() {
+    if (!confirm('Diesen Artikel wirklich komplett löschen?')) return;
+    const aid = $('edit-artikel-id').value;
+    await dbClient.from('bestand').delete().eq('artikel_id', aid);
+    await dbClient.from('artikel').delete().eq('id', aid);
+    closeModal('editModal');
+    showToast('Artikel gelöscht.');
+    await ladeAlles();
+}
+
+function openKommentarModal(artikelId, event) {
+    if (event) event.stopPropagation();
+    const art = (alleArtikelInfos || []).find(a => String(a.id) === String(artikelId));
+    if (!art) return;
+    $('kommentar-artikel-id').value = artikelId;
+    $('kommentar-artikel-name').innerText = art.name;
+    $('kommentar-text').value = art.kommentar || '';
+    openModalById('kommentarModal');
+}
+async function speichereKommentar() {
+    const aid = $('kommentar-artikel-id').value, text = $('kommentar-text').value;
+    await dbClient.from('artikel').update({ kommentar: text }).eq('id', aid);
+    closeModal('kommentarModal');
+    showToast('Notiz gespeichert!');
+    ladeAlles();
+}
+
+// =========================================================================
+// 10. EVENT-MODUS & PACKLISTEN
+// =========================================================================
+function wechsleModus(modus) {
+    aktuellerModus = modus;
+    ['lager', 'kisten', 'event'].forEach(m => {
+        const v = $(`ansicht-${m}`), t = $(`tab-${m}`);
+        if (v) v.style.display = m === modus ? 'block' : 'none';
+        if (t) t.className = m === modus ? 'btn btn-modus active' : 'btn btn-modus';
+    });
+    if (modus === 'kisten') setzeKistenAnsichtFilter(kistenAnsichtFilter);
+    if (modus === 'event') zeigePackliste();
+}
+
+function zeigePackliste() {
+    const currentId = $('packlisten-auswahl')?.value;
+    const details = $('packliste-details'), tbody = $('event-tabelle');
+    if (!tbody || !details) return;
+    tbody.innerHTML = '';
+    if (!currentId) { details.style.display = 'none'; return; }
+    details.style.display = 'block';
+
+    const positionen = (packlistenPositionen || []).filter(p => String(p.packliste_id) === String(currentId));
+    if (!positionen.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Positionen in dieser Packliste.</td></tr>';
+        return;
+    }
+
+    positionen.forEach(pos => {
+        let name = pos.artikel?.name || pos.eigener_name || 'Unbekannt';
+        let verfuegbar = '-';
+        let status = '<span class="event-ok">✅ OK</span>';
+
+        if (pos.artikel_id) {
+            const bestandArtikel = (aktuelleDaten || []).filter(b => b.artikel_id === pos.artikel_id);
+            verfuegbar = bestandArtikel.reduce((sum, b) => sum + (Number(b.ist_menge) >= 0 ? Number(b.ist_menge) : 0), 0);
+            if (verfuegbar < pos.menge) status = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
+        }
+
+        const mengeZelle = isEventEditMode 
+            ? `<input type="text" class="menge-input" value="${pos.menge}" onchange="speicherePackMengeDirekt(${pos.id}, this.value)" style="width:65px; height:34px; padding:4px;">` 
+            : `<strong>${pos.menge}</strong>`;
+
+        let actionCell = isEventEditMode ? `
+            <button class="btn" style="background:#3498db; padding:4px 8px; font-size:0.8em; margin-left:8px;" onclick="openPackItemModal(${pos.id})" title="Position bearbeiten">✏️</button>
+            <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:4px;" onclick="loeschePackPosition(${pos.id})" title="Löschen">🗑️</button>
+        ` : '';
+
+        tbody.innerHTML += `
+            <tr>
+                <td><strong>${escapeHtml(name)}</strong></td>
+                <td>${mengeZelle}</td>
+                <td>${verfuegbar}</td>
+                <td>${status} ${actionCell}</td>
+            </tr>`;
+    });
+}
+
+async function speicherePackMengeDirekt(posId, rawVal) {
+    const neueMenge = werteMengeAus(rawVal) || 1;
+    const { error } = await dbClient.from('packlisten_positionen').update({ menge: neueMenge }).eq('id', posId);
+    if (error) {
+        showToast('Fehler beim Speichern: ' + error.message, 'error');
+    } else {
+        showToast(`Menge auf ${neueMenge} geändert!`);
+        await ladePacklistenDaten();
+        zeigePackliste();
+    }
+}
+
+function toggleEventEditMode() {
+    isEventEditMode = !isEventEditMode;
+    $('btn-event-edit').innerText = isEventEditMode ? '✏️ Bearbeiten: AN' : '✏️ Bearbeiten: AUS';
+    $('btn-event-edit').style.backgroundColor = isEventEditMode ? '#e67e22' : '#f39c12';
+    document.querySelectorAll('.event-edit-only').forEach(el => el.style.display = isEventEditMode ? '' : 'none');
+    zeigePackliste();
+}
+
+function openPackItemModal(posId = null) {
+    if (!$('packlisten-auswahl')?.value) return showToast('Bitte wähle zuerst eine Packliste aus.', 'warning');
+
+    const idInp = $('pack-pos-id');
+    const titleEl = $('pack-modal-title');
+    const btnEl = $('pack-modal-save-btn');
+
+    if (posId) {
+        const pos = (packlistenPositionen || []).find(p => p.id === posId);
+        if (!pos) return;
+        if (idInp) idInp.value = pos.id;
+        if (titleEl) titleEl.innerText = 'Position bearbeiten';
+        if (btnEl) btnEl.innerText = 'Speichern';
+
+        if (pos.artikel_id) {
+            $('pack-typ').value = 'lager';
+            $('pack-artikel-input').value = pos.artikel?.name || '';
+            $('pack-eigener-name').value = '';
+        } else {
+            $('pack-typ').value = 'custom';
+            $('pack-eigener-name').value = pos.eigener_name || '';
+            $('pack-artikel-input').value = '';
+        }
+        $('pack-menge').value = pos.menge;
+    } else {
+        if (idInp) idInp.value = '';
+        if (titleEl) titleEl.innerText = 'Packliste ergänzen';
+        if (btnEl) btnEl.innerText = 'Hinzufügen';
+        $('pack-typ').value = 'lager';
+        $('pack-artikel-input').value = '';
+        $('pack-eigener-name').value = '';
+        $('pack-menge').value = '1';
+    }
+
+    togglePackTyp();
+    openModalById('packItemModal');
+}
+
+function togglePackTyp() {
+    const t = $('pack-typ').value;
+    $('div-pack-lager').style.display = t === 'lager' ? 'block' : 'none';
+    $('div-pack-custom').style.display = t === 'custom' ? 'block' : 'none';
+}
+
+async function packPositionSpeichern() {
+    const plId = $('packlisten-auswahl').value;
+    const typ = $('pack-typ').value;
+    const menge = werteMengeAus($('pack-menge').value) || 1;
+    const editId = $('pack-pos-id')?.value;
+
+    let artikelId = null;
+    let eigenerName = null;
+
+    if (typ === 'lager') {
+        const artName = $('pack-artikel-input').value.trim();
+        const art = (alleArtikelInfos || []).find(a => a.name.toLowerCase() === artName.toLowerCase());
+        if (!art) return showToast('Artikel nicht im Lager gefunden.', 'warning');
+        artikelId = art.id;
+    } else {
+        const cName = $('pack-eigener-name').value.trim();
+        if (!cName) return showToast('Bitte Namen eingeben.', 'warning');
+        eigenerName = cName;
+    }
+
+    const payload = {
+        packliste_id: Number(plId),
+        menge,
+        artikel_id: artikelId,
+        eigener_name: eigenerName
+    };
+
+    if (editId) {
+        const { error } = await dbClient.from('packlisten_positionen').update(payload).eq('id', editId);
+        if (error) return showToast('Fehler beim Aktualisieren: ' + error.message, 'error');
+        showToast('Position aktualisiert!');
+    } else {
+        const { error } = await dbClient.from('packlisten_positionen').insert([payload]);
+        if (error) return showToast('Fehler beim Hinzufügen: ' + error.message, 'error');
+        showToast('Position hinzugefügt!');
+    }
+
+    closeModal('packItemModal');
+    if ($('pack-pos-id')) $('pack-pos-id').value = '';
+    await ladePacklistenDaten();
+    zeigePackliste();
+}
+
+async function loeschePackPosition(posId) {
+    if (!confirm('Position aus Packliste löschen?')) return;
+    await dbClient.from('packlisten_positionen').delete().eq('id', posId);
+    await ladePacklistenDaten();
+    zeigePackliste();
+}
+
+async function neuePacklisteAnlegen() {
+    const n = prompt('Name der neuen Packliste:');
+    if (!n?.trim()) return;
+    await dbClient.from('packlisten').insert([{ name: n.trim() }]);
+    await ladePacklistenDaten();
+}
+async function umbenennePackliste() {
+    const id = $('packlisten-auswahl').value;
+    const cur = (packlisten || []).find(p => String(p.id) === String(id));
+    const n = prompt('Neuer Name:', cur?.name);
+    if (n?.trim() && n !== cur.name) {
+        await dbClient.from('packlisten').update({ name: n.trim() }).eq('id', id);
+        await ladePacklistenDaten();
+    }
+}
+async function loeschePackliste() {
+    const id = $('packlisten-auswahl').value;
+    if (!confirm('Packliste wirklich löschen?')) return;
+    await dbClient.from('packlisten').delete().eq('id', id);
+    $('packlisten-auswahl').value = '';
+    await ladePacklistenDaten();
+    zeigePackliste();
+}
+
+function druckePackliste() {
+    const listId = $('packlisten-auswahl').value;
+    if (!listId) return;
+    const pl = (packlisten || []).find(p => String(p.id) === String(listId));
+    const pos = (packlistenPositionen || []).filter(p => String(p.packliste_id) === String(listId));
+
+    const win = window.open('', '_blank');
+    const rowsHtml = pos.map(p => {
+        const art = p.artikel?.name || p.eigener_name;
+        const ort = p.artikel_id ? ((aktuelleDaten || []).filter(b => b.artikel_id === p.artikel_id).map(b => b.lagerorte?.name).join(', ') || '-') : 'Sonderposten';
+        return `<tr><td style="width:30px; text-align:center;"><input type="checkbox"></td><td><strong>${escapeHtml(art)}</strong></td><td>${p.menge}</td><td>${escapeHtml(ort)}</td></tr>`;
+    }).join('');
+
+    win.document.write(`
+        <html><head><title>Packliste: ${escapeHtml(pl.name)}</title>
+        <style>body{font-family:sans-serif; padding:20px;} table{width:100%; border-collapse:collapse; margin-top:15px;} th,td{border:1px solid #ccc; padding:8px; text-align:left;} th{background:#eee;} @media print{.no-p{display:none;}}</style>
+        </head><body>
+            <button class="no-p" onclick="window.print()" style="padding:10px; margin-bottom:15px; cursor:pointer;">🖨️ Drucken</button>
+            <h1>📦 Packliste: ${escapeHtml(pl.name)}</h1>
+            <table><thead><tr><th>OK</th><th>Gegenstand</th><th>Menge</th><th>Lagerort</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+        </body></html>`);
+    win.document.close();
+}
+
+function startEinkaufsliste() {
+    autoFehlbestandListe = [];
+    eigeneVorschlaegeListe = [];
+    manuelleEintraegeListe = [];
+    const bestandMap = {}, nachkaufSet = new Set(), bedarfMap = {}, eigeneMap = {};
+
+    (aktuelleDaten || []).forEach(b => {
+        const m = Number(b.menge);
+        if (m === BESTAND_STRICH_NACHKAUF) nachkaufSet.add(String(b.artikel_id));
+        else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + (b.ist_menge >= 0 ? b.ist_menge : m);
+    });
+
+    (packlistenPositionen || []).forEach(p => {
+        if (p.artikel_id) bedarfMap[p.artikel_id] = (bedarfMap[p.artikel_id] || 0) + Number(p.menge);
+        else if (p.eigener_name) eigeneMap[p.eigener_name] = (eigeneMap[p.eigener_name] || 0) + Number(p.menge);
+    });
+
+    (alleArtikelInfos || []).forEach(art => {
+        const bestand = nachkaufSet.has(String(art.id)) ? 0 : (bestandMap[art.id] || 0);
+        const bedarf = bedarfMap[art.id] || 0;
+        if (nachkaufSet.has(String(art.id))) {
+            autoFehlbestandListe.push({ artikel: art.name, menge: Math.max(1, bedarf), grund: 'Nachkauf markiert (🔴)' });
+        } else if (bedarf > bestand) {
+            autoFehlbestandListe.push({ artikel: art.name, menge: bedarf - bestand, grund: 'Fehlt im Lager für Packliste' });
+        }
+    });
+
+    const autoEl = $('auto-kauf-liste');
+    if (autoEl) {
+        autoEl.innerHTML = autoFehlbestandListe.length ? 
+            autoFehlbestandListe.map(i => `<li><strong>${i.menge}x</strong> ${escapeHtml(i.artikel)} <small style="color:#7f8c8d;">(${i.grund})</small></li>`).join('') : 
+            '<li style="color:#27ae60;">Alles grün! Keine Fehlbestände.</li>';
+    }
+
+    const eigeneEl = $('eigene-kauf-liste');
+    if (eigeneEl) {
+        eigeneEl.innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
+            eigeneVorschlaegeListe.push({ artikel: name, menge: m, grund: 'Sonderposten Packliste' });
+            return `<li style="margin-bottom:6px;"><label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="eigene-kauf-check" data-index="${idx}" checked onchange="aktualisiereEinkaufslisteAuswahl()"><span>${m}x ${escapeHtml(name)}</span></label></li>`;
+        }).join('') || '<li style="color:#7f8c8d;">Keine Sonderposten in Packlisten.</li>';
+    }
+
+    const manEl = $('manuell-kauf-liste');
+    if (manEl) manEl.innerHTML = '';
+
+    aktualisiereEinkaufslisteAuswahl();
+    openModalById('kauflisteModal');
+}
+
+function aktualisiereEinkaufslisteAuswahl() {
+    const ausgewaehlt = Array.from(document.querySelectorAll('.eigene-kauf-check:checked'))
+        .map(chk => eigeneVorschlaegeListe[Number(chk.dataset.index)])
+        .filter(Boolean);
+    einkaufslisteArray = [...autoFehlbestandListe, ...ausgewaehlt, ...manuelleEintraegeListe];
+}
+
+function manuellAufZettel() {
+    const n = $('manuell-kauf-name')?.value.trim();
+    const m = werteMengeAus($('manuell-kauf-menge')?.value) || 1;
+    if (!n || m <= 0) return;
+    manuelleEintraegeListe.push({ artikel: n, menge: m, grund: 'Manuell hinzugefügt' });
+    aktualisiereEinkaufslisteAuswahl();
+    const manEl = $('manuell-kauf-liste');
+    if (manEl) manEl.innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
+    if ($('manuell-kauf-name')) $('manuell-kauf-name').value = '';
+    if ($('manuell-kauf-menge')) $('manuell-kauf-menge').value = '1';
+}
+
+async function downloadExcel() {
+    if (!einkaufslisteArray.length) return showToast('Die Liste ist leer.', 'warning');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Einkaufsliste');
+
+    ws.addRow(['EINKAUFSLISTE - TRISPORT ERDING']);
+    ws.addRow(['Erstellt am: ' + new Date().toLocaleString('de-DE')]);
+    ws.addRow([]);
+    ws.addRow(['ARTIKEL / GEGENSTAND', 'MENGE', 'HINWEIS']);
+
+    einkaufslisteArray.forEach(i => ws.addRow([i.artikel, i.menge, i.grund]));
+    ws.getColumn(1).width = 40; ws.getColumn(2).width = 12; ws.getColumn(3).width = 30;
+
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = `Einkaufsliste_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.click();
+    closeModal('kauflisteModal');
+}
+
+// =========================================================================
+// 11. REGAL-QR & FEEDBACK
+// =========================================================================
+
+function oeffneQrGeneratorFenster() { window.open('?qrgen=1', '_blank'); }
+
+function aktualisiereRegalQrVorschau() {
+    const val = $('regal-qr-input')?.value.trim();
+    const prev = $('regal-qr-preview'), link = $('regal-qr-link');
+    if (!val) { if (prev) prev.innerHTML = ''; if (link) link.innerText = ''; return; }
+    const url = `https://trilager.pius-s.de?regal=${encodeURIComponent(extrahiereRegalName(val))}`;
+    prev.innerHTML = '';
+    new QRCode(prev, { text: url, width: 220, height: 220 });
+    link.href = url; link.innerText = url;
+}
+function downloadRegalQrDatei(fmt = 'png') {
+    const c = $('regal-qr-preview')?.querySelector('canvas');
+    if (!c) return;
+    const a = document.createElement('a');
+    a.href = c.toDataURL('image/png');
+    a.download = `Regal_QR_${extrahiereRegalName($('regal-qr-input').value)}.${fmt}`;
+    a.click();
+}
+
+async function formularAntwortSpeichern() {
+    const name = $('formular-name')?.value.trim() || 'Anonym';
+    const frage1 = $('formular-frage1')?.value.trim() || '';
+    const frage2 = $('formular-frage2')?.value.trim() || '';
+    if (!frage1 && !frage2) return showToast('Bitte mindestens eine Frage beantworten.', 'warning');
+    await dbClient.from(TABLES.FORMULAR).insert([{ name, frage1, frage2 }]);
+    showToast('Danke für dein Feedback!');
+    $('formular-frage1').value = ''; $('formular-frage2').value = '';
+}
+async function formularAntwortenLaden() {
+    const ziel = $('formular-antworten');
+    const { data } = await dbClient.from(TABLES.FORMULAR).select('*').order('created_at', { ascending: false });
+    if (!ziel) return;
+    ziel.style.display = 'block';
+    ziel.innerHTML = (data || []).map(e => `
+        <div class="survey-answer-item">
+            <strong>${escapeHtml(e.name)}</strong> &bull; <small>${new Date(e.created_at).toLocaleDateString('de-DE')}</small>
+            <p><strong>Bedarf:</strong> ${escapeHtml(e.frage1)}</p>
+            <p><strong>Materialien:</strong> ${escapeHtml(e.frage2)}</p>
+        </div>`).join('') || '<p>Noch keine Antworten vorhanden.</p>';
+}
+
+function zurueckZurHauptseite() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    window.location.href = url.toString();
 }
 
 // =========================================================================
