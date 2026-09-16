@@ -194,7 +194,7 @@
         .kiste-item-card.fehlend { border-color: #fca5a5; background: #fef2f2; }
 
         .kisten-filter-pill-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-        .btn-kisten-filter { flex: 1; min-width: 130px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
+        .btn-kisten-filter { flex: 1; min-width: 120px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
         .btn-kisten-filter.active { background: #e3000f; }
 
         .entnahme-card { border: 1px solid #d9e3ec; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
@@ -378,7 +378,6 @@
             
             <div class="lager-controls-grid">
                 <div class="control-column">
-                    <button class="btn" style="background-color: #16a085;" onclick="oeffneScanHubModal()">⚡ Kiste scannen / suchen</button>
                     <button class="btn" id="btn-edit-mode" style="background-color: #f39c12;" onclick="toggleEditMode()">✏️ Bearbeiten: AUS</button>
                 </div>
 
@@ -432,9 +431,9 @@
             <div class="kisten-filter-pill-bar">
                 <button class="btn btn-kisten-filter active" id="filter-kisten-alle" onclick="setzeKistenAnsichtFilter('alle')">📦 Alle Kisten</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-ausgeliehen" onclick="setzeKistenAnsichtFilter('ausgeliehen')">📤 Unterwegs</button>
-                <button class="btn btn-kisten-filter" id="filter-kisten-entnahmen" onclick="setzeKistenAnsichtFilter('entnahmen')">📋 Wer hat was? (Offen)</button>
+                <button class="btn btn-kisten-filter" id="filter-kisten-entnahmen" onclick="setzeKistenAnsichtFilter('entnahmen')">📋 Wer hat was?</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-log" onclick="setzeKistenAnsichtFilter('log')">📜 Log / Verlauf</button>
-                <button class="btn" style="background-color: #27ae60; width:auto; min-height:38px; padding:8px 12px;" onclick="openOrteVerwalten()">⚙️ Kisten &amp; QR verwalten</button>
+                <button class="btn" style="background-color: #27ae60; width:auto; min-height:38px; padding:8px 12px;" onclick="openOrteVerwalten()">⚙️ Kisten &amp; QR</button>
             </div>
         </div>
 
@@ -511,49 +510,6 @@
         <div class="flex-buttons" style="margin-top:20px;">
             <button class="btn btn-save" onclick="bestaetigeEntnahme()">📤 Ausbuchen bestätigen</button>
             <button class="btn btn-cancel" onclick="closeModal('entnahmePersonModal')">Abbrechen</button>
-        </div>
-    </div>
-</div>
-
-<!-- ZENTRALER SCAN- & KISTEN-HUB -->
-<div id="scanHubModal" class="modal" onclick="if (event.target === this) schliesseScanHubModal()">
-    <div class="modal-content" style="max-width: 680px;">
-        <button type="button" class="modal-close-x" onclick="schliesseScanHubModal()">✕</button>
-        <h2 style="margin-top:0; color:#2c3e50;">⚡ Kiste scannen / suchen</h2>
-        <p style="font-size:0.9em; color:#666; margin-bottom:14px;">
-            Kiste per Kamera erfassen, NFC-Tag anhalten oder direkt in der Liste auswählen.
-        </p>
-
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px;">
-            <button class="btn" id="hub-kamera-btn" style="background:#27ae60; padding:12px; display:flex; flex-direction:column; align-items:center; gap:4px;" onclick="toggleHubKamera()">
-                <span style="font-size:1.5em;">📷</span>
-                <span id="hub-kamera-text">Kamera-Scan</span>
-                <small style="font-weight:normal; opacity:0.9;">QR-Code</small>
-            </button>
-            <button class="btn" id="hub-nfc-btn" style="background:#16a085; padding:12px; display:flex; flex-direction:column; align-items:center; gap:4px;" onclick="starteKistenNfc()">
-                <span style="font-size:1.5em;">📶</span>
-                <span id="hub-nfc-text">NFC-Scan</span>
-                <small style="font-weight:normal; opacity:0.9;">Tag an Handy halten</small>
-            </button>
-        </div>
-
-        <div id="hub-camera-wrapper" style="display:none; margin-bottom:14px; background:#f8fafc; border:1px solid #d9e3ec; border-radius:8px; padding:10px;">
-            <div id="hub-qr-reader" style="width:100%; border-radius:6px; overflow:hidden;"></div>
-            <p id="hub-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height:1.2em; margin:6px 0 0 0; font-size:0.9em;"></p>
-        </div>
-
-        <div style="display:flex; align-items:center; gap:10px; margin: 16px 0 12px 0; color:#7f8c8d; font-size:0.8em; font-weight:bold;">
-            <hr style="flex:1; border:0; border-top:1px solid #e2e8f0;"> ODER KISTE DIREKT AUSWÄHLEN <hr style="flex:1; border:0; border-top:1px solid #e2e8f0;">
-        </div>
-
-        <input type="text" id="artikel-finder-input" placeholder="🔍 Kistenname oder Code suchen..." 
-               oninput="aktualisiereArtikelFinderListe(this.value)" 
-               style="width:100%; padding:12px; border:2px solid #3498db; border-radius:8px; font-size:1em; box-sizing:border-box; margin-bottom:10px;">
-
-        <div id="artikel-finder-ergebnisse" style="max-height:42vh; overflow-y:auto;"></div>
-
-        <div class="flex-buttons" style="margin-top:15px;">
-            <button class="btn btn-cancel" onclick="schliesseScanHubModal()">Schließen</button>
         </div>
     </div>
 </div>
