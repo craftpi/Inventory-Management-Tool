@@ -507,7 +507,7 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. KISTEN- & ENTNAHME-SYSTEM (MIT STRIKTER PERSONENABFRAGE)
+// 5. KISTEN- & ENTNAHME-SYSTEM (MIT PFLICHT-BENUTZERABFRAGE)
 // =========================================================================
 
 function gibKistenBestand(lid) {
@@ -624,7 +624,7 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 }
 
 // -------------------------------------------------------------------------
-// Entnahme mit strikter Personenabfrage für Kisten und Einzelartikel
+// Entnahme mit strikter Personenabfrage (für Kisten und Einzelartikel)
 // -------------------------------------------------------------------------
 function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
@@ -651,7 +651,7 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     if (aktuell < 0) return;
 
     if (delta > 0) {
-        // Einbuchen/Rückgabe direkt ausführen
+        // Einbuchen/Rückgabe direkt ausführen ohne Personabfrage
         ausfuehrenArtikelEinbuchung(bestandId, delta);
         return;
     }
@@ -713,104 +713,121 @@ function entnahmePersonSelectChanged() {
 }
 
 async function bestaetigeEntnahme() {
+    if (!ausbuchenPendingAktion) {
+        showToast('Keine aktive Entnahmeaktion gefunden.', 'error');
+        closeModal('entnahmePersonModal');
+        return;
+    }
+
     const selVal = $('entnahme-person-select').value;
     let name = '', kontakt = '', vorlageId = null;
 
     if (!selVal) return showToast('Bitte wähle eine Person aus.', 'warning');
 
-    if (selVal === 'custom') {
-        name = $('entnahme-custom-name').value.trim();
-        kontakt = $('entnahme-custom-kontakt').value.trim();
-        if (!name) return showToast('Bitte Namen eingeben.', 'warning');
-        const { data: newV } = await dbClient.from('lager_entnahme_benutzer_vorlagen').insert([{ name, kontakt }]).select();
-        if (newV && newV.length) vorlageId = newV[0].id;
-    } else {
-        const v = (alleBenutzerVorlagen || []).find(b => String(b.id) === String(selVal));
-        if (v) { name = v.name; kontakt = v.kontakt || ''; vorlageId = v.id; }
-    }
+    try {
+        if (selVal === 'custom') {
+            name = $('entnahme-custom-name').value.trim();
+            kontakt = $('entnahme-custom-kontakt').value.trim();
+            if (!name) return showToast('Bitte Namen eingeben.', 'warning');
+            const { data: newV, error: vErr } = await dbClient.from('lager_entnahme_benutzer_vorlagen').insert([{ name, kontakt }]).select();
+            if (vErr) throw vErr;
+            if (newV && newV.length) vorlageId = newV[0].id;
+        } else {
+            const v = (alleBenutzerVorlagen || []).find(b => String(b.id) === String(selVal));
+            if (v) { name = v.name; kontakt = v.kontakt || ''; vorlageId = v.id; }
+        }
 
-    if (ausbuchenPendingAktion?.typ === 'kiste') {
-        const kId = ausbuchenPendingAktion.kisteId;
-        const bestand = gibKistenBestand(kId);
+        if (ausbuchenPendingAktion.typ === 'kiste') {
+            const kId = ausbuchenPendingAktion.kisteId;
+            const bestand = gibKistenBestand(kId);
 
-        const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-            return dbClient.from('bestand').update({
-                menge: 0,
-                alte_menge: z.soll_menge || z.ist_menge,
-                created_at: new Date().toISOString()
-            }).eq('id', z.id);
-        });
-        await Promise.all(updates);
-
-        const entnahmePayload = {
-            name,
-            kontakt,
-            benutzer_vorlage_id: vorlageId,
-            materialien: [{
-                kiste_id: Number(kId),
-                kiste_name: ausbuchenPendingAktion.kisteName,
-                artikel: bestand.map(b => ({
-                    bestand_id: b.id,
-                    artikel_id: b.artikel_id,
-                    name: b.artikel?.name,
-                    menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge,
-                    typ: b.artikel?.typ || 'zaehlbar'
-                }))
-            }],
-            created_at: new Date().toISOString()
-        };
-
-        await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
-        await dbClient.from('lager_entnahme_audit').insert([{
-            ...entnahmePayload,
-            ereignis: 'entnahme'
-        }]).catch(() => {});
-
-        showToast(`📤 "${ausbuchenPendingAktion.kisteName}" an ${name} ausgebucht!`);
-    } else if (ausbuchenPendingAktion?.typ === 'artikel_einzeln') {
-        const { bestandId, delta, artikelName, kisteId, kisteName } = ausbuchenPendingAktion;
-        const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
-        if (eintrag) {
-            const aktuell = Number(eintrag.ist_menge);
-            const neu = Math.max(0, aktuell + delta);
-
-            await dbClient.from('bestand').update({
-                menge: neu,
-                created_at: new Date().toISOString()
-            }).eq('id', bestandId);
+            const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+                return dbClient.from('bestand').update({
+                    menge: 0,
+                    alte_menge: z.soll_menge || z.ist_menge,
+                    created_at: new Date().toISOString()
+                }).eq('id', z.id);
+            });
+            await Promise.all(updates);
 
             const entnahmePayload = {
                 name,
                 kontakt,
                 benutzer_vorlage_id: vorlageId,
                 materialien: [{
-                    kiste_id: Number(kisteId),
-                    kiste_name: kisteName,
-                    artikel: [{
-                        bestand_id: bestandId,
-                        artikel_id: eintrag.artikel_id,
-                        name: artikelName,
-                        menge: Math.abs(delta),
-                        typ: eintrag.artikel?.typ || 'zaehlbar'
-                    }]
+                    kiste_id: Number(kId),
+                    kiste_name: ausbuchenPendingAktion.kisteName,
+                    artikel: bestand.map(b => ({
+                        bestand_id: b.id,
+                        artikel_id: b.artikel_id,
+                        name: b.artikel?.name,
+                        menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge,
+                        typ: b.artikel?.typ || 'zaehlbar'
+                    }))
                 }],
                 created_at: new Date().toISOString()
             };
 
-            await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+            const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+            if (insErr) throw insErr;
+
             await dbClient.from('lager_entnahme_audit').insert([{
                 ...entnahmePayload,
                 ereignis: 'entnahme'
             }]).catch(() => {});
 
-            showToast(`📤 1x "${artikelName}" an ${name} ausgebucht!`);
-        }
-    }
+            showToast(`📤 "${ausbuchenPendingAktion.kisteName}" an ${name} ausgebucht!`);
+        } else if (ausbuchenPendingAktion.typ === 'artikel_einzeln') {
+            const { bestandId, delta, artikelName, kisteId, kisteName } = ausbuchenPendingAktion;
+            const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+            if (eintrag) {
+                const aktuell = Number(eintrag.ist_menge);
+                const neu = Math.max(0, aktuell + delta);
 
-    closeModal('entnahmePersonModal');
-    ausbuchenPendingAktion = null;
-    await ladeAlles();
-    if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+                const { error: updErr } = await dbClient.from('bestand').update({
+                    menge: neu,
+                    created_at: new Date().toISOString()
+                }).eq('id', bestandId);
+                if (updErr) throw updErr;
+
+                const entnahmePayload = {
+                    name,
+                    kontakt,
+                    benutzer_vorlage_id: vorlageId,
+                    materialien: [{
+                        kiste_id: Number(kisteId),
+                        kiste_name: kisteName,
+                        artikel: [{
+                            bestand_id: bestandId,
+                            artikel_id: eintrag.artikel_id,
+                            name: artikelName,
+                            menge: Math.abs(delta),
+                            typ: eintrag.artikel?.typ || 'zaehlbar'
+                        }]
+                    }],
+                    created_at: new Date().toISOString()
+                };
+
+                const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+                if (insErr) throw insErr;
+
+                await dbClient.from('lager_entnahme_audit').insert([{
+                    ...entnahmePayload,
+                    ereignis: 'entnahme'
+                }]).catch(() => {});
+
+                showToast(`📤 1x "${artikelName}" an ${name} ausgebucht!`);
+            }
+        }
+
+        closeModal('entnahmePersonModal');
+        ausbuchenPendingAktion = null;
+        await ladeAlles();
+        if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+    } catch (err) {
+        console.error('Fehler in bestaetigeEntnahme:', err);
+        showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -1013,7 +1030,7 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. HARDWARE SCANNING & DIREKTE KISTEN-SUCHE (IM KISTEN-REITER)
+// 6. HARDWARE SCANNING (NFC & QR UNIVERSAL-SCAN)
 // =========================================================================
 
 async function verarbeiteUniversalScan(rawCode) {
