@@ -32,7 +32,6 @@ let alleBenutzerVorlagen = [], offeneEntnahmen = [], auditLogs = [];
 let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
 let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
 let aktiverRegalFilter = '';
-let finderFilterModus = 'fehlend';
 let kistenAnsichtFilter = 'alle';
 let kistenEtikettenAuswahlIds = new Set();
 let einkaufslisteArray = [];
@@ -50,7 +49,7 @@ let hubKameraAktiv = false;
 let ausbuchenPendingAktion = null;
 
 // =========================================================================
-// 2. RECHNER-PARSER & HILFSFUNKTIONEN
+// 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
 // =========================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -625,7 +624,7 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 }
 
 // -------------------------------------------------------------------------
-// Entnahme mit Personenerfassung
+// Entnahme mit Personenerfassung (Punkt 3)
 // -------------------------------------------------------------------------
 function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
@@ -953,7 +952,7 @@ function schliesseKistenCheckModal() {
 }
 
 // =========================================================================
-// 6. HARDWARE SCANNING (NFC & QR UNIVERSAL-SCAN)
+// 6. HARDWARE SCANNING & DIREKTE KISTEN-SUCHE (IM KISTEN-REITER)
 // =========================================================================
 
 async function verarbeiteUniversalScan(rawCode) {
@@ -1027,11 +1026,10 @@ function deaktiviereNfc() {
 }
 
 function aktualisiereNfcUI(aktiv) {
-    const btn = $('hub-nfc-btn');
-    const text = $('hub-nfc-text');
+    const btn = $('tab-nfc-btn');
     if (btn) {
         btn.classList.toggle('nfc-aktiv', aktiv);
-        if (text) text.innerText = aktiv ? 'NFC aktiv (Stopp)' : 'NFC-Scan';
+        btn.innerText = aktiv ? '📶 NFC aktiv (Stopp)' : '📶 NFC-Scan';
     }
 }
 
@@ -1065,6 +1063,60 @@ async function schreibeNfcTagFuerOrt() {
     } catch (err) {
         showToast('Fehler beim Schreiben: ' + err.message, 'error');
     }
+}
+
+function oeffneKistenKameraModal() {
+    const wrap = $('hub-camera-wrapper');
+    const status = $('hub-scanner-status');
+    const btnText = $('hub-kamera-text');
+    
+    if (wrap.style.display === 'block') {
+        stoppeHubKamera();
+        wrap.style.display = 'none';
+        return;
+    }
+
+    wrap.style.display = 'block';
+    status.style.display = 'block';
+    status.innerText = 'Kamera startet…';
+    if (btnText) btnText.innerText = '✕ Kamera stoppen';
+    hubKameraAktiv = true;
+
+    if (aktiverQrScanner) {
+        try { aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {}
+    }
+
+    aktiverQrScanner = new Html5Qrcode('hub-qr-reader');
+    aktiverQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        (decoded) => {
+            status.innerText = 'Erkannt: ' + decoded;
+            stoppeHubKamera();
+            wrap.style.display = 'none';
+            verarbeiteUniversalScan(decoded);
+        },
+        () => {}
+    ).then(() => {
+        status.innerText = 'Bereit – QR-Code vor die Kamera halten.';
+    }).catch(err => {
+        showToast('Kamera konnte nicht gestartet werden: ' + err.message, 'error');
+        stoppeHubKamera();
+        wrap.style.display = 'none';
+    });
+}
+
+function stoppeHubKamera() {
+    if (aktiverQrScanner) {
+        aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; });
+    }
+    const wrap = $('hub-camera-wrapper');
+    const status = $('hub-scanner-status');
+    const btnText = $('hub-kamera-text');
+    if (wrap) wrap.style.display = 'none';
+    if (status) status.style.display = 'none';
+    if (btnText) btnText.innerText = 'Kamera-Scan';
+    hubKameraAktiv = false;
 }
 
 // =========================================================================
@@ -1453,14 +1505,12 @@ function renderKistenListe() {
     }).join('');
 }
 
-// Kombinierter Filter: Zeigt Personen-Karten oben UND Kisten-Tabelle unten
 function renderKistenUnterwegsKombiniert() {
     const ziel = $('kisten-unterwegs-kombiniert-bereich');
     if (!ziel) return;
 
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
 
-    // 1. Offene Entnahmen filtern
     const offeneGefiltert = (offeneEntnahmen || []).filter(e => {
         if (!suchText) return true;
         const nameMatch = (e.name || '').toLowerCase().includes(suchText);
@@ -1469,7 +1519,6 @@ function renderKistenUnterwegsKombiniert() {
         return nameMatch || matMatch;
     });
 
-    // 2. Kisten filtern, die unterwegs sind oder Fehlteile haben
     const kistenGefiltert = (alleLagerorte || []).filter(o => {
         if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
             return false;
@@ -1482,7 +1531,6 @@ function renderKistenUnterwegsKombiniert() {
 
     let html = '';
 
-    // TEIL 1: Personen-Fokus
     html += `<div class="kombiniert-subtitel">👤 Aktive Entleiher &amp; Resortleiter (${offeneGefiltert.length})</div>`;
     if (!offeneGefiltert.length) {
         html += `
@@ -1524,7 +1572,6 @@ function renderKistenUnterwegsKombiniert() {
         }).join('');
     }
 
-    // TEIL 2: Kisten-Fokus
     html += `<div class="kombiniert-subtitel" style="margin-top:24px;">📦 Fehlende oder unvollständige Kisten (${kistenGefiltert.length})</div>`;
     if (!kistenGefiltert.length) {
         html += `
@@ -1862,7 +1909,7 @@ function druckeKistenEtiketten(liste) {
 }
 
 // =========================================================================
-// 9. ARTIKEL ANLEGEN & BEARBEITEN
+// 10. ARTIKEL ANLEGEN & BEARBEITEN
 // =========================================================================
 function toggleEditMode() {
     isEditMode = !isEditMode;

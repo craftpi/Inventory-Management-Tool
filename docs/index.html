@@ -194,7 +194,7 @@
         .kiste-item-card.fehlend { border-color: #fca5a5; background: #fef2f2; }
 
         .kisten-filter-pill-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-        .btn-kisten-filter { flex: 1; min-width: 140px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
+        .btn-kisten-filter { flex: 1; min-width: 120px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
         .btn-kisten-filter.active { background: #e3000f; }
 
         .entnahme-card { border: 1px solid #d9e3ec; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
@@ -423,18 +423,31 @@
         </div>
     </div>
 
+    <!-- KISTEN & VERLEIH (NEU INTEGRIERTER SCAN-HUB) -->
     <div id="ansicht-kisten" style="display: none;">
         <p class="subtitle">
-            Kisten und deren Inhalte im Überblick. Erfasse Entnahmen an Resortleiter oder prüfe Rückgaben.
+            Kisten und deren Inhalte im Überblick. Scanne Code/NFC oder erfasse Entnahmen an Resortleiter.
         </p>
         <div class="action-bar">
+            <!-- DIREKTER SCANN- & SUCH-HUB IM KISTEN-REITER (ERFÜLLT PUNKT 4) -->
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
+                <button class="btn" style="background:#27ae60; padding:10px; font-size:0.9em;" onclick="oeffneKistenKameraModal()">📷 Kamera-Scan</button>
+                <button class="btn" style="background:#16a085; padding:10px; font-size:0.9em;" id="tab-nfc-btn" onclick="starteKistenNfc()">📶 NFC-Scan</button>
+                <button class="btn" style="background:#2c3e50; padding:10px; font-size:0.9em;" onclick="openOrteVerwalten()">⚙️ Kisten / QR</button>
+            </div>
+
+            <!-- Kamera-Stream Wrapper -->
+            <div id="hub-camera-wrapper" style="display:none; margin-bottom:10px; background:#f8fafc; border:1px solid #d9e3ec; border-radius:8px; padding:10px;">
+                <div id="hub-qr-reader" style="width:100%; border-radius:6px; overflow:hidden;"></div>
+                <p id="hub-scanner-status" style="text-align:center; font-weight:bold; color:#2c3e50; min-height:1.2em; margin:6px 0 0 0; font-size:0.9em;"></p>
+            </div>
+
             <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste, Code oder Entleiher suchen..." onkeyup="kistenFilterSucheGeaendert()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
             
             <div class="kisten-filter-pill-bar">
                 <button class="btn btn-kisten-filter active" id="filter-kisten-alle" onclick="setzeKistenAnsichtFilter('alle')">📦 Alle Kisten</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-unterwegs-wer" onclick="setzeKistenAnsichtFilter('unterwegs_wer')">📋 Unterwegs / Wer hat was?</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-log" onclick="setzeKistenAnsichtFilter('log')">📜 Log / Verlauf</button>
-                <button class="btn" style="background-color: #27ae60; width:auto; min-height:38px; padding:8px 12px;" onclick="openOrteVerwalten()">⚙️ Kisten &amp; QR</button>
             </div>
         </div>
 
