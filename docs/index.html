@@ -194,7 +194,7 @@
         .kiste-item-card.fehlend { border-color: #fca5a5; background: #fef2f2; }
 
         .kisten-filter-pill-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-        .btn-kisten-filter { flex: 1; min-width: 120px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
+        .btn-kisten-filter { flex: 1; min-width: 140px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
         .btn-kisten-filter.active { background: #e3000f; }
 
         .entnahme-card { border: 1px solid #d9e3ec; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
@@ -204,6 +204,8 @@
         .audit-badge.entnahme { background: #fee2e2; color: #b91c1c; }
         .audit-badge.rueckgabe { background: #dcfce7; color: #15803d; }
         .audit-badge.teilrueckgabe { background: #fef3c7; color: #b45309; }
+
+        .kombiniert-subtitel { margin: 18px 0 8px 0; color: #2c3e50; font-size: 1.05em; font-weight: bold; display: flex; align-items: center; gap: 6px; }
 
         @media (max-width: 600px) {
             body { padding: 8px 4px; }
@@ -430,8 +432,7 @@
             
             <div class="kisten-filter-pill-bar">
                 <button class="btn btn-kisten-filter active" id="filter-kisten-alle" onclick="setzeKistenAnsichtFilter('alle')">📦 Alle Kisten</button>
-                <button class="btn btn-kisten-filter" id="filter-kisten-ausgeliehen" onclick="setzeKistenAnsichtFilter('ausgeliehen')">📤 Unterwegs</button>
-                <button class="btn btn-kisten-filter" id="filter-kisten-entnahmen" onclick="setzeKistenAnsichtFilter('entnahmen')">📋 Wer hat was?</button>
+                <button class="btn btn-kisten-filter" id="filter-kisten-unterwegs-wer" onclick="setzeKistenAnsichtFilter('unterwegs_wer')">📋 Unterwegs / Wer hat was?</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-log" onclick="setzeKistenAnsichtFilter('log')">📜 Log / Verlauf</button>
                 <button class="btn" style="background-color: #27ae60; width:auto; min-height:38px; padding:8px 12px;" onclick="openOrteVerwalten()">⚙️ Kisten &amp; QR</button>
             </div>
@@ -446,7 +447,7 @@
             </table>
         </div>
 
-        <div id="entnahmen-liste-bereich" style="display:none;"></div>
+        <div id="kisten-unterwegs-kombiniert-bereich" style="display:none;"></div>
         <div id="audit-log-bereich" style="display:none;"></div>
     </div>
 

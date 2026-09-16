@@ -50,7 +50,7 @@ let hubKameraAktiv = false;
 let ausbuchenPendingAktion = null;
 
 // =========================================================================
-// 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
+// 2. RECHNER-PARSER & HILFSFUNKTIONEN
 // =========================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -92,7 +92,7 @@ function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', d
     if (!selectEl) return;
     const current = selectedValue !== null ? selectedValue : selectEl.value;
     selectEl.innerHTML = defaultOption ? `<option value="">${defaultOption}</option>` : '';
-    items.forEach(item => {
+    (items || []).forEach(item => {
         const val = typeof item === 'object' ? item[valueKey] : item;
         const text = formatLabel ? formatLabel(item) : (typeof item === 'object' ? item[labelKey] : item);
         selectEl.add(new Option(text, val));
@@ -265,7 +265,7 @@ function toggleNachkaufCheckbox(chk) {
 }
 
 // =========================================================================
-// 3. AUTH & LOGIN-SPERRE
+// 3. AUTH & SESSION
 // =========================================================================
 function pruefeLoginSperre() {
     try {
@@ -491,7 +491,7 @@ function aktualisiereFilterDropdown(daten) {
     const artikelDatalist = $('kategorie-artikel-liste');
     const kategorien = new Set(), regale = new Set();
 
-    daten.forEach(z => {
+    (daten || []).forEach(z => {
         if (z.artikel?.kategorie?.trim()) kategorien.add(z.artikel.kategorie.trim());
         const regal = extrahiereRegalName(z.lagerorte?.name || '');
         if (regal) regale.add(regal);
@@ -500,11 +500,11 @@ function aktualisiereFilterDropdown(daten) {
     if (katDropdown) populateSelect(katDropdown, Array.from(kategorien).sort(), { defaultOption: 'Alle Kategorien' });
     if (comboDropdown) {
         comboDropdown.innerHTML = '<option value="">Alle Orte</option>';
-        alleLagerorte.forEach(o => comboDropdown.add(new Option('📍 ' + o.name, 'ort:' + o.id)));
+        (alleLagerorte || []).forEach(o => comboDropdown.add(new Option('📍 ' + o.name, 'ort:' + o.id)));
         Array.from(regale).sort(vergleicheRegalNamen).forEach(r => comboDropdown.add(new Option('🏷️ Regal: ' + r, 'regal:' + r)));
     }
     if (datalist) datalist.innerHTML = Array.from(kategorien).sort().map(k => `<option value="${escapeHtml(k)}">`).join('');
-    if (artikelDatalist) artikelDatalist.innerHTML = alleArtikelInfos.map(a => `<option value="${escapeHtml(a.name)}">`).join('');
+    if (artikelDatalist) artikelDatalist.innerHTML = (alleArtikelInfos || []).map(a => `<option value="${escapeHtml(a.name)}">`).join('');
 }
 
 // =========================================================================
@@ -512,12 +512,12 @@ function aktualisiereFilterDropdown(daten) {
 // =========================================================================
 
 function gibKistenBestand(lid) {
-    return aktuelleDaten.filter(z => String(z.lagerort_id) === String(lid))
+    return (aktuelleDaten || []).filter(z => String(z.lagerort_id) === String(lid))
         .sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de'));
 }
 
 function ermittleKistenEntnahmeStatus(lid) {
-    const entnahme = offeneEntnahmen.find(e => {
+    const entnahme = (offeneEntnahmen || []).find(e => {
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
         return mats.some(m => String(m.kiste_id) === String(lid));
     });
@@ -525,7 +525,7 @@ function ermittleKistenEntnahmeStatus(lid) {
 }
 
 function oeffneKistenCheck(lid) {
-    const ort = alleLagerorte.find(o => String(o.id) === String(lid));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(lid));
     if (!ort) return;
     kistenCheckAktuelleId = lid;
 
@@ -629,7 +629,7 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 // -------------------------------------------------------------------------
 function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
-    const ort = alleLagerorte.find(o => String(o.id) === String(kistenCheckAktuelleId));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(kistenCheckAktuelleId));
     if (!ort) return;
 
     ausbuchenPendingAktion = {
@@ -649,7 +649,7 @@ function befuellePersonenSelect() {
     const sel = $('entnahme-person-select');
     if (!sel) return;
     sel.innerHTML = '<option value="">-- Person auswählen --</option>';
-    alleBenutzerVorlagen.forEach(v => {
+    (alleBenutzerVorlagen || []).forEach(v => {
         sel.add(new Option(`👤 ${v.name} ${v.kontakt ? `(${v.kontakt})` : ''}`, v.id));
     });
     sel.add(new Option('➕ Anderer Name / Neuer Helfer...', 'custom'));
@@ -674,7 +674,7 @@ async function bestaetigeEntnahme() {
         const { data: newV } = await dbClient.from('lager_entnahme_benutzer_vorlagen').insert([{ name, kontakt }]).select();
         if (newV && newV.length) vorlageId = newV[0].id;
     } else {
-        const v = alleBenutzerVorlagen.find(b => String(b.id) === String(selVal));
+        const v = (alleBenutzerVorlagen || []).find(b => String(b.id) === String(selVal));
         if (v) { name = v.name; kontakt = v.kontakt || ''; vorlageId = v.id; }
     }
 
@@ -740,7 +740,7 @@ async function ganzeKisteZurueckbuchen() {
     });
     await Promise.all(updates);
 
-    const offene = offeneEntnahmen.filter(e => {
+    const offene = (offeneEntnahmen || []).filter(e => {
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
         return mats.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId));
     });
@@ -764,7 +764,7 @@ async function ganzeKisteZurueckbuchen() {
 }
 
 async function aendereArtikelMengeInKiste(bestandId, delta) {
-    const eintrag = aktuelleDaten.find(b => b.id === bestandId);
+    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
     if (!eintrag) return;
     const aktuell = Number(eintrag.ist_menge);
     if (aktuell < 0) return;
@@ -793,7 +793,7 @@ async function aendereArtikelMengeInKiste(bestandId, delta) {
 }
 
 async function speichereKisteMengeInput(bId, rawVal) {
-    const eintrag = aktuelleDaten.find(b => b.id === bId);
+    const eintrag = (aktuelleDaten || []).find(b => b.id === bId);
     if (!eintrag) return;
     const soll = Number(eintrag.soll_menge) || 0;
     let val = werteMengeAus(rawVal);
@@ -825,19 +825,19 @@ async function kistenCheckArtikelHinzufuegen() {
     const val = inp.value.trim();
     if (!val) return;
 
-    const art = alleArtikelInfos.find(a => a.name.toLowerCase() === val.toLowerCase());
+    const art = (alleArtikelInfos || []).find(a => a.name.toLowerCase() === val.toLowerCase());
     if (!art) return showToast(`Artikel "${val}" nicht gefunden.`, 'error');
 
-    const sonstigOrt = alleLagerorte.find(o => 
+    const sonstigOrt = (alleLagerorte || []).find(o => 
         o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
         o.name.trim().toLowerCase() === 'sonstiges'
     );
 
     const sonstigEintrag = sonstigOrt 
-        ? aktuelleDaten.find(b => b.artikel_id === art.id && String(b.lagerort_id) === String(sonstigOrt.id))
+        ? (aktuelleDaten || []).find(b => b.artikel_id === art.id && String(b.lagerort_id) === String(sonstigOrt.id))
         : null;
 
-    const kistenEintrag = aktuelleDaten.find(b => 
+    const kistenEintrag = (aktuelleDaten || []).find(b => 
         b.artikel_id === art.id && String(b.lagerort_id) === String(kistenCheckAktuelleId)
     );
 
@@ -899,10 +899,10 @@ async function kistenCheckArtikelHinzufuegen() {
 async function entferneArtikelAusKiste(bestandId) {
     if (!confirm('Diesen Artikel wirklich aus dieser Kiste entfernen und auf "Sonstiger Lagerort" setzen?')) return;
 
-    const eintrag = aktuelleDaten.find(b => b.id === bestandId);
+    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
     if (!eintrag) return;
 
-    let sonstigOrt = alleLagerorte.find(o => 
+    let sonstigOrt = (alleLagerorte || []).find(o => 
         o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
         o.name.trim().toLowerCase() === 'sonstiges'
     );
@@ -914,7 +914,7 @@ async function entferneArtikelAusKiste(bestandId) {
         await ladeLagerorte();
     }
 
-    const existierenderEintrag = aktuelleDaten.find(b => 
+    const existierenderEintrag = (aktuelleDaten || []).find(b => 
         b.artikel_id === eintrag.artikel_id && 
         String(b.lagerort_id) === String(sonstigOrt.id) && 
         b.id !== bestandId
@@ -969,10 +969,9 @@ async function verarbeiteUniversalScan(rawCode) {
     else if (mKistePref) ortCode = mKistePref[1].trim();
     else ortCode = raw;
 
-    const ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === ortCode.toLowerCase());
+    const ort = (alleLagerorte || []).find(o => o.nfc_code && o.nfc_code.toLowerCase() === ortCode.toLowerCase());
     if (ort) {
         if (navigator.vibrate) navigator.vibrate(120);
-        schliesseScanHubModal();
         oeffneKistenCheck(ort.id);
         return;
     }
@@ -1048,7 +1047,7 @@ async function holeOderErzeugeOrtCode(ort) {
 
 async function schreibeNfcTagFuerOrt() {
     const oId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(oId));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(oId));
     if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
 
     const code = await holeOderErzeugeOrtCode(ort);
@@ -1083,7 +1082,7 @@ function wendeFilterAn() {
 
     aktiverRegalFilter = regalTemp || (comboFilter === '' ? '' : aktiverRegalFilter);
 
-    let gefiltert = aktuelleDaten.filter(z => {
+    let gefiltert = (aktuelleDaten || []).filter(z => {
         if (suchText) {
             const matches = [z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name, String(z.artikel?.id ?? '')]
                 .some(field => (field || '').toLowerCase().includes(suchText));
@@ -1121,7 +1120,7 @@ function toggleGruppe(name) {
 function toggleAlleGruppen() {
     isAllOpen = !isAllOpen;
     offeneGruppen.clear();
-    if (isAllOpen) aktuelleDaten.forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
+    if (isAllOpen) (aktuelleDaten || []).forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
     wendeFilterAn();
 }
 function toggleAlleArtikelSichtbarkeit() {
@@ -1138,19 +1137,19 @@ function tabelleAktualisieren(daten) {
     const isSearching = suchText.length > 0 || aktiverRegalFilter !== '';
 
     const resMap = {};
-    packlistenPositionen.forEach(p => {
+    (packlistenPositionen || []).forEach(p => {
         if (!p.artikel_id) return;
         if (!resMap[p.artikel_id]) resMap[p.artikel_id] = { gesamt: 0, listen: {} };
         resMap[p.artikel_id].gesamt += Number(p.menge);
-        const pl = packlisten.find(l => String(l.id) === String(p.packliste_id));
+        const pl = (packlisten || []).find(l => String(l.id) === String(p.packliste_id));
         const plName = pl ? pl.name : 'Unbekannt';
         resMap[p.artikel_id].listen[plName] = (resMap[p.artikel_id].listen[plName] || 0) + Number(p.menge);
     });
 
-    const anzeigeDaten = (zeigeAlleArtikel || isSearching) ? daten : daten.filter(z => z.artikel?.wichtig);
+    const anzeigeDaten = (zeigeAlleArtikel || isSearching) ? daten : (daten || []).filter(z => z.artikel?.wichtig);
 
     const gruppen = {};
-    anzeigeDaten.forEach(z => {
+    (anzeigeDaten || []).forEach(z => {
         if (!z.artikel) return;
         const kat = z.artikel.kategorie || 'Ohne Kategorie';
         if (!gruppen[kat]) gruppen[kat] = [];
@@ -1322,7 +1321,7 @@ function tabelleAktualisieren(daten) {
         });
     });
 
-    const hiddenCount = aktuelleDaten.filter(z => z.artikel && !z.artikel.wichtig).length;
+    const hiddenCount = (aktuelleDaten || []).filter(z => z.artikel && !z.artikel.wichtig).length;
     if (hiddenCount > 0 && !isSearching) {
         const footTr = document.createElement('tr');
         footTr.innerHTML = `
@@ -1349,7 +1348,7 @@ async function speichereMenge(bId) {
     f.style.backgroundColor = '#fff3cd';
 
     const datum = new Date().toISOString();
-    const eintrag = aktuelleDaten.find(b => b.id === bId);
+    const eintrag = (aktuelleDaten || []).find(b => b.id === bId);
     const altesSoll = Number(eintrag?.soll_menge) || 0;
     const altesIst = Number(eintrag?.ist_menge) || 0;
 
@@ -1385,26 +1384,26 @@ window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $
 
 function kistenFilterSucheGeaendert() {
     if (kistenAnsichtFilter === 'log') renderAuditLogListe();
-    else if (kistenAnsichtFilter === 'entnahmen') renderOffeneEntnahmenListe();
+    else if (kistenAnsichtFilter === 'unterwegs_wer') renderKistenUnterwegsKombiniert();
     else renderKistenListe();
 }
 
 function setzeKistenAnsichtFilter(filterName) {
     kistenAnsichtFilter = filterName || 'alle';
-    ['alle', 'ausgeliehen', 'entnahmen', 'log'].forEach(f => {
-        const btn = $(`filter-kisten-${f}`);
+    ['alle', 'unterwegs_wer', 'log'].forEach(f => {
+        const btn = $(`filter-kisten-${f.replace('_', '-')}`);
         if (btn) btn.classList.toggle('active', f === kistenAnsichtFilter);
     });
 
     const kistenTabelle = $('kisten-tabelle-bereich');
-    const entnahmenBereich = $('entnahmen-liste-bereich');
+    const kombiniertBereich = $('kisten-unterwegs-kombiniert-bereich');
     const auditBereich = $('audit-log-bereich');
 
-    if (kistenTabelle) kistenTabelle.style.display = (kistenAnsichtFilter === 'alle' || kistenAnsichtFilter === 'ausgeliehen') ? 'block' : 'none';
-    if (entnahmenBereich) entnahmenBereich.style.display = kistenAnsichtFilter === 'entnahmen' ? 'block' : 'none';
-    if (auditBereich) auditBereich.style.display = kistenAnsichtFilter === 'log' ? 'block' : 'none';
+    if (kistenTabelle) kistenTabelle.style.display = (kistenAnsichtFilter === 'alle') ? 'block' : 'none';
+    if (kombiniertBereich) kombiniertBereich.style.display = (kistenAnsichtFilter === 'unterwegs_wer') ? 'block' : 'none';
+    if (auditBereich) auditBereich.style.display = (kistenAnsichtFilter === 'log') ? 'block' : 'none';
 
-    if (kistenAnsichtFilter === 'entnahmen') renderOffeneEntnahmenListe();
+    if (kistenAnsichtFilter === 'unterwegs_wer') renderKistenUnterwegsKombiniert();
     else if (kistenAnsichtFilter === 'log') renderAuditLogListe();
     else renderKistenListe();
 }
@@ -1418,12 +1417,6 @@ function renderKistenListe() {
     let liste = (alleLagerorte || []).filter(o => {
         if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
             return false;
-        }
-        if (kistenAnsichtFilter === 'ausgeliehen') {
-            const bestand = gibKistenBestand(o.id);
-            const entnahme = ermittleKistenEntnahmeStatus(o.id);
-            const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-            return Boolean(entnahme || fehlt);
         }
         return true;
     });
@@ -1460,12 +1453,15 @@ function renderKistenListe() {
     }).join('');
 }
 
-function renderOffeneEntnahmenListe() {
-    const ziel = $('entnahmen-liste-bereich');
+// Kombinierter Filter: Zeigt Personen-Karten oben UND Kisten-Tabelle unten
+function renderKistenUnterwegsKombiniert() {
+    const ziel = $('kisten-unterwegs-kombiniert-bereich');
     if (!ziel) return;
 
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-    const gefiltert = (offeneEntnahmen || []).filter(e => {
+
+    // 1. Offene Entnahmen filtern
+    const offeneGefiltert = (offeneEntnahmen || []).filter(e => {
         if (!suchText) return true;
         const nameMatch = (e.name || '').toLowerCase().includes(suchText);
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
@@ -1473,48 +1469,109 @@ function renderOffeneEntnahmenListe() {
         return nameMatch || matMatch;
     });
 
-    if (!gefiltert.length) {
-        ziel.innerHTML = `
-            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:25px; border-radius:10px; text-align:center;">
-                <h3 style="color:#1f7a37; margin:0 0 6px 0;">🎉 Alles im Lager vorhanden!</h3>
-                <p style="margin:0; color:#555;">Es sind aktuell keine offenen Entnahmen vermerkt.</p>
+    // 2. Kisten filtern, die unterwegs sind oder Fehlteile haben
+    const kistenGefiltert = (alleLagerorte || []).filter(o => {
+        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
+            return false;
+        }
+        const bestand = gibKistenBestand(o.id);
+        const entnahme = ermittleKistenEntnahmeStatus(o.id);
+        const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
+        return Boolean(entnahme || fehlt);
+    });
+
+    let html = '';
+
+    // TEIL 1: Personen-Fokus
+    html += `<div class="kombiniert-subtitel">👤 Aktive Entleiher &amp; Resortleiter (${offeneGefiltert.length})</div>`;
+    if (!offeneGefiltert.length) {
+        html += `
+            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px; margin-bottom:18px;">
+                <p style="margin:0; color:#1f7a37; font-weight:bold;">🎉 Aktuell keine offenen Personen-Entnahmen vermerkt.</p>
             </div>
         `;
-        return;
+    } else {
+        html += offeneGefiltert.map(ent => {
+            const datum = new Date(ent.created_at).toLocaleString('de-DE');
+            const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+            const itemsHtml = mats.map(m => {
+                if (m.kiste_name) {
+                    return `<li><strong>📦 ${escapeHtml(m.kiste_name)}</strong> (Kiste komplett entnommen)</li>`;
+                }
+                return `<li><strong>${m.menge || 1}x</strong> ${escapeHtml(m.name || m.label || 'Material')}</li>`;
+            }).join('');
+
+            return `
+                <div class="entnahme-card">
+                    <div class="entnahme-card-header">
+                        <div>
+                            <strong style="font-size:1.1em; color:#2c3e50;">👤 ${escapeHtml(ent.name)}</strong>
+                            <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">
+                                📅 Entnommen am: ${datum} ${ent.kontakt ? `&bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
+                            </div>
+                        </div>
+                        <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseEntnahmeKomplett('${ent.id}')">
+                            ✅ Vollständig zurückgebucht
+                        </button>
+                    </div>
+                    <div style="font-size:0.9em; color:#444;">
+                        <ul style="margin:6px 0; padding-left:20px;">
+                            ${itemsHtml}
+                        </ul>
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
-    ziel.innerHTML = gefiltert.map(ent => {
-        const datum = new Date(ent.created_at).toLocaleString('de-DE');
-        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-
-        const itemsHtml = mats.map(m => {
-            if (m.kiste_name) {
-                return `<li><strong>📦 ${escapeHtml(m.kiste_name)}</strong> (Kiste komplett entnommen)</li>`;
-            }
-            return `<li><strong>${m.menge || 1}x</strong> ${escapeHtml(m.name || m.label || 'Material')}</li>`;
-        }).join('');
-
-        return `
-            <div class="entnahme-card">
-                <div class="entnahme-card-header">
-                    <div>
-                        <strong style="font-size:1.15em; color:#2c3e50;">👤 ${escapeHtml(ent.name)}</strong>
-                        <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">
-                            📅 Entnommen am: ${datum} ${ent.kontakt ? `&bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
-                        </div>
-                    </div>
-                    <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseEntnahmeKomplett('${ent.id}')">
-                        ✅ Vollständig zurückgebucht
-                    </button>
-                </div>
-                <div style="font-size:0.9em; color:#444;">
-                    <ul style="margin:6px 0; padding-left:20px;">
-                        ${itemsHtml}
-                    </ul>
-                </div>
+    // TEIL 2: Kisten-Fokus
+    html += `<div class="kombiniert-subtitel" style="margin-top:24px;">📦 Fehlende oder unvollständige Kisten (${kistenGefiltert.length})</div>`;
+    if (!kistenGefiltert.length) {
+        html += `
+            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px;">
+                <p style="margin:0; color:#1f7a37; font-weight:bold;">✔️ Alle Kisten stehen vollständig im Lager.</p>
             </div>
         `;
-    }).join('');
+    } else {
+        html += `
+            <div class="table-responsive">
+                <table>
+                    <thead style="background-color: #2c3e50;">
+                        <tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status / Entleiher</th><th>Aktionen</th></tr>
+                    </thead>
+                    <tbody>
+                        ${kistenGefiltert.map(o => {
+                            const bestand = gibKistenBestand(o.id);
+                            const entnahme = ermittleKistenEntnahmeStatus(o.id);
+                            const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
+
+                            let statusCell = '';
+                            if (entnahme) {
+                                statusCell = `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahme.name)}</span>`;
+                            } else if (fehlt) {
+                                statusCell = `<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>`;
+                            } else {
+                                statusCell = `<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>`;
+                            }
+
+                            return `
+                                <tr>
+                                    <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
+                                    <td>${bestand.length} Artikel</td>
+                                    <td>${statusCell}</td>
+                                    <td>
+                                        <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    ziel.innerHTML = html;
 }
 
 function renderAuditLogListe() {
@@ -1580,7 +1637,7 @@ function renderAuditLogListe() {
 async function schliesseEntnahmeKomplett(entnahmeId) {
     if (!confirm('Soll diese Entnahme als vollständig zurückgebracht verbucht und abgeschlossen werden?')) return;
 
-    const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
+    const ent = (offeneEntnahmen || []).find(e => String(e.id) === String(entnahmeId));
     if (!ent) return;
 
     const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
@@ -1607,7 +1664,6 @@ async function schliesseEntnahmeKomplett(entnahmeId) {
     await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
     showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
     await ladeAlles();
-    renderOffeneEntnahmenListe();
 }
 
 function openNeuOrtModal() { $('neu-ort-name').value = ''; openModalById('neuOrtModal'); }
@@ -1632,7 +1688,7 @@ function openOrteVerwalten(preselectId = null) {
 
 function ortSelectChanged() {
     const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
     if (ort) $('manage-ort-name').value = ort.name;
     const statusEl = $('manage-ort-code-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
     if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein Code hinterlegt (wird beim ersten NFC-Schreiben oder QR-Erstellen automatisch generiert).';
@@ -1661,7 +1717,7 @@ async function entferneNfcVonOrt() {
 
 async function zeigeEinzelKisteQr() {
     const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
     if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
 
     const code = await holeOderErzeugeOrtCode(ort);
@@ -1679,7 +1735,7 @@ async function zeigeEinzelKisteQr() {
 
 function downloadEinzelKistenQr() {
     const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
     const canvas = $('manage-ort-qr-preview')?.querySelector('canvas');
     if (!canvas || !ort) return;
 
@@ -1691,7 +1747,7 @@ function downloadEinzelKistenQr() {
 
 function druckeEinzelKistenQr() {
     const selId = $('manage-ort-select').value;
-    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
+    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
     if (ort) druckeKistenEtiketten([ort]);
 }
 
@@ -1759,7 +1815,7 @@ async function druckeAusgewaehlteKistenEtiketten() {
 
 function druckeKistenEtiketten(liste) {
     const win = window.open('', '_blank');
-    const itemsHtml = liste.map(o => {
+    const itemsHtml = (liste || []).map(o => {
         const code = o.nfc_code || `kiste-${o.id}`;
         const link = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
         return `
@@ -1858,7 +1914,7 @@ async function artikelAnlegen() {
     if (!name) return showToast('Bitte Namen eingeben.', 'warning');
 
     let artId = null;
-    let existierenderArtikel = alleArtikelInfos.find(a => a.name.trim().toLowerCase() === name.toLowerCase());
+    let existierenderArtikel = (alleArtikelInfos || []).find(a => a.name.trim().toLowerCase() === name.toLowerCase());
 
     if (!existierenderArtikel) {
         const { data: dbCheck } = await dbClient.from('artikel').select('*').ilike('name', name);
@@ -1937,8 +1993,8 @@ function addEditOrtRow(data = null) {
 
 async function openEditModal(artikelId) {
     if (!isEditMode) return;
-    const art = alleArtikelInfos.find(a => a.id === artikelId);
-    const bestaende = aktuelleDaten.filter(b => b.artikel_id === artikelId);
+    const art = (alleArtikelInfos || []).find(a => a.id === artikelId);
+    const bestaende = (aktuelleDaten || []).filter(b => b.artikel_id === artikelId);
 
     $('edit-artikel-id').value = artikelId;
     $('edit-name').value = art.name;
@@ -1962,7 +2018,7 @@ async function speichereBearbeitung() {
 
     await dbClient.from('artikel').update({ name, kategorie: kat, einheit, typ, wichtig }).eq('id', aid);
 
-    const alteBestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(aid));
+    const alteBestaende = (aktuelleDaten || []).filter(b => String(b.artikel_id) === String(aid));
     await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
     const inserts = Array.from(document.querySelectorAll('#edit-orte-wrapper .edit-ort-row')).map(row => {
@@ -2004,7 +2060,7 @@ async function artikelLoeschen() {
 
 function openKommentarModal(artikelId, event) {
     if (event) event.stopPropagation();
-    const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
+    const art = (alleArtikelInfos || []).find(a => String(a.id) === String(artikelId));
     if (!art) return;
     $('kommentar-artikel-id').value = artikelId;
     $('kommentar-artikel-name').innerText = art.name;
@@ -2041,7 +2097,7 @@ function zeigePackliste() {
     if (!currentId) { details.style.display = 'none'; return; }
     details.style.display = 'block';
 
-    const positionen = packlistenPositionen.filter(p => String(p.packliste_id) === String(currentId));
+    const positionen = (packlistenPositionen || []).filter(p => String(p.packliste_id) === String(currentId));
     if (!positionen.length) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Positionen in dieser Packliste.</td></tr>';
         return;
@@ -2053,7 +2109,7 @@ function zeigePackliste() {
         let status = '<span class="event-ok">✅ OK</span>';
 
         if (pos.artikel_id) {
-            const bestandArtikel = aktuelleDaten.filter(b => b.artikel_id === pos.artikel_id);
+            const bestandArtikel = (aktuelleDaten || []).filter(b => b.artikel_id === pos.artikel_id);
             verfuegbar = bestandArtikel.reduce((sum, b) => sum + (Number(b.ist_menge) >= 0 ? Number(b.ist_menge) : 0), 0);
             if (verfuegbar < pos.menge) status = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
         }
@@ -2105,7 +2161,7 @@ function openPackItemModal(posId = null) {
     const btnEl = $('pack-modal-save-btn');
 
     if (posId) {
-        const pos = packlistenPositionen.find(p => p.id === posId);
+        const pos = (packlistenPositionen || []).find(p => p.id === posId);
         if (!pos) return;
         if (idInp) idInp.value = pos.id;
         if (titleEl) titleEl.innerText = 'Position bearbeiten';
@@ -2152,7 +2208,7 @@ async function packPositionSpeichern() {
 
     if (typ === 'lager') {
         const artName = $('pack-artikel-input').value.trim();
-        const art = alleArtikelInfos.find(a => a.name.toLowerCase() === artName.toLowerCase());
+        const art = (alleArtikelInfos || []).find(a => a.name.toLowerCase() === artName.toLowerCase());
         if (!art) return showToast('Artikel nicht im Lager gefunden.', 'warning');
         artikelId = art.id;
     } else {
@@ -2199,7 +2255,7 @@ async function neuePacklisteAnlegen() {
 }
 async function umbenennePackliste() {
     const id = $('packlisten-auswahl').value;
-    const cur = packlisten.find(p => String(p.id) === String(id));
+    const cur = (packlisten || []).find(p => String(p.id) === String(id));
     const n = prompt('Neuer Name:', cur?.name);
     if (n?.trim() && n !== cur.name) {
         await dbClient.from('packlisten').update({ name: n.trim() }).eq('id', id);
@@ -2218,13 +2274,13 @@ async function loeschePackliste() {
 function druckePackliste() {
     const listId = $('packlisten-auswahl').value;
     if (!listId) return;
-    const pl = packlisten.find(p => String(p.id) === String(listId));
-    const pos = packlistenPositionen.filter(p => String(p.packliste_id) === String(listId));
+    const pl = (packlisten || []).find(p => String(p.id) === String(listId));
+    const pos = (packlistenPositionen || []).filter(p => String(p.packliste_id) === String(listId));
 
     const win = window.open('', '_blank');
     const rowsHtml = pos.map(p => {
         const art = p.artikel?.name || p.eigener_name;
-        const ort = p.artikel_id ? (aktuelleDaten.filter(b => b.artikel_id === p.artikel_id).map(b => b.lagerorte?.name).join(', ') || '-') : 'Sonderposten';
+        const ort = p.artikel_id ? ((aktuelleDaten || []).filter(b => b.artikel_id === p.artikel_id).map(b => b.lagerorte?.name).join(', ') || '-') : 'Sonderposten';
         return `<tr><td style="width:30px; text-align:center;"><input type="checkbox"></td><td><strong>${escapeHtml(art)}</strong></td><td>${p.menge}</td><td>${escapeHtml(ort)}</td></tr>`;
     }).join('');
 
@@ -2245,18 +2301,18 @@ function startEinkaufsliste() {
     manuelleEintraegeListe = [];
     const bestandMap = {}, nachkaufSet = new Set(), bedarfMap = {}, eigeneMap = {};
 
-    aktuelleDaten.forEach(b => {
+    (aktuelleDaten || []).forEach(b => {
         const m = Number(b.menge);
         if (m === BESTAND_STRICH_NACHKAUF) nachkaufSet.add(String(b.artikel_id));
         else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + (b.ist_menge >= 0 ? b.ist_menge : m);
     });
 
-    packlistenPositionen.forEach(p => {
+    (packlistenPositionen || []).forEach(p => {
         if (p.artikel_id) bedarfMap[p.artikel_id] = (bedarfMap[p.artikel_id] || 0) + Number(p.menge);
         else if (p.eigener_name) eigeneMap[p.eigener_name] = (eigeneMap[p.eigener_name] || 0) + Number(p.menge);
     });
 
-    alleArtikelInfos.forEach(art => {
+    (alleArtikelInfos || []).forEach(art => {
         const bestand = nachkaufSet.has(String(art.id)) ? 0 : (bestandMap[art.id] || 0);
         const bedarf = bedarfMap[art.id] || 0;
         if (nachkaufSet.has(String(art.id))) {
@@ -2407,9 +2463,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         pruefeUndZeigeOnboarding();
 
         const kistenCode = urlParams.get('kistencheck');
-        const rueckgabeId = urlParams.get('rueckgabe');
         if (kistenCode) verarbeiteUniversalScan('kistencheck=' + kistenCode);
-        else if (rueckgabeId) verarbeiteUniversalScan('rueckgabe=' + rueckgabeId);
     } else {
         $('login-overlay').style.display = 'flex';
     }
