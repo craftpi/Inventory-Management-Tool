@@ -28,7 +28,7 @@ let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 
 // App-Datenzustände
 let aktuelleDaten = [], packlisten = [], packlistenPositionen = [], alleArtikelInfos = [], alleLagerorte = [];
-let alleBenutzerVorlagen = [], offeneEntnahmen = [];
+let alleBenutzerVorlagen = [], offeneEntnahmen = [], auditLogs = [];
 let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
 let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
 let aktiverRegalFilter = '';
@@ -407,7 +407,7 @@ async function ladeAlles() {
     bereinigeAlteLogs();
     wendeFilterAn();
     if (aktuellerModus === 'event') zeigePackliste();
-    if (aktuellerModus === 'kisten') renderKistenListe();
+    if (aktuellerModus === 'kisten') setzeKistenAnsichtFilter(kistenAnsichtFilter);
 }
 
 async function ladeLagerorte() {
@@ -467,6 +467,9 @@ async function ladeEntnahmeDaten() {
 
         const { data: eData } = await dbClient.from('lager_entnahmen').select('*').order('created_at', { ascending: false });
         offeneEntnahmen = eData || [];
+
+        const { data: aData } = await dbClient.from('lager_entnahme_audit').select('*').order('created_at', { ascending: false }).limit(100);
+        auditLogs = aData || [];
     } catch (err) {
         console.warn('Fehler beim Laden der Entnahmedaten:', err);
     }
@@ -502,7 +505,7 @@ function aktualisiereFilterDropdown(daten) {
 }
 
 // =========================================================================
-// 5. DAS VEREINHEITLICHTE KISTEN- & ENTNAHME-SYSTEM
+// 5. KISTEN- & ENTNAHME-SYSTEM
 // =========================================================================
 
 function gibKistenBestand(lid) {
@@ -618,7 +621,7 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 }
 
 // -------------------------------------------------------------------------
-// Entnahme mit Personenerfassung (Punkt 3 & 5)
+// Entnahme mit Personenerfassung
 // -------------------------------------------------------------------------
 function frageKisteAusbuchen() {
     if (!kistenCheckAktuelleId) return;
@@ -675,7 +678,6 @@ async function bestaetigeEntnahme() {
         const kId = ausbuchenPendingAktion.kisteId;
         const bestand = gibKistenBestand(kId);
 
-        // 1. Zählbare Bestände auf 0 buchen
         const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
             return dbClient.from('bestand').update({
                 menge: 0,
@@ -685,7 +687,6 @@ async function bestaetigeEntnahme() {
         });
         await Promise.all(updates);
 
-        // 2. In lager_entnahmen & Audit eintragen
         const entnahmePayload = {
             name,
             kontakt,
@@ -735,7 +736,6 @@ async function ganzeKisteZurueckbuchen() {
     });
     await Promise.all(updates);
 
-    // Offene Entnahme für diese Kiste schließen & im Audit protokollieren
     const offene = offeneEntnahmen.filter(e => {
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
         return mats.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId));
@@ -1556,30 +1556,33 @@ window.handleMouseEnter = (e) => {
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
 
 // =========================================================================
-// 9. KISTEN-ANSICHT, OFFENE ENTNAHMEN & QR-DRUCK
+// 9. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & QR-DRUCK
 // =========================================================================
+
+function kistenFilterSucheGeaendert() {
+    if (kistenAnsichtFilter === 'log') renderAuditLogListe();
+    else if (kistenAnsichtFilter === 'entnahmen') renderOffeneEntnahmenListe();
+    else renderKistenListe();
+}
 
 function setzeKistenAnsichtFilter(filterName) {
     kistenAnsichtFilter = filterName;
-    ['alle', 'ausgeliehen', 'entnahmen'].forEach(f => {
+    ['alle', 'ausgeliehen', 'entnahmen', 'log'].forEach(f => {
         const btn = $(`filter-kisten-${f}`);
         if (btn) btn.classList.toggle('active', f === filterName);
     });
 
     const kistenTabelle = $('kisten-tabelle-bereich');
     const entnahmenBereich = $('entnahmen-liste-bereich');
+    const auditBereich = $('audit-log-bereich');
 
-    if (filterName === 'entnahmen') {
-        if (kistenTabelle) kistenTabelle.style.display = 'none';
-        if (entnahmenBereich) {
-            entnahmenBereich.style.display = 'block';
-            renderOffeneEntnahmenListe();
-        }
-    } else {
-        if (kistenTabelle) kistenTabelle.style.display = 'block';
-        if (entnahmenBereich) entnahmenBereich.style.display = 'none';
-        renderKistenListe();
-    }
+    if (kistenTabelle) kistenTabelle.style.display = (filterName === 'alle' || filterName === 'ausgeliehen') ? 'block' : 'none';
+    if (entnahmenBereich) entnahmenBereich.style.display = filterName === 'entnahmen' ? 'block' : 'none';
+    if (auditBereich) auditBereich.style.display = filterName === 'log' ? 'block' : 'none';
+
+    if (filterName === 'entnahmen') renderOffeneEntnahmenListe();
+    else if (filterName === 'log') renderAuditLogListe();
+    else renderKistenListe();
 }
 
 function renderKistenListe() {
@@ -1637,7 +1640,16 @@ function renderOffeneEntnahmenListe() {
     const ziel = $('entnahmen-liste-bereich');
     if (!ziel) return;
 
-    if (!offeneEntnahmen.length) {
+    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
+    const gefiltert = offeneEntnahmen.filter(e => {
+        if (!suchText) return true;
+        const nameMatch = (e.name || '').toLowerCase().includes(suchText);
+        const mats = Array.isArray(e.materialien) ? e.materialien : [];
+        const matMatch = mats.some(m => (m.kiste_name || m.name || m.label || '').toLowerCase().includes(suchText));
+        return nameMatch || matMatch;
+    });
+
+    if (!gefiltert.length) {
         ziel.innerHTML = `
             <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:25px; border-radius:10px; text-align:center;">
                 <h3 style="color:#1f7a37; margin:0 0 6px 0;">🎉 Alles im Lager vorhanden!</h3>
@@ -1647,7 +1659,7 @@ function renderOffeneEntnahmenListe() {
         return;
     }
 
-    ziel.innerHTML = offeneEntnahmen.map(ent => {
+    ziel.innerHTML = gefiltert.map(ent => {
         const datum = new Date(ent.created_at).toLocaleString('de-DE');
         const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
 
@@ -1681,13 +1693,72 @@ function renderOffeneEntnahmenListe() {
     }).join('');
 }
 
+function renderAuditLogListe() {
+    const ziel = $('audit-log-bereich');
+    if (!ziel) return;
+
+    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
+    const gefiltert = auditLogs.filter(a => {
+        if (!suchText) return true;
+        const nameMatch = (a.name || '').toLowerCase().includes(suchText);
+        const mats = Array.isArray(a.materialien) ? a.materialien : [];
+        const matMatch = mats.some(m => (m.kiste_name || m.name || m.label || '').toLowerCase().includes(suchText));
+        return nameMatch || matMatch;
+    });
+
+    if (!gefiltert.length) {
+        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:25px;">Keine Log-Einträge gefunden.</p>';
+        return;
+    }
+
+    ziel.innerHTML = `
+        <div class="table-responsive">
+            <table>
+                <thead style="background-color: #2c3e50;">
+                    <tr>
+                        <th style="width:160px;">Datum &amp; Uhrzeit</th>
+                        <th style="width:130px;">Aktion</th>
+                        <th style="width:180px;">Person</th>
+                        <th>Details / Kisten / Material</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${gefiltert.map(log => {
+                        const datum = new Date(log.created_at).toLocaleString('de-DE');
+                        const mats = Array.isArray(log.materialien) ? log.materialien : [];
+                        const typ = log.ereignis || 'entnahme';
+                        
+                        let badgeHtml = '';
+                        if (typ === 'rueckgabe') badgeHtml = '<span class="audit-badge rueckgabe">📥 Rückgabe</span>';
+                        else if (typ === 'teilrueckgabe') badgeHtml = '<span class="audit-badge teilrueckgabe">🔄 Teilrückgabe</span>';
+                        else badgeHtml = '<span class="audit-badge entnahme">📤 Entnahme</span>';
+
+                        const detailsText = mats.map(m => {
+                            if (m.kiste_name) return `📦 ${escapeHtml(m.kiste_name)}`;
+                            return `${m.menge || 1}x ${escapeHtml(m.name || m.label || 'Material')}`;
+                        }).join(', ') || '–';
+
+                        return `
+                            <tr>
+                                <td><small>${datum}</small></td>
+                                <td>${badgeHtml}</td>
+                                <td><strong>👤 ${escapeHtml(log.name || 'Unbekannt')}</strong></td>
+                                <td>${detailsText}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
 async function schliesseEntnahmeKomplett(entnahmeId) {
     if (!confirm('Soll diese Entnahme als vollständig zurückgebracht verbucht und abgeschlossen werden?')) return;
 
     const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
     if (!ent) return;
 
-    // Kisten-Inhalte wieder vollsetzen falls Kiste geliehen war
     const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
     for (const m of mats) {
         if (m.kiste_id) {
@@ -2125,7 +2196,7 @@ async function speichereKommentar() {
 }
 
 // =========================================================================
-// 11. EVENT-MODUS & PACKLISTEN (PUNKT 1 & 2)
+// 11. EVENT-MODUS & PACKLISTEN
 // =========================================================================
 function wechsleModus(modus) {
     aktuellerModus = modus;

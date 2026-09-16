@@ -35,7 +35,6 @@
 
         .action-bar { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
         
-        /* 2 feste Spalten für die Haupt-Bedienelemente */
         .lager-controls-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -52,7 +51,6 @@
             margin: 0;
         }
 
-        /* Bearbeiten-Leiste darunter mit flexiblem Zeilenumbruch */
         .lager-edit-bar {
             display: flex;
             flex-wrap: wrap;
@@ -196,11 +194,16 @@
         .kiste-item-card.fehlend { border-color: #fca5a5; background: #fef2f2; }
 
         .kisten-filter-pill-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-        .btn-kisten-filter { flex: 1; min-width: 140px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
+        .btn-kisten-filter { flex: 1; min-width: 130px; background: #95a5a6; color: white; padding: 8px 12px; font-size: 0.88em; min-height: 38px; }
         .btn-kisten-filter.active { background: #e3000f; }
 
         .entnahme-card { border: 1px solid #d9e3ec; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
         .entnahme-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 1px solid #edf2f7; padding-bottom: 8px; }
+
+        .audit-badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.78em; font-weight: bold; }
+        .audit-badge.entnahme { background: #fee2e2; color: #b91c1c; }
+        .audit-badge.rueckgabe { background: #dcfce7; color: #15803d; }
+        .audit-badge.teilrueckgabe { background: #fef3c7; color: #b45309; }
 
         @media (max-width: 600px) {
             body { padding: 8px 4px; }
@@ -432,12 +435,13 @@
             Kisten und deren Inhalte im Überblick. Erfasse Entnahmen an Resortleiter oder prüfe Rückgaben.
         </p>
         <div class="action-bar">
-            <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste, Code oder Entleiher suchen..." onkeyup="renderKistenListe()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
+            <input type="text" id="kisten-such-filter" placeholder="🔍 Kiste, Code oder Entleiher suchen..." onkeyup="kistenFilterSucheGeaendert()" style="width: 100%; padding: 12px; border: 2px solid #3498db; border-radius: 8px; font-size: 1.1em; box-sizing: border-box; background-color: #fdfefe;">
             
             <div class="kisten-filter-pill-bar">
                 <button class="btn btn-kisten-filter active" id="filter-kisten-alle" onclick="setzeKistenAnsichtFilter('alle')">📦 Alle Kisten</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-ausgeliehen" onclick="setzeKistenAnsichtFilter('ausgeliehen')">📤 Unterwegs</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-entnahmen" onclick="setzeKistenAnsichtFilter('entnahmen')">📋 Wer hat was? (Offen)</button>
+                <button class="btn btn-kisten-filter" id="filter-kisten-log" onclick="setzeKistenAnsichtFilter('log')">📜 Log / Verlauf</button>
                 <button class="btn" style="background-color: #27ae60; width:auto; min-height:38px; padding:8px 12px;" onclick="openOrteVerwalten()">⚙️ Kisten &amp; QR verwalten</button>
             </div>
         </div>
@@ -452,6 +456,7 @@
         </div>
 
         <div id="entnahmen-liste-bereich" style="display:none;"></div>
+        <div id="audit-log-bereich" style="display:none;"></div>
     </div>
 
     <div id="ansicht-event" style="display: none;">
