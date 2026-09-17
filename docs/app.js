@@ -32,13 +32,14 @@ let aktiverRegalFilter = '', kistenAnsichtFilter = 'alle';
 let kistenEtikettenAuswahlIds = new Set();
 let einkaufslisteArray = [], autoFehlbestandListe = [], eigeneVorschlaegeListe = [], manuelleEintraegeListe = [];
 
-// Kisten-, Scan- & Ausklapp-Zustände
+// Kisten-, Scan-, Such- & Ausklapp-Zustände
 let kistenCheckAktuelleId = '';
 let aktiverQrScanner = null, aktiverNfcModus = null, nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
 let aktiverKistenBenutzer = null, unterwegsRefreshInterval = null;
 let aktiverTeilrueckgabeUserKey = null, aktiverTeilrueckgabeItems = [];
 let kisteUnendlichOffen = false, kistenNurUnendlichOffen = false;
+let kistenArtikelSucheAuswahlId = null;
 
 // Klick-Batching & Mutex
 const pendingArtikelUpdates = new Map();
@@ -787,7 +788,6 @@ function erzeugeKistenItemCard(z, isHelper) {
 
     let bedienHtml = '';
     if (istUnendlich) {
-        // Unendliche Artikel brauchen weder Mengen- noch Nachkauf-Buttons
         bedienHtml = '';
     } else if (istVerbrauch) {
         bedienHtml = `
@@ -830,10 +830,8 @@ function renderKistenInhaltListe(lid) {
     const endliche = bestand.filter(z => Number(z.ist_menge) !== -1);
     const unendliche = bestand.filter(z => Number(z.ist_menge) === -1);
 
-    // 1. Zählbare / reguläre Artikel anzeigen
     endliche.forEach(z => wrapper.appendChild(erzeugeKistenItemCard(z, isHelper)));
 
-    // 2. Unendliche Artikel ein-/ausklappbar machen
     if (unendliche.length > 0) {
         const toggleWrap = document.createElement('div');
         toggleWrap.style = 'margin: 10px 0;';
@@ -894,7 +892,6 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     const currentDelta = (pendingArtikelUpdates.get(bestandId)?.delta || 0) + (newTarget - currentVal);
     eintrag.ist_menge = newTarget;
 
-    // 1. Sofortige UI-Aktualisierung
     if (inputEl) { inputEl.value = newTarget; aktualisiereMengeEingabeFarbe(inputEl); }
     const card = $(`kiste-item-card-${bestandId}`);
     if (card) {
@@ -911,7 +908,6 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     }
     if (navigator.vibrate) navigator.vibrate(30);
 
-    // 2. Debounce Timer (500ms)
     if (pendingArtikelUpdates.has(bestandId)) clearTimeout(pendingArtikelUpdates.get(bestandId).timer);
     const timer = setTimeout(() => flushPendingArtikelUpdate(bestandId), 500);
 
@@ -1545,24 +1541,28 @@ window.handleMouseEnter = (e) => {
 window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $('hover-res-info').style.display = 'none'; };
 
 // =========================================================================
-// 8. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & AUTO-REFRESH
+// 8. KISTEN-ANSICHT, OFFENE ENTNAHMEN, ARTIKELSUCHE & AUDIT-LOG
 // =========================================================================
 function kistenFilterSucheGeaendert() {
     if (kistenAnsichtFilter === 'log') renderAuditLogListe();
     else if (kistenAnsichtFilter === 'unterwegs_wer') renderKistenUnterwegsKombiniert();
+    else if (kistenAnsichtFilter === 'artikelsuche') renderKistenArtikelSuche();
     else renderKistenListe();
 }
 
 function setzeKistenAnsichtFilter(filterName) {
     kistenAnsichtFilter = filterName || 'alle';
-    ['alle', 'unterwegs_wer', 'log'].forEach(f => $(`filter-kisten-${f.replace('_', '-')}`)?.classList.toggle('active', f === kistenAnsichtFilter));
+    ['alle', 'artikelsuche', 'unterwegs_wer', 'log'].forEach(f => $(`filter-kisten-${f.replace('_', '-')}`)?.classList.toggle('active', f === kistenAnsichtFilter));
 
     if ($('kisten-tabelle-bereich')) $('kisten-tabelle-bereich').style.display = (kistenAnsichtFilter === 'alle') ? 'block' : 'none';
+    if ($('kisten-artikelsuche-bereich')) $('kisten-artikelsuche-bereich').style.display = (kistenAnsichtFilter === 'artikelsuche') ? 'block' : 'none';
     if ($('kisten-unterwegs-kombiniert-bereich')) $('kisten-unterwegs-kombiniert-bereich').style.display = (kistenAnsichtFilter === 'unterwegs_wer') ? 'block' : 'none';
     if ($('audit-log-bereich')) $('audit-log-bereich').style.display = (kistenAnsichtFilter === 'log') ? 'block' : 'none';
 
     if (kistenAnsichtFilter === 'unterwegs_wer') { renderKistenUnterwegsKombiniert(); starteUnterwegsAutoRefresh(); }
-    else { stoppeUnterwegsAutoRefresh(); if (kistenAnsichtFilter === 'log') renderAuditLogListe(); else renderKistenListe(); }
+    else if (kistenAnsichtFilter === 'artikelsuche') { stoppeUnterwegsAutoRefresh(); renderKistenArtikelSuche(); }
+    else if (kistenAnsichtFilter === 'log') { stoppeUnterwegsAutoRefresh(); renderAuditLogListe(); }
+    else { stoppeUnterwegsAutoRefresh(); renderKistenListe(); }
 }
 
 function starteUnterwegsAutoRefresh() {
@@ -1617,7 +1617,6 @@ function renderKistenListe() {
 
     let html = standardKisten.map(i => renderRow(i.o, i.bestand)).join('');
 
-    // Kisten mit ausschließlich unendlichen Artikeln einklappbar machen
     if (nurUnendlicheKisten.length > 0) {
         const isOffen = kistenNurUnendlichOffen || Boolean(suchText);
         html += `
@@ -1629,9 +1628,7 @@ function renderKistenListe() {
                     </div>
                 </td>
             </tr>`;
-        if (isOffen) {
-            html += nurUnendlicheKisten.map(i => renderRow(i.o, i.bestand)).join('');
-        }
+        if (isOffen) html += nurUnendlicheKisten.map(i => renderRow(i.o, i.bestand)).join('');
     }
 
     ziel.innerHTML = html;
@@ -1642,9 +1639,260 @@ function toggleKistenNurUnendlich() {
     renderKistenListe();
 }
 
+// -------------------------------------------------------------------------
+// ARTIKELSUCHE IM REITER KISTEN & VERLEIH
+// -------------------------------------------------------------------------
+function waehleArtikelFuerKistenSuche(artId) {
+    kistenArtikelSucheAuswahlId = Number(artId);
+    renderKistenArtikelSuche();
+}
+
+function renderKistenArtikelSuche() {
+    const ziel = $('kisten-artikelsuche-bereich');
+    if (!ziel) return;
+
+    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
+    let treffer = alleArtikelInfos;
+    if (suchText) {
+        treffer = alleArtikelInfos.filter(a => (a.name || '').toLowerCase().includes(suchText) || (a.kategorie || '').toLowerCase().includes(suchText));
+    }
+
+    // Wenn aktuell ausgewählter Artikel nicht in Treffern und Suche aktiv ist
+    let ausgewaehlterArtikel = null;
+    if (kistenArtikelSucheAuswahlId) {
+        ausgewaehlterArtikel = alleArtikelInfos.find(a => a.id === kistenArtikelSucheAuswahlId);
+    } else if (treffer.length === 1) {
+        ausgewaehlterArtikel = treffer[0];
+        kistenArtikelSucheAuswahlId = ausgewaehlterArtikel.id;
+    }
+
+    let html = `
+        <div style="background:#f8fafc; border:1px solid #d9e3ec; border-radius:10px; padding:14px; margin-bottom:16px;">
+            <div style="font-weight:bold; color:#2c3e50; margin-bottom:8px; font-size:1em;">
+                🔎 Wähle einen Artikel aus (Ergebnisse: ${treffer.length}${suchText ? ` für "${escapeHtml(suchText)}"` : ''}):
+            </div>
+            <div style="max-height: 160px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 6px;">
+                ${treffer.slice(0, 40).map(a => {
+                    const istGewaehlt = ausgewaehlterArtikel && ausgewaehlterArtikel.id === a.id;
+                    return `
+                        <button type="button" class="btn" style="background:${istGewaehlt ? '#e3000f' : '#fff'}; color:${istGewaehlt ? '#fff' : '#2c3e50'}; border:1px solid ${istGewaehlt ? '#c40010' : '#cbd5e1'}; padding:6px 12px; font-size:0.88em; width:auto; min-height:34px; box-shadow:none;" onclick="waehleArtikelFuerKistenSuche(${a.id})">
+                            ${escapeHtml(a.name)}
+                        </button>
+                    `;
+                }).join('') || '<span style="color:#7f8c8d; padding:4px;">Keine passenden Artikel gefunden.</span>'}
+            </div>
+        </div>
+    `;
+
+    if (!ausgewaehlterArtikel) {
+        html += `
+            <div style="text-align:center; padding:30px 15px; color:#64748b; background:#fff; border:1px dashed #cbd5e1; border-radius:10px;">
+                👆 Klicke oben auf einen Artikel oder tippe einen Namen in das Suchfeld ein, um seinen Kisten-Standort und Ausleih-Status zu sehen.
+            </div>
+        `;
+        ziel.innerHTML = html;
+        return;
+    }
+
+    const artId = ausgewaehlterArtikel.id;
+    const bestaende = aktuelleDaten.filter(b => b.artikel_id === artId);
+    const einheit = ausgewaehlterArtikel.einheit || 'Stück';
+
+    // 1. Kisten / Lagerorte
+    let orteHtml = '';
+    if (!bestaende.length) {
+        orteHtml = '<p style="color:#7f8c8d; margin:6px 0;">Dieser Artikel ist derzeit keinem Lagerort bzw. keiner Kiste zugeordnet.</p>';
+    } else {
+        orteHtml = `
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+                ${bestaende.map(b => {
+                    const ist = Number(b.ist_menge), soll = Number(b.soll_menge);
+                    const istUnendlich = (ist === -1);
+                    let qtyStr = istUnendlich ? '∞ (Unbegrenzt)' : `${ist} von max. ${soll} ${einheit} im Lager`;
+                    const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
+                    return `
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; gap:8px;">
+                            <div>
+                                <strong style="font-size:1.02em; color:#2c3e50;">📦 ${escapeHtml(b.lagerorte?.name || 'Kiste')}</strong>
+                                <div style="font-size:0.85em; color:#555; margin-top:2px;">
+                                    ${qtyStr} ${fehlt > 0 ? `&bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen</span>` : ''}
+                                </div>
+                            </div>
+                            <button class="btn" style="background:#16a085; padding:6px 12px; font-size:0.85em; width:auto; min-height:34px;" onclick="oeffneKistenCheck(${b.lagerort_id})">
+                                📦 Kiste öffnen
+                            </button>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    }
+
+    // 2. Offene Entnahmen für diesen Artikel
+    const offeneFuerArtikel = [];
+    offeneEntnahmen.forEach(ent => {
+        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+        mats.forEach(m => {
+            if (Array.isArray(m.artikel)) {
+                m.artikel.forEach(a => {
+                    if (matchesArtikel(a, { artikelId: artId, name: ausgewaehlterArtikel.name })) {
+                        offeneFuerArtikel.push({
+                            entnahmeId: ent.id,
+                            name: ent.name,
+                            kontakt: ent.kontakt,
+                            datum: new Date(ent.created_at),
+                            kisteId: m.kiste_id,
+                            kisteName: m.kiste_name || 'Kiste',
+                            bestandId: a.bestand_id,
+                            menge: Number(a.menge) || 1
+                        });
+                    }
+                });
+            } else if (m.ganze_kiste && m.kiste_id) {
+                // Prüfe, ob dieser Artikel in dieser ganzen Kiste liegt
+                const inBox = (gibKistenBestand(m.kiste_id) || []).some(b => b.artikel_id === artId);
+                if (inBox) {
+                    offeneFuerArtikel.push({
+                        entnahmeId: ent.id,
+                        name: ent.name,
+                        kontakt: ent.kontakt,
+                        datum: new Date(ent.created_at),
+                        kisteId: m.kiste_id,
+                        kisteName: m.kiste_name || 'Kiste',
+                        bestandId: null,
+                        menge: 1,
+                        isGanzeKiste: true
+                    });
+                }
+            }
+        });
+    });
+
+    let ausleiheHtml = '';
+    if (!offeneFuerArtikel.length) {
+        ausleiheHtml = `
+            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:12px 14px; border-radius:8px; margin-top:8px;">
+                <span style="color:#1f7a37; font-weight:bold;">✔️ Aktuell nicht ausgeliehen</span>
+                <span style="font-size:0.88em; color:#555; margin-left:6px;">(Alle Kistenbestände sind vollzählig im Lager).</span>
+            </div>
+        `;
+    } else {
+        ausleiheHtml = `
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+                ${offeneFuerArtikel.map(item => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#fff1f0; border:1px solid #fca5a5; border-radius:8px; gap:8px; flex-wrap:wrap;">
+                        <div>
+                            <strong style="color:#991b1b; font-size:1.02em;">👤 ${escapeHtml(item.name)}</strong>
+                            <span style="font-weight:bold; color:#111; margin-left:6px;">hat ${item.menge}x ${escapeHtml(ausgewaehlterArtikel.name)}</span>
+                            <div style="font-size:0.82em; color:#666; margin-top:2px;">
+                                aus 📦 ${escapeHtml(item.kisteName)} &bull; 📅 Entnommen: ${item.datum.toLocaleString('de-DE')} ${item.kontakt ? `&bull; 📞 ${escapeHtml(item.kontakt)}` : ''}
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-save" style="background:#27ae60; padding:6px 14px; font-size:0.85em; width:auto; min-height:36px;" onclick="artikelAusSucheZurueckbuchen('${item.entnahmeId}', ${item.kisteId || 'null'}, ${item.bestandId || 'null'}, ${artId}, '${escapeHtml(ausgewaehlterArtikel.name).replace(/'/g, "\\'")}', ${item.menge})">
+                            📥 Jetzt zurückbuchen (${item.menge}x)
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    html += `
+        <div style="background:#fff; border:1px solid #cbd5e1; border-radius:10px; padding:18px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:1px solid #e2e8f0; padding-bottom:12px; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+                <div>
+                    <h2 style="margin:0; color:#2c3e50; font-size:1.35em;">📦 ${escapeHtml(ausgewaehlterArtikel.name)}</h2>
+                    <div style="font-size:0.85em; color:#64748b; margin-top:3px;">
+                        Kategorie: <strong>${escapeHtml(ausgewaehlterArtikel.kategorie || 'Ohne Kategorie')}</strong> &bull; Einheit: <strong>${escapeHtml(einheit)}</strong> &bull; Typ: <strong>${escapeHtml(ausgewaehlterArtikel.typ || 'zaehlbar')}</strong>
+                    </div>
+                </div>
+                <span class="summen-badge" style="background:#34495e;">ID: ${formatArtikelId(ausgewaehlterArtikel.id)}</span>
+            </div>
+
+            <div style="margin-bottom:18px;">
+                <strong style="color:#2c3e50; font-size:1.05em;">📍 Zugeordnete Kisten &amp; Lagerorte:</strong>
+                ${orteHtml}
+            </div>
+
+            <div>
+                <strong style="color:#2c3e50; font-size:1.05em;">📤 Ausleih- &amp; Unterwegs-Status:</strong>
+                ${ausleiheHtml}
+            </div>
+        </div>
+    `;
+
+    ziel.innerHTML = html;
+}
+
+async function artikelAusSucheZurueckbuchen(entnahmeId, kisteId, bestandId, artikelId, artikelName, menge) {
+    if (kisteAktionInArbeit) return;
+    if (!confirm(`Soll ${menge}x "${artikelName}" wieder zurück in das Lager gebucht werden?`)) return;
+
+    kisteAktionInArbeit = true;
+    try {
+        // 1. Bestand in der Kiste erhöhen
+        let b = null;
+        if (bestandId) b = aktuelleDaten.find(x => x.id === Number(bestandId));
+        else if (kisteId && artikelId) b = aktuelleDaten.find(x => x.artikel_id === Number(artikelId) && Number(x.lagerort_id) === Number(kisteId));
+
+        if (b && Number(b.menge) >= 0) {
+            const aktuell = Number(b.ist_menge) >= 0 ? Number(b.ist_menge) : 0;
+            const soll = Number(b.soll_menge) || 0;
+            const neu = soll > 0 ? Math.min(soll, aktuell + menge) : aktuell + menge;
+            await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
+        }
+
+        // 2. Aus Entnahme abbuchen
+        const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
+        if (ent) {
+            let verbleibend = menge;
+            (ent.materialien || []).forEach(m => {
+                if (verbleibend <= 0 || (kisteId && Number(m.kiste_id) !== Number(kisteId))) return;
+                if (Array.isArray(m.artikel)) {
+                    m.artikel.forEach(a => {
+                        if (verbleibend <= 0) return;
+                        if (matchesArtikel(a, { bestandId, artikelId, name: artikelName })) {
+                            const abzug = Math.min(verbleibend, a.menge);
+                            a.menge -= abzug;
+                            verbleibend -= abzug;
+                        }
+                    });
+                    m.artikel = m.artikel.filter(a => a.menge > 0);
+                } else if (m.ganze_kiste) {
+                    m.ganze_kiste = false;
+                }
+            });
+            await syncEntnahme(ent.id, ent.materialien);
+
+            dbAudit({
+                name: ent.name,
+                kontakt: ent.kontakt,
+                benutzer_vorlage_id: ent.benutzer_vorlage_id,
+                materialien: [{
+                    kiste_id: kisteId || null,
+                    kiste_name: b?.lagerorte?.name || 'Kiste',
+                    artikel: [{ bestand_id: bestandId, artikel_id: artikelId, name: artikelName, menge }]
+                }]
+            }, 'teilrueckgabe');
+        }
+
+        showToast(`✅ ${menge}x "${artikelName}" zurückgebucht!`);
+        await ladeAlles();
+        renderKistenArtikelSuche();
+    } catch (err) {
+        showToast('Fehler beim Zurückbuchen: ' + (err.message || err), 'error');
+    } finally {
+        kisteAktionInArbeit = false;
+    }
+}
+
+// -------------------------------------------------------------------------
+// UNTERWEGS: ZUSAMMENFASSUNG NACH BENUTZER & TEILRÜCKGABE
+// -------------------------------------------------------------------------
 function renderKistenUnterwegsKombiniert() {
     const ziel = $('kisten-unterwegs-kombiniert-bereich');
     if (!ziel) return;
+
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
 
     const offeneGefiltert = offeneEntnahmen.filter(e => {

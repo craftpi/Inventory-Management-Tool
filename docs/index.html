@@ -468,6 +468,7 @@
             
             <div class="kisten-filter-pill-bar">
                 <button class="btn btn-kisten-filter active" id="filter-kisten-alle" onclick="setzeKistenAnsichtFilter('alle')">📦 Alle Kisten</button>
+                <button class="btn btn-kisten-filter" id="filter-kisten-artikelsuche" onclick="setzeKistenAnsichtFilter('artikelsuche')">🔍 Artikel suchen</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-unterwegs-wer" onclick="setzeKistenAnsichtFilter('unterwegs_wer')">📋 Unterwegs / Wer hat was?</button>
                 <button class="btn btn-kisten-filter" id="filter-kisten-log" onclick="setzeKistenAnsichtFilter('log')">📜 Log / Verlauf</button>
             </div>
@@ -482,6 +483,7 @@
             </table>
         </div>
 
+        <div id="kisten-artikelsuche-bereich" style="display:none;"></div>
         <div id="kisten-unterwegs-kombiniert-bereich" style="display:none;"></div>
         <div id="audit-log-bereich" style="display:none;"></div>
     </div>
