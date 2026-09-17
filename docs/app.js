@@ -701,7 +701,7 @@ async function oeffneKistenCheck(lid) {
     const ort = alleLagerorte.find(o => String(o.id) === String(lid));
     if (!ort) return;
     kistenCheckAktuelleId = lid;
-    kisteUnendlichOffen = false; // Standardmäßig zugeklappt
+    kisteUnendlichOffen = false;
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
     $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
@@ -768,7 +768,8 @@ function erzeugeKistenItemCard(z, isHelper) {
     const ist = pending ? pending.targetMenge : Number(z.ist_menge);
     const soll = Number(z.soll_menge);
     const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
-    const istVerbrauch = (z.artikel?.typ === 'verbrauch') || (ist < 0);
+    const istUnendlich = (ist === -1);
+    const istVerbrauch = !istUnendlich && ((z.artikel?.typ === 'verbrauch') || (ist === BESTAND_STRICH_AUSREICHEND || ist === BESTAND_STRICH_NACHKAUF));
     const einheit = z.artikel?.einheit || 'Stück';
 
     const card = document.createElement('div');
@@ -776,7 +777,7 @@ function erzeugeKistenItemCard(z, isHelper) {
     card.id = `kiste-item-card-${z.id}`;
 
     let statusText = '';
-    if (ist === -1) statusText = '<span style="font-size:1.1em; font-weight:bold; color:#7f8c8d;">∞</span> (Unbegrenzt)';
+    if (istUnendlich) statusText = '<span style="font-size:1.1em; font-weight:bold; color:#7f8c8d;">∞</span> (Unbegrenzt vorhanden)';
     else if (ist === -2) statusText = '<span class="bestand-status-pill ok">-</span> Ausreichend vorhanden';
     else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
     else {
@@ -785,7 +786,10 @@ function erzeugeKistenItemCard(z, isHelper) {
     }
 
     let bedienHtml = '';
-    if (istVerbrauch) {
+    if (istUnendlich) {
+        // Unendliche Artikel brauchen weder Mengen- noch Nachkauf-Buttons
+        bedienHtml = '';
+    } else if (istVerbrauch) {
         bedienHtml = `
             <div style="display:flex; gap:6px;">
                 <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)">🟢 Ausreichend</button>
@@ -862,11 +866,17 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     if (!eintrag) return;
 
     const inputEl = $(`kiste-menge-${bestandId}`);
-    let currentVal = pendingArtikelUpdates.has(bestandId)
-        ? pendingArtikelUpdates.get(bestandId).targetMenge
-        : (inputEl && !Number.isNaN(parseInt(inputEl.value, 10)) ? parseInt(inputEl.value, 10) : Number(eintrag.ist_menge));
+    let currentVal;
+    if (pendingArtikelUpdates.has(bestandId)) {
+        currentVal = pendingArtikelUpdates.get(bestandId).targetMenge;
+    } else if (inputEl && !Number.isNaN(parseInt(inputEl.value, 10))) {
+        currentVal = parseInt(inputEl.value, 10);
+    } else {
+        currentVal = Number(eintrag.ist_menge);
+    }
 
     if (currentVal < 0) return;
+
     const soll = Number(eintrag.soll_menge) || 0;
     const isHelper = aktiverKistenBenutzer?.isHelper;
 
@@ -2438,6 +2448,7 @@ function startEinkaufsliste() {
     aktuelleDaten.forEach(b => {
         const m = Number(b.menge);
         if (m === BESTAND_STRICH_NACHKAUF) nachkaufSet.add(String(b.artikel_id));
+        else if (m === -1) bestandMap[b.artikel_id] = Infinity;
         else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + (b.ist_menge >= 0 ? b.ist_menge : m);
     });
 
