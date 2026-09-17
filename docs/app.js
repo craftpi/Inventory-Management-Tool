@@ -32,14 +32,15 @@ let aktiverRegalFilter = '', kistenAnsichtFilter = 'alle';
 let kistenEtikettenAuswahlIds = new Set();
 let einkaufslisteArray = [], autoFehlbestandListe = [], eigeneVorschlaegeListe = [], manuelleEintraegeListe = [];
 
-// Kisten-, Scan- & Session-Zustände
+// Kisten-, Scan- & Ausklapp-Zustände
 let kistenCheckAktuelleId = '';
 let aktiverQrScanner = null, aktiverNfcModus = null, nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
 let aktiverKistenBenutzer = null, unterwegsRefreshInterval = null;
 let aktiverTeilrueckgabeUserKey = null, aktiverTeilrueckgabeItems = [];
+let kisteUnendlichOffen = false, kistenNurUnendlichOffen = false;
 
-// Batching & Mutex
+// Klick-Batching & Mutex
 const pendingArtikelUpdates = new Map();
 let kisteAktionInArbeit = false;
 
@@ -132,9 +133,8 @@ function werteMengeAus(eingabe) {
 }
 
 function extrahiereRegalName(text) {
-    const raw = String(text || '').trim();
-    const m = raw.match(/\(([^)]+)\)\s*$/);
-    return m ? m[1].trim() : raw;
+    const m = String(text || '').trim().match(/\(([^)]+)\)\s*$/);
+    return m ? m[1].trim() : String(text || '').trim();
 }
 
 function normalisiereRegalText(text) {
@@ -233,9 +233,6 @@ function toggleNachkaufCheckbox(chk) {
     if (row && row.dataset.stockMode?.startsWith('strich')) setzeBestandStatus(row, chk.checked ? 'strich-warn' : 'strich-ok', chk.checked);
 }
 
-// -------------------------------------------------------------------------
-// ZENTRALE DB- & AUDIT-HELFER (DRY)
-// -------------------------------------------------------------------------
 async function dbAudit(payload, ereignis = 'entnahme') {
     try {
         await dbClient.from('lager_entnahme_audit').insert([{ ...payload, ereignis, created_at: new Date().toISOString() }]);
@@ -704,6 +701,7 @@ async function oeffneKistenCheck(lid) {
     const ort = alleLagerorte.find(o => String(o.id) === String(lid));
     if (!ort) return;
     kistenCheckAktuelleId = lid;
+    kisteUnendlichOffen = false; // Standardmäßig zugeklappt
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
     $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
@@ -765,6 +763,54 @@ async function oeffneKistenCheck(lid) {
     openModalById('kistenCheckModal');
 }
 
+function erzeugeKistenItemCard(z, isHelper) {
+    const pending = pendingArtikelUpdates.get(z.id);
+    const ist = pending ? pending.targetMenge : Number(z.ist_menge);
+    const soll = Number(z.soll_menge);
+    const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
+    const istVerbrauch = (z.artikel?.typ === 'verbrauch') || (ist < 0);
+    const einheit = z.artikel?.einheit || 'Stück';
+
+    const card = document.createElement('div');
+    card.className = `kiste-item-card ${fehlt > 0 ? 'fehlend' : ''}`;
+    card.id = `kiste-item-card-${z.id}`;
+
+    let statusText = '';
+    if (ist === -1) statusText = '<span style="font-size:1.1em; font-weight:bold; color:#7f8c8d;">∞</span> (Unbegrenzt)';
+    else if (ist === -2) statusText = '<span class="bestand-status-pill ok">-</span> Ausreichend vorhanden';
+    else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
+    else {
+        statusText = `Im Lager: <strong>${ist}</strong> von max. <strong>${soll}</strong> ${einheit}`;
+        statusText += fehlt > 0 ? ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>` : ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
+    }
+
+    let bedienHtml = '';
+    if (istVerbrauch) {
+        bedienHtml = `
+            <div style="display:flex; gap:6px;">
+                <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)">🟢 Ausreichend</button>
+                <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)">🔴 Nachkaufen</button>
+            </div>`;
+    } else {
+        const canMinus = ist > 0 && !isHelper, canPlus = soll <= 0 || ist < soll;
+        bedienHtml = `
+            <button class="btn btn-kiste-minus" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" ${!canMinus ? 'disabled' : ''}>−</button>
+            <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
+            <button class="btn btn-kiste-plus" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" ${!canPlus ? 'disabled' : ''}>+</button>`;
+    }
+
+    card.innerHTML = `
+        <div style="flex:1;">
+            <div style="font-weight:bold; font-size:1.02em; color:#2c3e50;">${escapeHtml(z.artikel?.name || 'Unbekannt')}</div>
+            <div class="kiste-item-subtext" style="font-size:0.85em; color:#555; margin-top:3px;">${statusText}</div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+            ${bedienHtml}
+            <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
+        </div>`;
+    return card;
+}
+
 function renderKistenInhaltListe(lid) {
     const wrapper = $('kisten-check-liste');
     if (!wrapper) return;
@@ -777,60 +823,34 @@ function renderKistenInhaltListe(lid) {
     }
 
     const isHelper = aktiverKistenBenutzer?.isHelper;
+    const endliche = bestand.filter(z => Number(z.ist_menge) !== -1);
+    const unendliche = bestand.filter(z => Number(z.ist_menge) === -1);
 
-    bestand.forEach(z => {
-        const pending = pendingArtikelUpdates.get(z.id);
-        const ist = pending ? pending.targetMenge : Number(z.ist_menge);
-        const soll = Number(z.soll_menge);
-        const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
-        const istVerbrauch = (z.artikel?.typ === 'verbrauch') || (ist < 0);
-        const einheit = z.artikel?.einheit || 'Stück';
+    // 1. Zählbare / reguläre Artikel anzeigen
+    endliche.forEach(z => wrapper.appendChild(erzeugeKistenItemCard(z, isHelper)));
 
-        const card = document.createElement('div');
-        card.className = `kiste-item-card ${fehlt > 0 ? 'fehlend' : ''}`;
-        card.id = `kiste-item-card-${z.id}`;
+    // 2. Unendliche Artikel ein-/ausklappbar machen
+    if (unendliche.length > 0) {
+        const toggleWrap = document.createElement('div');
+        toggleWrap.style = 'margin: 10px 0;';
+        toggleWrap.innerHTML = `
+            <button type="button" class="btn" style="background:#64748b; font-size:0.88em; padding:8px 12px; width:100%; display:flex; justify-content:space-between; align-items:center;" onclick="toggleKisteUnendlicheArtikel()">
+                <span>${kisteUnendlichOffen ? '▼' : '▶'} Unbegrenzte Artikel (${unendliche.length})</span>
+                <small style="opacity:0.85;">${kisteUnendlichOffen ? 'Ausblenden' : 'Einblenden'}</small>
+            </button>`;
+        wrapper.appendChild(toggleWrap);
 
-        let statusText = '';
-        if (ist === -1) statusText = '<span style="font-size:1.1em; font-weight:bold; color:#7f8c8d;">∞</span> (Unbegrenzt)';
-        else if (ist === -2) statusText = '<span class="bestand-status-pill ok">-</span> Ausreichend vorhanden';
-        else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
-        else {
-            statusText = `Im Lager: <strong>${ist}</strong> von max. <strong>${soll}</strong> ${einheit}`;
-            statusText += fehlt > 0 ? ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>` : ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
+        if (kisteUnendlichOffen) {
+            const unendlichBox = document.createElement('div');
+            unendlichBox.style = 'display:flex; flex-direction:column; gap:8px;';
+            unendliche.forEach(z => unendlichBox.appendChild(erzeugeKistenItemCard(z, isHelper)));
+            wrapper.appendChild(unendlichBox);
         }
-
-        let bedienHtml = '';
-        if (istVerbrauch) {
-            bedienHtml = `
-                <div style="display:flex; gap:6px;">
-                    <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)">🟢 Ausreichend</button>
-                    <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)">🔴 Nachkaufen</button>
-                </div>`;
-        } else {
-            const canMinus = ist > 0 && !isHelper, canPlus = soll <= 0 || ist < soll;
-            bedienHtml = `
-                <button class="btn btn-kiste-minus" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" ${!canMinus ? 'disabled' : ''}>−</button>
-                <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
-                <button class="btn btn-kiste-plus" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" ${!canPlus ? 'disabled' : ''}>+</button>`;
-        }
-
-        card.innerHTML = `
-            <div style="flex:1;">
-                <div style="font-weight:bold; font-size:1.02em; color:#2c3e50;">${escapeHtml(z.artikel?.name || 'Unbekannt')}</div>
-                <div class="kiste-item-subtext" style="font-size:0.85em; color:#555; margin-top:3px;">${statusText}</div>
-            </div>
-            <div style="display:flex; gap:6px; align-items:center;">
-                ${bedienHtml}
-                <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
-            </div>`;
-        wrapper.appendChild(card);
-    });
+    }
 }
 
-async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
-    await dbClient.from('bestand').update({ menge: statusWert, alte_menge: statusWert, created_at: new Date().toISOString() }).eq('id', bestandId);
-    showToast(statusWert === -3 ? '🔴 Auf Einkaufsliste gesetzt!' : '🟢 Als ausreichend markiert!');
-    await ladeAlles();
+function toggleKisteUnendlicheArtikel() {
+    kisteUnendlichOffen = !kisteUnendlichOffen;
     renderKistenInhaltListe(kistenCheckAktuelleId);
 }
 
@@ -1565,19 +1585,51 @@ function renderKistenListe() {
     const liste = alleLagerorte.filter(o => !suchText || o.name.toLowerCase().includes(suchText) || (o.nfc_code || '').toLowerCase().includes(suchText));
 
     if (!liste.length) { ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine passenden Kisten gefunden.</td></tr>'; return; }
-    ziel.innerHTML = liste.map(o => {
+
+    const standardKisten = [], nurUnendlicheKisten = [];
+    liste.forEach(o => {
         const bestand = gibKistenBestand(o.id);
-        return `
-            <tr>
-                <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
-                <td>${bestand.length} Artikel</td>
-                <td>${ermittleKistenStatusCell(o.id, bestand)}</td>
-                <td>
-                    <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
-                    <button class="btn" style="background:#3498db; padding:8px 12px; width:auto;" onclick="openOrteVerwalten(${o.id})">⚙️</button>
+        const hatNurUnendlich = bestand.length > 0 && bestand.every(b => Number(b.ist_menge) === -1 || Number(b.menge) === -1);
+        if (hatNurUnendlich) nurUnendlicheKisten.push({ o, bestand });
+        else standardKisten.push({ o, bestand });
+    });
+
+    const renderRow = (o, bestand) => `
+        <tr>
+            <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
+            <td>${bestand.length} Artikel</td>
+            <td>${ermittleKistenStatusCell(o.id, bestand)}</td>
+            <td>
+                <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
+                <button class="btn" style="background:#3498db; padding:8px 12px; width:auto;" onclick="openOrteVerwalten(${o.id})">⚙️</button>
+            </td>
+        </tr>`;
+
+    let html = standardKisten.map(i => renderRow(i.o, i.bestand)).join('');
+
+    // Kisten mit ausschließlich unendlichen Artikeln einklappbar machen
+    if (nurUnendlicheKisten.length > 0) {
+        const isOffen = kistenNurUnendlichOffen || Boolean(suchText);
+        html += `
+            <tr style="background:#e2e8f0; cursor:pointer;" onclick="toggleKistenNurUnendlich()">
+                <td colspan="4" style="padding:10px 14px; font-weight:bold; color:#334155; user-select:none;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>${isOffen ? '▼' : '▶'} Kisten mit nur unbegrenzten Artikeln (${nurUnendlicheKisten.length})</span>
+                        <small style="color:#64748b; font-weight:normal;">${isOffen ? 'Einklappen' : 'Ausklappen'}</small>
+                    </div>
                 </td>
             </tr>`;
-    }).join('');
+        if (isOffen) {
+            html += nurUnendlicheKisten.map(i => renderRow(i.o, i.bestand)).join('');
+        }
+    }
+
+    ziel.innerHTML = html;
+}
+
+function toggleKistenNurUnendlich() {
+    kistenNurUnendlichOffen = !kistenNurUnendlichOffen;
+    renderKistenListe();
 }
 
 function renderKistenUnterwegsKombiniert() {
