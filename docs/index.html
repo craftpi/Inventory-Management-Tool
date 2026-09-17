@@ -121,6 +121,7 @@
         #neuOrtModal { z-index: 10020; }
         #kistenEtikettenModal { z-index: 10025; }
         #kistenBenutzerModal { z-index: 10030; }
+        #teilrueckgabeModal { z-index: 10035; }
         .modal-content {
             background-color: white;
             margin: 5vh auto;
@@ -198,7 +199,7 @@
         .btn-kisten-filter.active { background: #e3000f; }
 
         .entnahme-card { border: 1px solid #d9e3ec; background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
-        .entnahme-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 1px solid #edf2f7; padding-bottom: 8px; }
+        .entnahme-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 1px solid #edf2f7; padding-bottom: 8px; gap: 10px; flex-wrap: wrap; }
 
         .audit-badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.78em; font-weight: bold; }
         .audit-badge.entnahme { background: #fee2e2; color: #b91c1c; }
@@ -206,6 +207,8 @@
         .audit-badge.teilrueckgabe { background: #fef3c7; color: #b45309; }
 
         .kombiniert-subtitel { margin: 18px 0 8px 0; color: #2c3e50; font-size: 1.05em; font-weight: bold; display: flex; align-items: center; gap: 6px; }
+
+        .teilrueck-zeile { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; gap: 10px; }
 
         @media (max-width: 600px) {
             body { padding: 8px 4px; }
@@ -220,6 +223,7 @@
             h1 { font-size: 1.25em; gap: 8px; }
             .header-actions .btn { width: auto; padding: 6px 10px; font-size: 0.75em; min-height: 36px; }
             .regal-qr-grid { grid-template-columns: 1fr; }
+            .teilrueck-zeile { flex-direction: column; align-items: flex-start; }
         }
     </style>
 </head>
@@ -570,6 +574,25 @@
 
         <div class="flex-buttons" style="margin-top:16px;">
             <button type="button" class="btn btn-cancel" style="width:100%;" onclick="schliesseKistenBenutzerModal()">Schließen</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: TEILRÜCKGABE (ARTIKEL & MENGEN AUSWÄHLEN) -->
+<div id="teilrueckgabeModal" class="modal" onclick="if (event.target === this) closeModal('teilrueckgabeModal')">
+    <div class="modal-content" style="max-width: 580px;">
+        <button type="button" class="modal-close-x" onclick="closeModal('teilrueckgabeModal')">✕</button>
+        <h2 style="margin-top:0; color:#2c3e50;">🔄 Teilrückgabe erfassen</h2>
+        <p style="font-size:0.9em; color:#666; margin-bottom:14px;">
+            Person: <strong id="teilrueckgabe-person-name" style="color:#2c3e50;">–</strong><br>
+            <small style="color:#7f8c8d;">Stelle ein, wie viele Stück jedes Artikels wieder im Lager angekommen sind:</small>
+        </p>
+
+        <div id="teilrueckgabe-artikel-liste" style="max-height: 48vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;"></div>
+
+        <div class="flex-buttons" style="margin-top:16px;">
+            <button type="button" class="btn btn-save" style="background:#27ae60;" onclick="speichereTeilrueckgabe()">📥 Rückgabe buchen</button>
+            <button type="button" class="btn btn-cancel" onclick="closeModal('teilrueckgabeModal')">Abbrechen</button>
         </div>
     </div>
 </div>

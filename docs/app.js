@@ -49,9 +49,11 @@ let scanSperre = { kisten: false, rueckgabe: false };
 let hubKameraAktiv = false;
 let ausbuchenPendingAktion = null;
 
-// Aktiver Kisten-Benutzer (Sitzung) & Auto-Refresh Timer
+// Aktiver Kisten-Benutzer (Sitzung), Auto-Refresh Timer & Teilrückgabe-Zustand
 let aktiverKistenBenutzer = null;
 let unterwegsRefreshInterval = null;
+let aktiverTeilrueckgabeUserKey = null;
+let aktiverTeilrueckgabeItems = [];
 
 // =========================================================================
 // 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
@@ -724,6 +726,59 @@ function ermittleKistenStatusCell(lid, bestand) {
     return '<span style="color:#e67e22; font-weight:bold;">⚠️ Teilentnahme (siehe Prüfen)</span>';
 }
 
+function extrahiereEntnahmePositionen(ent) {
+    const res = [];
+    const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+    mats.forEach((m, matIdx) => {
+        if (Array.isArray(m.artikel) && m.artikel.length > 0) {
+            m.artikel.forEach((a, artIdx) => {
+                res.push({
+                    entnahmeId: ent.id,
+                    matIdx,
+                    artIdx,
+                    kisteId: m.kiste_id ? Number(m.kiste_id) : null,
+                    kisteName: m.kiste_name || 'Kiste',
+                    ganzeKiste: Boolean(m.ganze_kiste),
+                    bestandId: a.bestand_id ? Number(a.bestand_id) : null,
+                    artikelId: a.artikel_id ? Number(a.artikel_id) : null,
+                    name: a.name || 'Artikel',
+                    menge: Number(a.menge) || 1,
+                    typ: a.typ || 'zaehlbar'
+                });
+            });
+        } else if (m.kiste_name && m.kiste_id && m.ganze_kiste) {
+            res.push({
+                entnahmeId: ent.id,
+                matIdx,
+                artIdx: null,
+                kisteId: Number(m.kiste_id),
+                kisteName: m.kiste_name,
+                ganzeKiste: true,
+                bestandId: null,
+                artikelId: null,
+                name: m.kiste_name + ' (Ganze Kiste)',
+                menge: 1,
+                typ: 'kiste'
+            });
+        } else {
+            res.push({
+                entnahmeId: ent.id,
+                matIdx,
+                artIdx: null,
+                kisteId: m.kiste_id ? Number(m.kiste_id) : null,
+                kisteName: m.kiste_name || null,
+                ganzeKiste: false,
+                bestandId: m.bestand_id ? Number(m.bestand_id) : null,
+                artikelId: m.artikel_id ? Number(m.artikel_id) : null,
+                name: m.name || m.label || 'Material',
+                menge: Number(m.menge) || 1,
+                typ: m.typ || 'zaehlbar'
+            });
+        }
+    });
+    return res;
+}
+
 function oeffneKistenCheck(lid) {
     const ort = (alleLagerorte || []).find(o => String(o.id) === String(lid));
     if (!ort) return;
@@ -754,24 +809,55 @@ function oeffneKistenCheck(lid) {
             banner.style.display = 'none';
         } else {
             banner.style.display = 'block';
-            let bannerHtml = `⚠️ <strong>Offene Entnahmen aus dieser Kiste (${boxEntnahmen.length}):</strong><div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">`;
-            boxEntnahmen.forEach(ent => {
-                const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-                const kistenMats = mats.filter(m => String(m.kiste_id) === String(lid));
-                const details = kistenMats.map(m => {
-                    if (m.ganze_kiste) return '<strong>Ganze Kiste</strong>';
-                    if (Array.isArray(m.artikel) && m.artikel.length) {
-                        return m.artikel.map(a => `<strong>${a.menge || 1}x</strong> ${escapeHtml(a.name || 'Artikel')}`).join(', ');
-                    }
-                    return 'Teilentnahme';
-                }).join('; ') || 'Teilentnahme';
 
-                const datum = new Date(ent.created_at).toLocaleString('de-DE');
+            // ZUSAMMENFASSUNG NACH PERSON FÜR DIESE KISTE
+            const personGroups = new Map();
+            boxEntnahmen.forEach(ent => {
+                const userKey = ent.benutzer_vorlage_id ? String(ent.benutzer_vorlage_id) : (ent.name || 'unbekannt').trim().toLowerCase();
+                if (!personGroups.has(userKey)) {
+                    personGroups.set(userKey, {
+                        name: ent.name || 'Unbekannt',
+                        kontakt: ent.kontakt || '',
+                        neuestesDatum: new Date(ent.created_at),
+                        artikelMap: new Map(),
+                        ganzeKiste: false
+                    });
+                }
+                const pGrp = personGroups.get(userKey);
+                if (new Date(ent.created_at) > pGrp.neuestesDatum) pGrp.neuestesDatum = new Date(ent.created_at);
+
+                const posList = extrahiereEntnahmePositionen(ent).filter(p => String(p.kisteId) === String(lid));
+                posList.forEach(p => {
+                    if (p.ganzeKiste) {
+                        pGrp.ganzeKiste = true;
+                    } else {
+                        const aKey = p.artikelId ? 'art_' + p.artikelId : 'name_' + p.name;
+                        const exist = pGrp.artikelMap.get(aKey) || { name: p.name, menge: 0 };
+                        exist.menge += p.menge;
+                        pGrp.artikelMap.set(aKey, exist);
+                    }
+                });
+            });
+
+            let bannerHtml = `⚠️ <strong>Offene Entnahmen aus dieser Kiste (${personGroups.size} Person(en)):</strong><div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">`;
+            personGroups.forEach(pGrp => {
+                let details = '';
+                if (pGrp.ganzeKiste) {
+                    details = '<strong>Ganze Kiste entnommen</strong>';
+                } else {
+                    const parts = [];
+                    pGrp.artikelMap.forEach(item => {
+                        parts.push(`<strong>${item.menge}x</strong> ${escapeHtml(item.name)}`);
+                    });
+                    details = parts.join(', ') || 'Teilentnahme';
+                }
+
+                const datumStr = pGrp.neuestesDatum.toLocaleString('de-DE');
                 bannerHtml += `
                     <div style="font-size:0.92em; padding:4px 0; border-bottom:1px dashed #f0ad4e;">
-                        👤 <strong>${escapeHtml(ent.name)}</strong>: ${details} 
-                        <span style="color:#7f8c8d; font-size:0.85em;">(${datum})</span>
-                        ${ent.kontakt ? ` &bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
+                        👤 <strong>${escapeHtml(pGrp.name)}</strong>: ${details} 
+                        <span style="color:#7f8c8d; font-size:0.85em;">(letzte Entnahme: ${datumStr})</span>
+                        ${pGrp.kontakt ? ` &bull; 📞 ${escapeHtml(pGrp.kontakt)}` : ''}
                     </div>
                 `;
             });
@@ -1820,6 +1906,10 @@ function renderKistenListe() {
     }).join('');
 }
 
+// -------------------------------------------------------------------------
+// UNTERWEGS: ZUSAMMENFASSUNG NACH BENUTZER & TEILRÜCKGABE
+// -------------------------------------------------------------------------
+
 function renderKistenUnterwegsKombiniert() {
     const ziel = $('kisten-unterwegs-kombiniert-bereich');
     if (!ziel) return;
@@ -1840,6 +1930,24 @@ function renderKistenUnterwegsKombiniert() {
         return nameMatch || matMatch;
     });
 
+    // Gruppierung aller Entnahmen nach Benutzer
+    const userMap = new Map();
+    offeneGefiltert.forEach(ent => {
+        const userKey = ent.benutzer_vorlage_id ? String(ent.benutzer_vorlage_id) : (ent.name || 'unbekannt').trim().toLowerCase();
+        if (!userMap.has(userKey)) {
+            userMap.set(userKey, {
+                userKey,
+                name: ent.name || 'Unbekannt',
+                kontakt: ent.kontakt || '',
+                neuestesDatum: new Date(ent.created_at),
+                entnahmen: []
+            });
+        }
+        const u = userMap.get(userKey);
+        if (new Date(ent.created_at) > u.neuestesDatum) u.neuestesDatum = new Date(ent.created_at);
+        u.entnahmen.push(ent);
+    });
+
     const kistenGefiltert = (alleLagerorte || []).filter(o => {
         if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
             return false;
@@ -1854,7 +1962,7 @@ function renderKistenUnterwegsKombiniert() {
 
     html += `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
-            <div class="kombiniert-subtitel" style="margin:0;">👤 Aktive Entleiher &amp; Resortleiter (${offeneGefiltert.length})</div>
+            <div class="kombiniert-subtitel" style="margin:0;">👤 Aktive Entleiher &amp; Resortleiter (${userMap.size})</div>
             <div style="display:flex; align-items:center; gap:8px;">
                 <span style="font-size:0.8em; color:#27ae60; font-weight:bold;">● Live-Aktualisierung (15s)</span>
                 <button type="button" class="btn" style="background:#34495e; padding:4px 10px; font-size:0.8em; width:auto; min-height:30px;" onclick="manuelleAktualisierungUnterwegs()">🔄 Jetzt aktualisieren</button>
@@ -1862,44 +1970,58 @@ function renderKistenUnterwegsKombiniert() {
         </div>
     `;
 
-    if (!offeneGefiltert.length) {
+    if (!userMap.size) {
         html += `
             <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px; margin-bottom:18px;">
                 <p style="margin:0; color:#1f7a37; font-weight:bold;">🎉 Aktuell keine offenen Personen-Entnahmen vermerkt.</p>
             </div>
         `;
     } else {
-        html += offeneGefiltert.map(ent => {
-            const datum = new Date(ent.created_at).toLocaleString('de-DE');
-            const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-            const itemsHtml = mats.map(m => {
-                if (Array.isArray(m.artikel) && m.artikel.length > 0) {
-                    if (m.ganze_kiste) {
-                        return `<li><strong>📦 ${escapeHtml(m.kiste_name || 'Kiste')}</strong> (Kiste komplett entnommen)</li>`;
-                    } else {
-                        return m.artikel.map(a => 
-                            `<li><strong>${a.menge || 1}x</strong> ${escapeHtml(a.name || 'Artikel')} <span style="color:#7f8c8d; font-size:0.9em;">(aus 📦 ${escapeHtml(m.kiste_name || 'Kiste')})</span></li>`
-                        ).join('');
+        userMap.forEach(u => {
+            const datumStr = u.neuestesDatum.toLocaleString('de-DE');
+
+            // Artikel dieses Nutzers zusammenfassen
+            const artikelMap = new Map();
+            u.entnahmen.forEach(ent => {
+                const posList = extrahiereEntnahmePositionen(ent);
+                posList.forEach(pos => {
+                    const itemKey = `${pos.kisteId || 'null'}_${pos.bestandId || pos.artikelId || pos.name}`;
+                    if (!artikelMap.has(itemKey)) {
+                        artikelMap.set(itemKey, {
+                            name: pos.name,
+                            kisteName: pos.kisteName,
+                            ganzeKiste: pos.ganzeKiste,
+                            menge: 0
+                        });
                     }
+                    artikelMap.get(itemKey).menge += pos.menge;
+                });
+            });
+
+            const itemsHtml = Array.from(artikelMap.values()).map(item => {
+                if (item.ganzeKiste) {
+                    return `<li><strong>📦 ${escapeHtml(item.kisteName || 'Kiste')}</strong> (Kiste komplett entnommen)</li>`;
                 }
-                if (m.kiste_name) {
-                    return `<li><strong>📦 ${escapeHtml(m.kiste_name)}</strong> (Kiste komplett entnommen)</li>`;
-                }
-                return `<li><strong>${m.menge || 1}x</strong> ${escapeHtml(m.name || m.label || 'Material')}</li>`;
+                return `<li><strong>${item.menge}x</strong> ${escapeHtml(item.name)} <span style="color:#7f8c8d; font-size:0.88em;">(aus 📦 ${escapeHtml(item.kisteName || 'Kiste')})</span></li>`;
             }).join('');
 
-            return `
+            html += `
                 <div class="entnahme-card">
                     <div class="entnahme-card-header">
                         <div>
-                            <strong style="font-size:1.1em; color:#2c3e50;">👤 ${escapeHtml(ent.name)}</strong>
+                            <strong style="font-size:1.1em; color:#2c3e50;">👤 ${escapeHtml(u.name)}</strong>
                             <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">
-                                📅 Entnommen am: ${datum} ${ent.kontakt ? `&bull; 📞 ${escapeHtml(ent.kontakt)}` : ''}
+                                📅 Letzte Entnahme am: ${datumStr} ${u.kontakt ? `&bull; 📞 ${escapeHtml(u.kontakt)}` : ''}
                             </div>
                         </div>
-                        <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseEntnahmeKomplett('${ent.id}')">
-                            ✅ Vollständig zurückgebucht
-                        </button>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button class="btn" style="background:#f39c12; padding:6px 12px; font-size:0.85em; width:auto;" onclick="oeffneTeilrueckgabeModal('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">
+                                🔄 Teilrückgabe
+                            </button>
+                            <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseAlleEntnahmenFuerBenutzer('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">
+                                ✅ Vollständig zurückgebucht
+                            </button>
+                        </div>
                     </div>
                     <div style="font-size:0.9em; color:#444;">
                         <ul style="margin:6px 0; padding-left:20px;">
@@ -1908,7 +2030,7 @@ function renderKistenUnterwegsKombiniert() {
                     </div>
                 </div>
             `;
-        }).join('');
+        });
     }
 
     html += `<div class="kombiniert-subtitel" style="margin-top:24px;">📦 Fehlende oder unvollständige Kisten (${kistenGefiltert.length})</div>`;
@@ -1948,6 +2070,284 @@ function renderKistenUnterwegsKombiniert() {
     }
 
     ziel.innerHTML = html;
+}
+
+// -------------------------------------------------------------------------
+// TEILRÜCKGABE MODAL & SPEICHERN
+// -------------------------------------------------------------------------
+function oeffneTeilrueckgabeModal(userKey) {
+    aktiverTeilrueckgabeUserKey = userKey;
+    const ents = (offeneEntnahmen || []).filter(e => {
+        const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
+        return k === userKey;
+    });
+
+    if (!ents.length) return showToast('Keine offenen Entnahmen für diese Person gefunden.', 'warning');
+
+    const userName = ents[0].name || 'Unbekannt';
+    $('teilrueckgabe-person-name').innerText = userName;
+
+    // Artikel aggregieren
+    const itemMap = new Map();
+    ents.forEach(e => {
+        const posList = extrahiereEntnahmePositionen(e);
+        posList.forEach(p => {
+            const key = `${p.kisteId || 'null'}_${p.bestandId || p.artikelId || p.name}`;
+            if (!itemMap.has(key)) {
+                itemMap.set(key, {
+                    key,
+                    name: p.name,
+                    kisteId: p.kisteId,
+                    kisteName: p.kisteName,
+                    bestandId: p.bestandId,
+                    artikelId: p.artikelId,
+                    gesamtMenge: 0,
+                    ganzeKiste: p.ganzeKiste
+                });
+            }
+            itemMap.get(key).gesamtMenge += p.menge;
+        });
+    });
+
+    aktiverTeilrueckgabeItems = Array.from(itemMap.values());
+    const container = $('teilrueckgabe-artikel-liste');
+    if (!container) return;
+
+    if (!aktiverTeilrueckgabeItems.length) {
+        container.innerHTML = '<p style="text-align:center; color:#7f8c8d;">Keine Artikel zum Zurückgeben vorhanden.</p>';
+        return;
+    }
+
+    container.innerHTML = aktiverTeilrueckgabeItems.map(item => {
+        return `
+            <div class="teilrueck-zeile">
+                <div style="flex:1;">
+                    <strong style="color:#2c3e50; font-size:1.02em;">${escapeHtml(item.name)}</strong>
+                    <div style="font-size:0.82em; color:#7f8c8d; margin-top:2px;">
+                        aus 📦 ${escapeHtml(item.kisteName || 'Kiste')} &bull; Offen bei Person: <b>${item.gesamtMenge}</b>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:0.85em; color:#555; font-weight:bold;">Zurück:</span>
+                    <button type="button" class="btn" style="width:34px; min-width:34px; height:34px; padding:0; background:#95a5a6; font-size:1.1em;" onclick="aendereTeilrueckMenge('${item.key}', -1)">−</button>
+                    <input type="number" id="teilrueck-qty-${item.key}" class="menge-input" value="0" min="0" max="${item.gesamtMenge}" style="width:55px; height:34px; padding:2px; font-weight:bold;" oninput="pruefeTeilrueckInput(this, ${item.gesamtMenge})">
+                    <button type="button" class="btn" style="width:34px; min-width:34px; height:34px; padding:0; background:#27ae60; font-size:1.1em;" onclick="aendereTeilrueckMenge('${item.key}', 1, ${item.gesamtMenge})">+</button>
+                    <button type="button" class="btn" style="padding:4px 8px; font-size:0.8em; background:#34495e; width:auto; height:34px;" onclick="setzeTeilrueckAlle('${item.key}', ${item.gesamtMenge})">Alle</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    openModalById('teilrueckgabeModal');
+}
+
+function aendereTeilrueckMenge(key, delta, max) {
+    const input = $(`teilrueck-qty-${key}`);
+    if (!input) return;
+    let cur = parseInt(input.value, 10) || 0;
+    cur += delta;
+    if (cur < 0) cur = 0;
+    if (max !== undefined && cur > max) cur = max;
+    input.value = cur;
+}
+
+function setzeTeilrueckAlle(key, max) {
+    const input = $(`teilrueck-qty-${key}`);
+    if (input) input.value = max;
+}
+
+function pruefeTeilrueckInput(input, max) {
+    let val = parseInt(input.value, 10) || 0;
+    if (val < 0) val = 0;
+    if (val > max) val = max;
+    input.value = val;
+}
+
+async function speichereTeilrueckgabe() {
+    if (!aktiverTeilrueckgabeUserKey || !aktiverTeilrueckgabeItems.length) return;
+
+    // Ausgewählte Rückgabemengen auslesen
+    const rueckgaben = [];
+    aktiverTeilrueckgabeItems.forEach(item => {
+        const inp = $(`teilrueck-qty-${item.key}`);
+        const qty = inp ? (parseInt(inp.value, 10) || 0) : 0;
+        if (qty > 0) {
+            rueckgaben.push({ ...item, returnQty: qty });
+        }
+    });
+
+    if (!rueckgaben.length) {
+        return showToast('Bitte mindestens bei einem Artikel eine Rückgabemenge größer als 0 angeben.', 'warning');
+    }
+
+    const ents = (offeneEntnahmen || []).filter(e => {
+        const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
+        return k === aktiverTeilrueckgabeUserKey;
+    });
+
+    try {
+        // 1. Bestände in Tabelle "bestand" erhöhen
+        for (const r of rueckgaben) {
+            let bEintrag = null;
+            if (r.bestandId) {
+                bEintrag = (aktuelleDaten || []).find(b => b.id === r.bestandId);
+            } else if (r.artikelId && r.kisteId) {
+                bEintrag = (aktuelleDaten || []).find(b => b.artikel_id === r.artikelId && Number(b.lagerort_id) === Number(r.kisteId));
+            }
+
+            if (bEintrag && Number(bEintrag.menge) >= 0) {
+                const aktuell = Number(bEintrag.ist_menge) >= 0 ? Number(bEintrag.ist_menge) : 0;
+                const soll = Number(bEintrag.soll_menge) || 0;
+                const neu = soll > 0 ? Math.min(soll, aktuell + r.returnQty) : aktuell + r.returnQty;
+
+                await dbClient.from('bestand').update({
+                    menge: neu,
+                    created_at: new Date().toISOString()
+                }).eq('id', bEintrag.id);
+            }
+        }
+
+        // 2. Offene Entnahme-Einträge reduzieren oder löschen
+        for (const r of rueckgaben) {
+            let verbleibendZurueck = r.returnQty;
+
+            for (const ent of ents) {
+                if (verbleibendZurueck <= 0) break;
+                let geaendert = false;
+                const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+
+                mats.forEach(m => {
+                    if (verbleibendZurueck <= 0) return;
+                    if (r.kisteId && Number(m.kiste_id) !== Number(r.kisteId)) return;
+
+                    if (Array.isArray(m.artikel)) {
+                        m.artikel.forEach(a => {
+                            if (verbleibendZurueck <= 0) return;
+                            const match = (r.bestandId && a.bestand_id === r.bestandId) || 
+                                          (r.artikelId && a.artikel_id === r.artikelId) || 
+                                          (a.name === r.name);
+                            if (match) {
+                                const abzug = Math.min(verbleibendZurueck, a.menge);
+                                a.menge -= abzug;
+                                verbleibendZurueck -= abzug;
+                                geaendert = true;
+                            }
+                        });
+                        // Positionen mit menge <= 0 entfernen
+                        m.artikel = m.artikel.filter(a => a.menge > 0);
+                    } else if (m.ganze_kiste) {
+                        m.ganze_kiste = false;
+                        geaendert = true;
+                    }
+                });
+
+                if (geaendert) {
+                    // Kisten ohne Artikel entfernen
+                    const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
+
+                    if (!saubereMats.length) {
+                        await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+                        ent.materialien = [];
+                    } else {
+                        await dbClient.from('lager_entnahmen').update({
+                            materialien: saubereMats
+                        }).eq('id', ent.id);
+                        ent.materialien = saubereMats;
+                    }
+                }
+            }
+        }
+
+        // 3. Audit-Log Eintrag schreiben
+        const userName = ents[0]?.name || 'Unbekannt';
+        const userKontakt = ents[0]?.kontakt || '';
+        const userVorlageId = ents[0]?.benutzer_vorlage_id || null;
+
+        try {
+            await dbClient.from('lager_entnahme_audit').insert([{
+                name: userName,
+                kontakt: userKontakt,
+                benutzer_vorlage_id: userVorlageId,
+                materialien: [{
+                    kiste_id: rueckgaben[0]?.kisteId || null,
+                    kiste_name: rueckgaben[0]?.kisteName || 'Kiste',
+                    artikel: rueckgaben.map(r => ({
+                        bestand_id: r.bestandId,
+                        artikel_id: r.artikelId,
+                        name: r.name,
+                        menge: r.returnQty
+                    }))
+                }],
+                ereignis: 'teilrueckgabe',
+                created_at: new Date().toISOString()
+            }]);
+        } catch (auditErr) {}
+
+        closeModal('teilrueckgabeModal');
+        showToast('✅ Teilrückgabe erfolgreich verbucht!');
+        await ladeAlles();
+        if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
+    } catch (err) {
+        console.error('Fehler bei Teilrückgabe:', err);
+        showToast('Fehler bei Teilrückgabe: ' + (err.message || err), 'error');
+    }
+}
+
+async function schliesseAlleEntnahmenFuerBenutzer(userKey) {
+    const ents = (offeneEntnahmen || []).filter(e => {
+        const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
+        return k === userKey;
+    });
+
+    if (!ents.length) return;
+    const userName = ents[0].name || 'diese Person';
+
+    if (!confirm(`Sollen wirklich ALLE Entnahmen von ${userName} als vollständig zurückgebracht verbucht werden?`)) return;
+
+    try {
+        for (const ent of ents) {
+            const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+            for (const m of mats) {
+                if (m.kiste_id && m.ganze_kiste) {
+                    const bestand = gibKistenBestand(m.kiste_id);
+                    const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+                        const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
+                        return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
+                    });
+                    await Promise.all(updates);
+                } else if (Array.isArray(m.artikel)) {
+                    for (const a of m.artikel) {
+                        if (a.bestand_id) {
+                            const b = (aktuelleDaten || []).find(x => x.id === a.bestand_id);
+                            if (b && Number(b.menge) >= 0) {
+                                const neu = Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1));
+                                await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            try {
+                await dbClient.from('lager_entnahme_audit').insert([{
+                    entnahme_id: ent.id,
+                    name: ent.name,
+                    kontakt: ent.kontakt,
+                    materialien: ent.materialien,
+                    ereignis: 'rueckgabe',
+                    created_at: new Date().toISOString()
+                }]);
+            } catch (e) {}
+
+            await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+        }
+
+        showToast(`✅ Alle Entnahmen von ${userName} abgeschlossen!`);
+        await ladeAlles();
+    } catch (err) {
+        console.error('Fehler beim Abschließen aller Entnahmen:', err);
+        showToast('Fehler beim Abschließen: ' + (err.message || err), 'error');
+    }
 }
 
 function renderAuditLogListe() {
@@ -2028,13 +2428,23 @@ async function schliesseEntnahmeKomplett(entnahmeId) {
 
     const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
     for (const m of mats) {
-        if (m.kiste_id) {
+        if (m.kiste_id && m.ganze_kiste) {
             const bestand = gibKistenBestand(m.kiste_id);
             const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
                 const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
                 return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
             });
             await Promise.all(updates);
+        } else if (Array.isArray(m.artikel)) {
+            for (const a of m.artikel) {
+                if (a.bestand_id) {
+                    const b = (aktuelleDaten || []).find(x => x.id === a.bestand_id);
+                    if (b && Number(b.menge) >= 0) {
+                        const neu = Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1));
+                        await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
+                    }
+                }
+            }
         }
     }
 
