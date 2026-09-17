@@ -14,16 +14,12 @@ const STORAGE_KEYS = {
 
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_DURATION_MS = 5 * 60 * 1000;
-
-const TABLES = {
-    FORMULAR: 'formular_antworten'
-};
-
+const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const TABLES = { FORMULAR: 'formular_antworten' };
 const BESTAND_STRICH_AUSREICHEND = -2;
 const BESTAND_STRICH_NACHKAUF = -3;
-const LOCAL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
-let dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
 });
 
@@ -32,40 +28,28 @@ let aktuelleDaten = [], packlisten = [], packlistenPositionen = [], alleArtikelI
 let alleBenutzerVorlagen = [], offeneEntnahmen = [], auditLogs = [];
 let isEditMode = false, isEventEditMode = false, aktuellerModus = 'lager';
 let offeneGruppen = new Set(), isAllOpen = false, sortAscending = true, zeigeAlleArtikel = false;
-let aktiverRegalFilter = '';
-let kistenAnsichtFilter = 'alle';
+let aktiverRegalFilter = '', kistenAnsichtFilter = 'alle';
 let kistenEtikettenAuswahlIds = new Set();
-let einkaufslisteArray = [];
-let autoFehlbestandListe = [];
-let eigeneVorschlaegeListe = [];
-let manuelleEintraegeListe = [];
+let einkaufslisteArray = [], autoFehlbestandListe = [], eigeneVorschlaegeListe = [], manuelleEintraegeListe = [];
 
-// Kisten- & Scan-Zustände
+// Kisten-, Scan- & Session-Zustände
 let kistenCheckAktuelleId = '';
-let aktiverQrScanner = null;
-let aktiverNfcModus = null;
-let nfcAbortController = null;
+let aktiverQrScanner = null, aktiverNfcModus = null, nfcAbortController = null;
 let scanSperre = { kisten: false, rueckgabe: false };
-let hubKameraAktiv = false;
-let ausbuchenPendingAktion = null;
+let aktiverKistenBenutzer = null, unterwegsRefreshInterval = null;
+let aktiverTeilrueckgabeUserKey = null, aktiverTeilrueckgabeItems = [];
 
-// Aktiver Kisten-Benutzer (Sitzung), Auto-Refresh Timer & Teilrückgabe-Zustand
-let aktiverKistenBenutzer = null;
-let unterwegsRefreshInterval = null;
-let aktiverTeilrueckgabeUserKey = null;
-let aktiverTeilrueckgabeItems = [];
-
-// Schnelles Batching für Klickfolgen (+ / -)
+// Batching & Mutex
 const pendingArtikelUpdates = new Map();
 let kisteAktionInArbeit = false;
 
 // =========================================================================
-// 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
+// 2. HELFER- & PARSER-FUNKTIONEN
 // =========================================================================
 const $ = (id) => document.getElementById(id);
 
 function escapeHtml(str) {
-    return String(str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]);
+    return String(str ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]);
 }
 
 function showToast(message, type = 'success') {
@@ -75,7 +59,7 @@ function showToast(message, type = 'success') {
     toast.className = `toast ${type}`;
     toast.innerText = message;
     container.appendChild(toast);
-    setTimeout(() => toast.classList.add('show'), 10);
+    requestAnimationFrame(() => toast.classList.add('show'));
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
@@ -93,9 +77,7 @@ function closeModal(id) {
     const el = $(id);
     if (!el) return;
     el.classList.remove('modal-visible');
-    setTimeout(() => {
-        if (!el.classList.contains('modal-visible')) el.style.display = 'none';
-    }, 220);
+    setTimeout(() => { if (!el.classList.contains('modal-visible')) el.style.display = 'none'; }, 220);
 }
 
 function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', defaultOption = null, selectedValue = null, formatLabel = null } = {}) {
@@ -112,56 +94,39 @@ function populateSelect(selectEl, items, { valueKey = 'id', labelKey = 'name', d
     }
 }
 
-function berechneMengenAusdruck(ausdruck) {
-    let pos = 0;
-    const err = () => { throw new Error('Ungültiger Ausdruck'); };
-    const parseZahl = () => {
-        let start = pos;
-        while (pos < ausdruck.length && /[0-9.]/.test(ausdruck[pos])) pos++;
-        if (pos === start) err();
-        const val = parseFloat(ausdruck.slice(start, pos));
-        if (Number.isNaN(val)) err();
-        return val;
-    };
-    const parseFactor = () => {
-        if (ausdruck[pos] === '(') {
-            pos++; const val = parseExpr();
-            if (ausdruck[pos] !== ')') err();
-            pos++; return val;
-        }
-        if (ausdruck[pos] === '-') { pos++; return -parseFactor(); }
-        if (ausdruck[pos] === '+') { pos++; return parseFactor(); }
-        return parseZahl();
-    };
-    const parseTerm = () => {
-        let val = parseFactor();
-        while (ausdruck[pos] === '*' || ausdruck[pos] === '/') {
-            const op = ausdruck[pos++];
-            const rhs = parseFactor();
-            val = op === '*' ? val * rhs : val / rhs;
-        }
-        return val;
-    };
-    const parseExpr = () => {
-        let val = parseTerm();
-        while (ausdruck[pos] === '+' || ausdruck[pos] === '-') {
-            const op = ausdruck[pos++];
-            const rhs = parseTerm();
-            val = op === '+' ? val + rhs : val - rhs;
-        }
-        return val;
-    };
-    const res = parseExpr();
-    if (pos !== ausdruck.length) err();
-    return res;
-}
-
 function werteMengeAus(eingabe) {
     if (eingabe === undefined || eingabe === null) return 0;
     const clean = String(eingabe).replace(/[^0-9+\-*/().]/g, '');
     if (!clean) return 0;
     try {
-        const res = berechneMengenAusdruck(clean);
+        let pos = 0;
+        const parseFactor = () => {
+            if (clean[pos] === '(') { pos++; const v = parseExpr(); pos++; return v; }
+            if (clean[pos] === '-') { pos++; return -parseFactor(); }
+            if (clean[pos] === '+') { pos++; return parseFactor(); }
+            const start = pos;
+            while (pos < clean.length && /[0-9.]/.test(clean[pos])) pos++;
+            return parseFloat(clean.slice(start, pos)) || 0;
+        };
+        const parseTerm = () => {
+            let v = parseFactor();
+            while (clean[pos] === '*' || clean[pos] === '/') {
+                const op = clean[pos++];
+                const rhs = parseFactor();
+                v = op === '*' ? v * rhs : v / rhs;
+            }
+            return v;
+        };
+        const parseExpr = () => {
+            let v = parseTerm();
+            while (clean[pos] === '+' || clean[pos] === '-') {
+                const op = clean[pos++];
+                const rhs = parseTerm();
+                v = op === '+' ? v + rhs : v - rhs;
+            }
+            return v;
+        };
+        const res = parseExpr();
         return Number.isFinite(res) ? Math.round(res) : 0;
     } catch { return 0; }
 }
@@ -177,28 +142,23 @@ function normalisiereRegalText(text) {
 }
 
 function vergleicheRegalNamen(a, b, sortFactor = 1) {
-    const aN = extrahiereRegalName(a), bN = extrahiereRegalName(b);
-    return aN.localeCompare(bN, 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
+    return extrahiereRegalName(a).localeCompare(extrahiereRegalName(b), 'de', { numeric: true, sensitivity: 'base' }) * sortFactor;
 }
 
 function textEnthaeltRegal(text, regalName) {
     const nReg = normalisiereRegalText(regalName), nTxt = normalisiereRegalText(text);
     if (!nReg || !nTxt) return false;
     if (nTxt.includes(`(${nReg})`)) return true;
-    const match = [...String(text).matchAll(/\(([^)]+)\)/g)].some(m => normalisiereRegalText(m[1]) === nReg);
-    if (match) return true;
     return new RegExp(`(^|[^a-z0-9])${nReg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(nTxt) || (nReg.length > 3 && nTxt.includes(nReg));
 }
 
 function ermittleRegalSchluessel(bestaende) {
-    const r = (bestaende || []).map(b => extrahiereRegalName(b.lagerorte?.name || '')).filter(Boolean).sort((a, b) => vergleicheRegalNamen(a, b));
-    return r[0] || '';
+    return (bestaende || []).map(b => extrahiereRegalName(b.lagerorte?.name || '')).filter(Boolean).sort(vergleicheRegalNamen)[0] || '';
 }
 
 function formatArtikelId(id) {
-    if (!id) return '–';
     const n = Number(id);
-    return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id);
+    return Number.isFinite(n) ? '#' + String(n).padStart(5, '0') : String(id || '–');
 }
 
 function aktualisiereMengeEingabeFarbe(feld) {
@@ -213,8 +173,7 @@ function aktualisiereMengeEingabeFarbe(feld) {
 function setzeBestandStatus(row, status = 'zahl', nachkauf = false) {
     if (!row) return;
     const input = row.querySelector('.new-menge, .edit-menge-input');
-    const infBtn = row.querySelector('.bestand-btn-inf');
-    const minusBtn = row.querySelector('.bestand-btn-minus');
+    const infBtn = row.querySelector('.bestand-btn-inf'), minusBtn = row.querySelector('.bestand-btn-minus');
     const nachkaufWrap = row.querySelector('.bestand-nachkauf-wrap');
     const nachkaufCheckbox = row.querySelector('.bestand-nachkauf-checkbox');
     const isStrich = status === 'strich-ok' || status === 'strich-warn';
@@ -231,15 +190,15 @@ function setzeBestandStatus(row, status = 'zahl', nachkauf = false) {
         else { if (input.value !== '-') input.setAttribute('data-old-value', input.value || '0'); input.value = '-'; }
         aktualisiereMengeEingabeFarbe(input);
     }
-
     if (infBtn) {
         infBtn.classList.toggle('active-inf', status === 'inf');
         infBtn.style.background = status === 'inf' ? '#27ae60' : '#95a5a6';
     }
     if (minusBtn) {
+        const isWarn = status === 'strich-warn' || nachkauf;
         minusBtn.classList.toggle('active-minus-ok', status === 'strich-ok' && !nachkauf);
-        minusBtn.classList.toggle('active-minus-warn', status === 'strich-warn' || nachkauf);
-        minusBtn.style.background = (status === 'strich-warn' || nachkauf) ? '#c0392b' : (status === 'strich-ok' ? '#27ae60' : '#95a5a6');
+        minusBtn.classList.toggle('active-minus-warn', isWarn);
+        minusBtn.style.background = isWarn ? '#c0392b' : (status === 'strich-ok' ? '#27ae60' : '#95a5a6');
     }
 }
 
@@ -274,6 +233,34 @@ function toggleNachkaufCheckbox(chk) {
     if (row && row.dataset.stockMode?.startsWith('strich')) setzeBestandStatus(row, chk.checked ? 'strich-warn' : 'strich-ok', chk.checked);
 }
 
+// -------------------------------------------------------------------------
+// ZENTRALE DB- & AUDIT-HELFER (DRY)
+// -------------------------------------------------------------------------
+async function dbAudit(payload, ereignis = 'entnahme') {
+    try {
+        await dbClient.from('lager_entnahme_audit').insert([{ ...payload, ereignis, created_at: new Date().toISOString() }]);
+    } catch (e) {
+        console.warn('Audit-Insert ignoriert:', e);
+    }
+}
+
+async function syncEntnahme(entId, mats) {
+    const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
+    if (!saubereMats.length) {
+        await dbClient.from('lager_entnahmen').delete().eq('id', entId);
+        return [];
+    }
+    await dbClient.from('lager_entnahmen').update({ materialien: saubereMats }).eq('id', entId);
+    return saubereMats;
+}
+
+function matchesArtikel(a, criteria) {
+    if (criteria.bestandId && a.bestand_id && Number(a.bestand_id) === Number(criteria.bestandId)) return true;
+    if (criteria.artikelId && a.artikel_id && Number(a.artikel_id) === Number(criteria.artikelId)) return true;
+    if (criteria.name && a.name && a.name.trim().toLowerCase() === criteria.name.trim().toLowerCase()) return true;
+    return false;
+}
+
 // =========================================================================
 // 3. AUTH & SESSION
 // =========================================================================
@@ -281,19 +268,13 @@ function pruefeLoginSperre() {
     try {
         const lockUntil = Number(window.localStorage.getItem(STORAGE_KEYS.LOCK)) || 0;
         const now = Date.now();
-        if (lockUntil > now) {
-            const verbleibendMs = lockUntil - now;
-            const minuten = Math.ceil(verbleibendMs / 60000);
-            return { gesperrt: true, minuten };
-        }
+        if (lockUntil > now) return { gesperrt: true, minuten: Math.ceil((lockUntil - now) / 60000) };
         if (lockUntil > 0) {
             window.localStorage.removeItem(STORAGE_KEYS.LOCK);
             window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
         }
-        return { gesperrt: false };
-    } catch {
-        return { gesperrt: false };
-    }
+    } catch {}
+    return { gesperrt: false };
 }
 
 function registriereLoginFehlversuch() {
@@ -303,22 +284,13 @@ function registriereLoginFehlversuch() {
             const lockUntil = Date.now() + LOGIN_LOCK_DURATION_MS;
             window.localStorage.setItem(STORAGE_KEYS.LOCK, String(lockUntil));
             window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
-            const minuten = Math.ceil(LOGIN_LOCK_DURATION_MS / 60000);
-            return { gesperrt: true, minuten };
-        } else {
-            window.localStorage.setItem(STORAGE_KEYS.ATTEMPTS, String(attempts));
-            return { gesperrt: false, verbleibend: MAX_LOGIN_ATTEMPTS - attempts };
+            return { gesperrt: true, minuten: Math.ceil(LOGIN_LOCK_DURATION_MS / 60000) };
         }
+        window.localStorage.setItem(STORAGE_KEYS.ATTEMPTS, String(attempts));
+        return { gesperrt: false, verbleibend: MAX_LOGIN_ATTEMPTS - attempts };
     } catch {
         return { gesperrt: false, verbleibend: 0 };
     }
-}
-
-function loescheLoginSperre() {
-    try {
-        window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
-        window.localStorage.removeItem(STORAGE_KEYS.LOCK);
-    } catch {}
 }
 
 function setzeAuthToken(token) {
@@ -351,22 +323,14 @@ function speichereLokaleSession(user) {
 
 async function handleLogin() {
     const errEl = $('login-error');
-
     const sperre = pruefeLoginSperre();
     if (sperre.gesperrt) {
-        if (errEl) {
-            errEl.style.display = 'block';
-            errEl.innerText = `Zu viele Fehlversuche! Bitte in ca. ${sperre.minuten} Minute(n) erneut versuchen.`;
-        }
+        if (errEl) { errEl.style.display = 'block'; errEl.innerText = `Zu viele Fehlversuche! Bitte in ca. ${sperre.minuten} Minute(n) erneut versuchen.`; }
         return;
     }
-
     const p = $('login-password').value;
     if (!p) {
-        if (errEl) {
-            errEl.style.display = 'block';
-            errEl.innerText = 'Bitte gib ein Passwort ein!';
-        }
+        if (errEl) { errEl.style.display = 'block'; errEl.innerText = 'Bitte gib ein Passwort ein!'; }
         return;
     }
 
@@ -375,14 +339,11 @@ async function handleLogin() {
         const status = registriereLoginFehlversuch();
         if (errEl) {
             errEl.style.display = 'block';
-            if (status.gesperrt) {
-                errEl.innerText = `Zu viele Fehlversuche! Login für ${status.minuten} Minuten gesperrt.`;
-            } else {
-                errEl.innerText = `Falsches Passwort! Noch ${status.verbleibend} Versuch(e) übrig.`;
-            }
+            errEl.innerText = status.gesperrt ? `Zu viele Fehlversuche! Login für ${status.minuten} Minuten gesperrt.` : `Falsches Passwort! Noch ${status.verbleibend} Versuch(e) übrig.`;
         }
     } else {
-        loescheLoginSperre();
+        window.localStorage.removeItem(STORAGE_KEYS.ATTEMPTS);
+        window.localStorage.removeItem(STORAGE_KEYS.LOCK);
         if (errEl) errEl.style.display = 'none';
         $('login-password').value = '';
         $('login-overlay').style.display = 'none';
@@ -390,7 +351,7 @@ async function handleLogin() {
         showToast('Erfolgreich angemeldet!');
         ladeKistenBenutzerSession();
         await ladeAlles();
-        pruefeUndZeigeOnboarding();
+        if (!window.localStorage.getItem(STORAGE_KEYS.ONBOARDING)) openModalById('onboardingModal');
     }
 }
 
@@ -402,9 +363,6 @@ function handleLogout() {
     $('login-overlay').style.display = 'flex';
 }
 
-function pruefeUndZeigeOnboarding() {
-    if (!window.localStorage.getItem(STORAGE_KEYS.ONBOARDING)) oeffneOnboarding();
-}
 function oeffneOnboarding() { openModalById('onboardingModal'); }
 function schliesseOnboarding() { closeModal('onboardingModal'); window.localStorage.setItem(STORAGE_KEYS.ONBOARDING, '1'); }
 function openRechtliches(e, mid) { if (e) e.preventDefault(); openModalById(mid); }
@@ -414,11 +372,11 @@ function openRechtliches(e, mid) { if (e) e.preventDefault(); openModalById(mid)
 // =========================================================================
 async function ladeAlles() {
     try {
-        await ladeLagerorte();
-        await ladePacklistenDaten();
-        await ladeBestand();
-        await ladeEntnahmeDaten();
-        bereinigeAlteLogs();
+        await Promise.all([ladeLagerorte(), ladePacklistenDaten(), ladeBestand(), ladeEntnahmeDaten()]);
+        try {
+            const einJahrVorher = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+            await dbClient.from('lager_entnahmen').delete().lt('created_at', einJahrVorher);
+        } catch {}
     } catch (err) {
         console.error('Fehler beim Initialisieren der Daten:', err);
     }
@@ -430,81 +388,42 @@ async function ladeAlles() {
 async function ladeLagerorte() {
     const { data } = await dbClient.from('lagerorte').select('*').order('name');
     alleLagerorte = data || [];
-
-    const selectsNeu = document.querySelectorAll('.new-ort');
-    selectsNeu.forEach(sel => populateSelect(sel, alleLagerorte));
+    document.querySelectorAll('.new-ort').forEach(sel => populateSelect(sel, alleLagerorte));
 }
 
 async function ladePacklistenDaten() {
-    const { data: listData } = await dbClient.from('packlisten').select('*').order('name');
+    const [{ data: listData }, { data: posData }] = await Promise.all([
+        dbClient.from('packlisten').select('*').order('name'),
+        dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)')
+    ]);
     packlisten = listData || [];
-    populateSelect($('packlisten-auswahl'), packlisten, { defaultOption: '-- Wähle Resort / Packliste --' });
-
-    const { data: posData } = await dbClient.from('packlisten_positionen').select('*, artikel(id, name, kategorie, einheit)');
     packlistenPositionen = posData || [];
+    populateSelect($('packlisten-auswahl'), packlisten, { defaultOption: '-- Wähle Resort / Packliste --' });
 }
 
 async function ladeBestand() {
-    const { data: alleArt } = await dbClient.from('artikel').select('*').order('name');
+    const [{ data: alleArt }, { data }] = await Promise.all([
+        dbClient.from('artikel').select('*').order('name'),
+        dbClient.from('bestand').select(`
+            id, menge, alte_menge, created_at, artikel_id, lagerort_id, 
+            artikel (id, name, kategorie, einheit, kommentar, wichtig, typ), 
+            lagerorte (id, name, nfc_code)
+        `).order('id')
+    ]);
     alleArtikelInfos = alleArt || [];
 
-    let { data } = await dbClient.from('bestand').select(`
-        id, menge, alte_menge, created_at, artikel_id, lagerort_id, 
-        artikel (id, name, kategorie, einheit, kommentar, wichtig, typ), 
-        lagerorte (id, name, nfc_code)
-    `).order('id');
-
     aktuelleDaten = (data || []).map(z => {
-        const m = Number(z.menge);
-        const alt = z.alte_menge !== null && z.alte_menge !== undefined ? Number(z.alte_menge) : null;
-
-        let soll, ist;
-        if (m === -1 || m === -2 || m === -3) {
-            soll = m;
-            ist = m;
-        } else {
-            soll = (alt !== null && alt >= 0 && alt >= m) ? alt : m;
-            ist = m;
-        }
-
-        return {
-            ...z,
-            soll_menge: soll,
-            ist_menge: ist
-        };
+        const m = Number(z.menge), alt = z.alte_menge !== null && z.alte_menge !== undefined ? Number(z.alte_menge) : null;
+        const isSpecial = m === -1 || m === -2 || m === -3;
+        const soll = isSpecial ? m : ((alt !== null && alt >= 0 && alt >= m) ? alt : m);
+        return { ...z, soll_menge: soll, ist_menge: isSpecial ? m : m };
     });
 
-    aktualisiereFilterDropdown(aktuelleDaten);
-}
-
-async function ladeEntnahmeDaten() {
-    try {
-        const { data: bData } = await dbClient.from('lager_entnahme_benutzer_vorlagen').select('*').order('name');
-        alleBenutzerVorlagen = bData || [];
-
-        const { data: eData } = await dbClient.from('lager_entnahmen').select('*').order('created_at', { ascending: false });
-        offeneEntnahmen = eData || [];
-
-        const { data: aData } = await dbClient.from('lager_entnahme_audit').select('*').order('created_at', { ascending: false }).limit(100);
-        auditLogs = aData || [];
-    } catch (err) {
-        console.warn('Hinweis beim Laden der Entnahmedaten:', err);
-    }
-}
-
-async function bereinigeAlteLogs() {
-    try {
-        const einJahrVorher = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
-        await dbClient.from('lager_entnahmen').delete().lt('created_at', einJahrVorher);
-    } catch (e) {}
-}
-
-function aktualisiereFilterDropdown(daten) {
     const katDropdown = $('kategorie-filter'), datalist = $('kategorie-liste'), comboDropdown = $('ort-filter-combo');
     const artikelDatalist = $('kategorie-artikel-liste');
     const kategorien = new Set(), regale = new Set();
 
-    (daten || []).forEach(z => {
+    aktuelleDaten.forEach(z => {
         if (z.artikel?.kategorie?.trim()) kategorien.add(z.artikel.kategorie.trim());
         const regal = extrahiereRegalName(z.lagerorte?.name || '');
         if (regal) regale.add(regal);
@@ -513,24 +432,36 @@ function aktualisiereFilterDropdown(daten) {
     if (katDropdown) populateSelect(katDropdown, Array.from(kategorien).sort(), { defaultOption: 'Alle Kategorien' });
     if (comboDropdown) {
         comboDropdown.innerHTML = '<option value="">Alle Orte</option>';
-        (alleLagerorte || []).forEach(o => comboDropdown.add(new Option('📍 ' + o.name, 'ort:' + o.id)));
+        alleLagerorte.forEach(o => comboDropdown.add(new Option('📍 ' + o.name, 'ort:' + o.id)));
         Array.from(regale).sort(vergleicheRegalNamen).forEach(r => comboDropdown.add(new Option('🏷️ Regal: ' + r, 'regal:' + r)));
     }
     if (datalist) datalist.innerHTML = Array.from(kategorien).sort().map(k => `<option value="${escapeHtml(k)}">`).join('');
-    if (artikelDatalist) artikelDatalist.innerHTML = (alleArtikelInfos || []).map(a => `<option value="${escapeHtml(a.name)}">`).join('');
+    if (artikelDatalist) artikelDatalist.innerHTML = alleArtikelInfos.map(a => `<option value="${escapeHtml(a.name)}">`).join('');
+}
+
+async function ladeEntnahmeDaten() {
+    try {
+        const [{ data: bData }, { data: eData }, { data: aData }] = await Promise.all([
+            dbClient.from('lager_entnahme_benutzer_vorlagen').select('*').order('name'),
+            dbClient.from('lager_entnahmen').select('*').order('created_at', { ascending: false }),
+            dbClient.from('lager_entnahme_audit').select('*').order('created_at', { ascending: false }).limit(100)
+        ]);
+        alleBenutzerVorlagen = bData || [];
+        offeneEntnahmen = eData || [];
+        auditLogs = aData || [];
+    } catch (err) {
+        console.warn('Hinweis beim Laden der Entnahmedaten:', err);
+    }
 }
 
 // =========================================================================
 // 5. KISTEN-, BENUTZER- & ENTNAHME-SYSTEM
 // =========================================================================
-
 function ladeKistenBenutzerSession() {
     try {
         const raw = window.sessionStorage.getItem(STORAGE_KEYS.KISTEN_BENUTZER);
-        if (raw) aktiverKistenBenutzer = JSON.parse(raw);
-    } catch (e) {
-        aktiverKistenBenutzer = null;
-    }
+        aktiverKistenBenutzer = raw ? JSON.parse(raw) : null;
+    } catch { aktiverKistenBenutzer = null; }
     aktualisiereKistenBenutzerUI();
 }
 
@@ -539,15 +470,13 @@ function speichereKistenBenutzerSession(user) {
     try {
         if (user) window.sessionStorage.setItem(STORAGE_KEYS.KISTEN_BENUTZER, JSON.stringify(user));
         else window.sessionStorage.removeItem(STORAGE_KEYS.KISTEN_BENUTZER);
-    } catch (e) {}
+    } catch {}
     aktualisiereKistenBenutzerUI();
 }
 
 function aktualisiereKistenBenutzerUI() {
-    const banner = $('kisten-benutzer-banner');
-    const nameEl = $('kisten-aktiver-benutzer-name');
-    const badgeEl = $('kisten-aktiver-benutzer-badge');
-    const iconEl = $('kisten-benutzer-icon');
+    const banner = $('kisten-benutzer-banner'), nameEl = $('kisten-aktiver-benutzer-name');
+    const badgeEl = $('kisten-aktiver-benutzer-badge'), iconEl = $('kisten-benutzer-icon');
     if (!banner || !nameEl) return;
 
     if (!aktiverKistenBenutzer) {
@@ -578,17 +507,12 @@ function oeffneKistenBenutzerModal() {
     renderKistenBenutzerAuswahlListe();
     const wrap = $('kisten-neuer-benutzer-form');
     if (wrap) wrap.style.display = 'none';
-    const nameInp = $('kisten-neuer-benutzer-name');
-    if (nameInp) nameInp.value = '';
-    const kontaktInp = $('kisten-neuer-benutzer-kontakt');
-    if (kontaktInp) kontaktInp.value = '';
+    if ($('kisten-neuer-benutzer-name')) $('kisten-neuer-benutzer-name').value = '';
+    if ($('kisten-neuer-benutzer-kontakt')) $('kisten-neuer-benutzer-kontakt').value = '';
     openModalById('kistenBenutzerModal');
 }
 
-function schliesseKistenBenutzerModal() {
-    closeModal('kistenBenutzerModal');
-}
-
+function schliesseKistenBenutzerModal() { closeModal('kistenBenutzerModal'); }
 function toggleNeuerBenutzerForm() {
     const el = $('kisten-neuer-benutzer-form');
     if (!el) return;
@@ -597,28 +521,18 @@ function toggleNeuerBenutzerForm() {
 }
 
 function waehleKistenBenutzer(vorlageId) {
-    const v = (alleBenutzerVorlagen || []).find(b => String(b.id) === String(vorlageId));
+    const v = alleBenutzerVorlagen.find(b => String(b.id) === String(vorlageId));
     if (!v) return;
-    speichereKistenBenutzerSession({
-        id: v.id,
-        name: v.name,
-        kontakt: v.kontakt || '',
-        isHelper: false
-    });
+    speichereKistenBenutzerSession({ id: v.id, name: v.name, kontakt: v.kontakt || '', isHelper: false });
     schliesseKistenBenutzerModal();
     showToast(`👤 Angemeldet als: ${v.name}`);
     if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
 }
 
 function waehleHelferAccount() {
-    speichereKistenBenutzerSession({
-        id: null,
-        name: 'Helfer',
-        kontakt: '',
-        isHelper: true
-    });
+    speichereKistenBenutzerSession({ id: null, name: 'Helfer', kontakt: '', isHelper: true });
     schliesseKistenBenutzerModal();
-    showToast('🤝 Als Helfer angemeldet (Ausbuchen ist gesperrt)');
+    showToast('🤝 Als Helfer angemeldet (Ausbuchen gesperrt)');
     if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
 }
 
@@ -638,12 +552,7 @@ async function speichereUndWaehleNeuenBenutzer() {
 
     await ladeEntnahmeDaten();
     const neu = (data && data[0]) ? data[0] : { id: null, name, kontakt };
-    speichereKistenBenutzerSession({
-        id: neu.id,
-        name: neu.name,
-        kontakt: neu.kontakt || '',
-        isHelper: false
-    });
+    speichereKistenBenutzerSession({ id: neu.id, name: neu.name, kontakt: neu.kontakt || '', isHelper: false });
     schliesseKistenBenutzerModal();
     showToast(`👤 Angelegt & ausgewählt: ${name}`);
     if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
@@ -651,15 +560,13 @@ async function speichereUndWaehleNeuenBenutzer() {
 
 async function loescheBenutzerVorlage(id, name, ev) {
     if (ev) ev.stopPropagation();
-    if (!confirm(`Möchtest du den Benutzer "${name}" wirklich unwiderruflich löschen?`)) return;
+    if (!confirm(`Möchtest du "${name}" wirklich löschen?`)) return;
 
     const { error } = await dbClient.from('lager_entnahme_benutzer_vorlagen').delete().eq('id', id);
     if (error) return showToast('Fehler beim Löschen: ' + error.message, 'error');
 
     showToast(`Benutzer "${name}" gelöscht.`);
-    if (aktiverKistenBenutzer && String(aktiverKistenBenutzer.id) === String(id)) {
-        speichereKistenBenutzerSession(null);
-    }
+    if (aktiverKistenBenutzer && String(aktiverKistenBenutzer.id) === String(id)) speichereKistenBenutzerSession(null);
     await ladeEntnahmeDaten();
     renderKistenBenutzerAuswahlListe();
 }
@@ -668,11 +575,7 @@ function renderKistenBenutzerAuswahlListe() {
     const container = $('kisten-benutzer-liste');
     if (!container) return;
     const suchText = ($('kisten-benutzer-such-input')?.value || '').toLowerCase().trim();
-
-    const liste = (alleBenutzerVorlagen || []).filter(v => {
-        if (!suchText) return true;
-        return (v.name || '').toLowerCase().includes(suchText) || (v.kontakt || '').toLowerCase().includes(suchText);
-    });
+    const liste = alleBenutzerVorlagen.filter(v => !suchText || (v.name || '').toLowerCase().includes(suchText) || (v.kontakt || '').toLowerCase().includes(suchText));
 
     if (!liste.length) {
         container.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine passenden Personen gefunden.</p>';
@@ -689,57 +592,39 @@ function renderKistenBenutzerAuswahlListe() {
                     ${v.kontakt ? `<div style="font-size:0.82em; color:#7f8c8d; margin-top:2px;">📞 ${escapeHtml(v.kontakt)}</div>` : ''}
                 </div>
                 <div style="display:flex; gap:6px; align-items:center;">
-                    <button type="button" class="btn" style="background:${isCurrent ? '#2980b9' : '#27ae60'}; padding:6px 12px; font-size:0.85em; width:auto; min-height:36px;" onclick="waehleKistenBenutzer('${v.id}')">
-                        ${isCurrent ? '✓ Aktiv' : 'Auswählen'}
-                    </button>
-                    <button type="button" class="btn" style="background:#e74c3c; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="loescheBenutzerVorlage('${v.id}', '${escapedName}', event)" title="Benutzer löschen">
-                        🗑️
-                    </button>
+                    <button type="button" class="btn" style="background:${isCurrent ? '#2980b9' : '#27ae60'}; padding:6px 12px; font-size:0.85em; width:auto; min-height:36px;" onclick="waehleKistenBenutzer('${v.id}')">${isCurrent ? '✓ Aktiv' : 'Auswählen'}</button>
+                    <button type="button" class="btn" style="background:#e74c3c; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="loescheBenutzerVorlage('${v.id}', '${escapedName}', event)" title="Benutzer löschen">🗑️</button>
                 </div>
-            </div>
-        `;
+            </div>`;
     }).join('');
 }
 
 function gibKistenBestand(lid) {
-    return (aktuelleDaten || []).filter(z => String(z.lagerort_id) === String(lid))
-        .sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de'));
+    return aktuelleDaten.filter(z => String(z.lagerort_id) === String(lid)).sort((a, b) => (a.artikel?.name || '').localeCompare(b.artikel?.name || '', 'de'));
 }
 
 function ermittleAlleKistenEntnahmen(lid) {
-    return (offeneEntnahmen || []).filter(e => {
-        const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        return mats.some(m => String(m.kiste_id) === String(lid));
-    });
+    return offeneEntnahmen.filter(e => Array.isArray(e.materialien) && e.materialien.some(m => String(m.kiste_id) === String(lid)));
 }
 
 function ermittleKistenStatusCell(lid, bestand) {
     const entnahmen = ermittleAlleKistenEntnahmen(lid);
     const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
 
-    if (!entnahmen.length) {
-        if (fehlt) return '<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>';
-        return '<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>';
-    }
-
-    const istGanzeKiste = entnahmen.length === 1 && entnahmen[0].materialien?.some(m => String(m.kiste_id) === String(lid) && m.ganze_kiste);
-    if (istGanzeKiste) {
+    if (!entnahmen.length) return fehlt ? '<span style="color:#c0392b; font-weight:bold;">🔴 Teile fehlen</span>' : '<span style="color:#27ae60; font-weight:bold;">✔️ Vollzählig</span>';
+    if (entnahmen.length === 1 && entnahmen[0].materialien?.some(m => String(m.kiste_id) === String(lid) && m.ganze_kiste)) {
         return `<span style="color:#d35400; font-weight:bold;">📤 Bei ${escapeHtml(entnahmen[0].name)}</span>`;
     }
-
     return '<span style="color:#e67e22; font-weight:bold;">⚠️ Teilentnahme (siehe Prüfen)</span>';
 }
 
 function extrahiereEntnahmePositionen(ent) {
     const res = [];
-    const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-    mats.forEach((m, matIdx) => {
+    (Array.isArray(ent.materialien) ? ent.materialien : []).forEach((m, matIdx) => {
         if (Array.isArray(m.artikel) && m.artikel.length > 0) {
             m.artikel.forEach((a, artIdx) => {
                 res.push({
-                    entnahmeId: ent.id,
-                    matIdx,
-                    artIdx,
+                    entnahmeId: ent.id, matIdx, artIdx,
                     kisteId: m.kiste_id ? Number(m.kiste_id) : null,
                     kisteName: m.kiste_name || 'Kiste',
                     ganzeKiste: Boolean(m.ganze_kiste),
@@ -750,33 +635,17 @@ function extrahiereEntnahmePositionen(ent) {
                     typ: a.typ || 'zaehlbar'
                 });
             });
-        } else if (m.kiste_name && m.kiste_id && m.ganze_kiste) {
-            res.push({
-                entnahmeId: ent.id,
-                matIdx,
-                artIdx: null,
-                kisteId: Number(m.kiste_id),
-                kisteName: m.kiste_name,
-                ganzeKiste: true,
-                bestandId: null,
-                artikelId: null,
-                name: m.kiste_name + ' (Ganze Kiste)',
-                menge: 1,
-                typ: 'kiste'
-            });
         } else {
             res.push({
-                entnahmeId: ent.id,
-                matIdx,
-                artIdx: null,
+                entnahmeId: ent.id, matIdx, artIdx: null,
                 kisteId: m.kiste_id ? Number(m.kiste_id) : null,
                 kisteName: m.kiste_name || null,
-                ganzeKiste: false,
+                ganzeKiste: Boolean(m.ganze_kiste),
                 bestandId: m.bestand_id ? Number(m.bestand_id) : null,
                 artikelId: m.artikel_id ? Number(m.artikel_id) : null,
-                name: m.name || m.label || 'Material',
+                name: m.ganze_kiste ? `${m.kiste_name} (Ganze Kiste)` : (m.name || m.label || 'Material'),
                 menge: Number(m.menge) || 1,
-                typ: m.typ || 'zaehlbar'
+                typ: m.ganze_kiste ? 'kiste' : (m.typ || 'zaehlbar')
             });
         }
     });
@@ -789,92 +658,65 @@ async function bereinigeKistenEntnahmenUeberhang(lid) {
     let gabAenderung = false;
 
     for (const b of bestand) {
-        const soll = Number(b.soll_menge) || 0;
-        const ist = Number(b.ist_menge) || 0;
+        const soll = Number(b.soll_menge) || 0, ist = Number(b.ist_menge) || 0;
         if (soll <= 0 || ist < 0) continue;
         const maxFehlend = Math.max(0, soll - ist);
 
-        const matchingEnts = [];
         let totalGebucht = 0;
+        const matchingEntries = [];
 
-        (offeneEntnahmen || []).forEach(ent => {
-            const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-            mats.forEach(m => {
-                if (String(m.kiste_id) !== String(lid)) return;
-                if (Array.isArray(m.artikel)) {
-                    m.artikel.forEach(a => {
-                        const match = (a.bestand_id && a.bestand_id === b.id) ||
-                                      (a.artikel_id && a.artikel_id === b.artikel_id) ||
-                                      (a.name && a.name.toLowerCase() === (b.artikel?.name || '').toLowerCase());
-                        if (match) {
-                            totalGebucht += Number(a.menge) || 0;
-                            matchingEnts.push({ ent, m, a });
-                        }
-                    });
-                }
+        offeneEntnahmen.forEach(ent => {
+            (Array.isArray(ent.materialien) ? ent.materialien : []).forEach(m => {
+                if (Number(m.kiste_id) !== Number(lid) || !Array.isArray(m.artikel)) return;
+                m.artikel.forEach(a => {
+                    if (matchesArtikel(a, { bestandId: b.id, artikelId: b.artikel_id, name: b.artikel?.name })) {
+                        totalGebucht += Number(a.menge) || 0;
+                        matchingEntries.push({ ent, a });
+                    }
+                });
             });
         });
 
         if (totalGebucht > maxFehlend) {
             let ueberhang = totalGebucht - maxFehlend;
-            // Neueste Entnahmen zuerst reduzieren
-            matchingEnts.sort((x, y) => new Date(y.ent.created_at) - new Date(x.ent.created_at));
+            matchingEntries.sort((x, y) => new Date(y.ent.created_at) - new Date(x.ent.created_at));
 
-            for (const item of matchingEnts) {
+            const touchedEnts = new Set();
+            for (const item of matchingEntries) {
                 if (ueberhang <= 0) break;
                 const abzug = Math.min(ueberhang, item.a.menge);
                 item.a.menge -= abzug;
                 ueberhang -= abzug;
+                touchedEnts.add(item.ent);
                 gabAenderung = true;
+            }
 
-                const mats = item.ent.materialien;
-                mats.forEach(m => {
-                    if (Array.isArray(m.artikel)) {
-                        m.artikel = m.artikel.filter(art => art.menge > 0);
-                    }
-                });
-                const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
-
-                if (!saubereMats.length) {
-                    await dbClient.from('lager_entnahmen').delete().eq('id', item.ent.id);
-                    item.ent.materialien = [];
-                } else {
-                    await dbClient.from('lager_entnahmen').update({ materialien: saubereMats }).eq('id', item.ent.id);
-                    item.ent.materialien = saubereMats;
-                }
+            for (const ent of touchedEnts) {
+                ent.materialien.forEach(m => { if (Array.isArray(m.artikel)) m.artikel = m.artikel.filter(a => a.menge > 0); });
+                ent.materialien = await syncEntnahme(ent.id, ent.materialien);
             }
         }
     }
-
-    if (gabAenderung) {
-        await ladeEntnahmeDaten();
-    }
+    if (gabAenderung) await ladeEntnahmeDaten();
 }
 
 async function oeffneKistenCheck(lid) {
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(lid));
+    const ort = alleLagerorte.find(o => String(o.id) === String(lid));
     if (!ort) return;
     kistenCheckAktuelleId = lid;
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
     $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
 
-    // Einmalig eventuelle Altdaten-Überhänge bereinigen
     await bereinigeKistenEntnahmenUeberhang(lid);
 
     const ausbuchenBtn = $('kiste-ausbuchen-btn');
     if (ausbuchenBtn) {
-        if (aktiverKistenBenutzer?.isHelper) {
-            ausbuchenBtn.disabled = true;
-            ausbuchenBtn.style.opacity = '0.4';
-            ausbuchenBtn.style.cursor = 'not-allowed';
-            ausbuchenBtn.title = 'Helfer können keine Kisten ausbuchen';
-        } else {
-            ausbuchenBtn.disabled = false;
-            ausbuchenBtn.style.opacity = '1';
-            ausbuchenBtn.style.cursor = 'pointer';
-            ausbuchenBtn.title = 'Ganze Kiste ausbuchen';
-        }
+        const isH = aktiverKistenBenutzer?.isHelper;
+        ausbuchenBtn.disabled = Boolean(isH);
+        ausbuchenBtn.style.opacity = isH ? '0.4' : '1';
+        ausbuchenBtn.style.cursor = isH ? 'not-allowed' : 'pointer';
+        ausbuchenBtn.title = isH ? 'Helfer können keine Kisten ausbuchen' : 'Ganze Kiste ausbuchen';
     }
 
     const boxEntnahmen = ermittleAlleKistenEntnahmen(lid);
@@ -884,60 +726,36 @@ async function oeffneKistenCheck(lid) {
             banner.style.display = 'none';
         } else {
             banner.style.display = 'block';
-
-            // Zusammenfassung nach Person für diese Kiste
             const personGroups = new Map();
             boxEntnahmen.forEach(ent => {
                 const userKey = ent.benutzer_vorlage_id ? String(ent.benutzer_vorlage_id) : (ent.name || 'unbekannt').trim().toLowerCase();
                 if (!personGroups.has(userKey)) {
-                    personGroups.set(userKey, {
-                        name: ent.name || 'Unbekannt',
-                        kontakt: ent.kontakt || '',
-                        neuestesDatum: new Date(ent.created_at),
-                        artikelMap: new Map(),
-                        ganzeKiste: false
-                    });
+                    personGroups.set(userKey, { name: ent.name || 'Unbekannt', kontakt: ent.kontakt || '', datum: new Date(ent.created_at), artikelMap: new Map(), ganzeKiste: false });
                 }
-                const pGrp = personGroups.get(userKey);
-                if (new Date(ent.created_at) > pGrp.neuestesDatum) pGrp.neuestesDatum = new Date(ent.created_at);
+                const grp = personGroups.get(userKey);
+                if (new Date(ent.created_at) > grp.datum) grp.datum = new Date(ent.created_at);
 
-                const posList = extrahiereEntnahmePositionen(ent).filter(p => String(p.kisteId) === String(lid));
-                posList.forEach(p => {
-                    if (p.ganzeKiste) {
-                        pGrp.ganzeKiste = true;
-                    } else {
-                        const aKey = p.artikelId ? 'art_' + p.artikelId : 'name_' + p.name;
-                        const exist = pGrp.artikelMap.get(aKey) || { name: p.name, menge: 0 };
-                        exist.menge += p.menge;
-                        pGrp.artikelMap.set(aKey, exist);
+                extrahiereEntnahmePositionen(ent).filter(p => String(p.kisteId) === String(lid)).forEach(p => {
+                    if (p.ganzeKiste) { grp.ganzeKiste = true; }
+                    else {
+                        const k = p.artikelId ? 'art_' + p.artikelId : 'n_' + p.name;
+                        const ex = grp.artikelMap.get(k) || { name: p.name, menge: 0 };
+                        ex.menge += p.menge;
+                        grp.artikelMap.set(k, ex);
                     }
                 });
             });
 
-            let bannerHtml = `⚠️ <strong>Offene Entnahmen aus dieser Kiste (${personGroups.size} Person(en)):</strong><div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">`;
-            personGroups.forEach(pGrp => {
-                let details = '';
-                if (pGrp.ganzeKiste) {
-                    details = '<strong>Ganze Kiste entnommen</strong>';
-                } else {
-                    const parts = [];
-                    pGrp.artikelMap.forEach(item => {
-                        parts.push(`<strong>${item.menge}x</strong> ${escapeHtml(item.name)}`);
-                    });
-                    details = parts.join(', ') || 'Teilentnahme';
-                }
-
-                const datumStr = pGrp.neuestesDatum.toLocaleString('de-DE');
-                bannerHtml += `
+            let bHtml = `⚠️ <strong>Offene Entnahmen aus dieser Kiste (${personGroups.size} Person(en)):</strong><div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">`;
+            personGroups.forEach(grp => {
+                const details = grp.ganzeKiste ? '<strong>Ganze Kiste entnommen</strong>' : Array.from(grp.artikelMap.values()).map(i => `<strong>${i.menge}x</strong> ${escapeHtml(i.name)}`).join(', ') || 'Teilentnahme';
+                bHtml += `
                     <div style="font-size:0.92em; padding:4px 0; border-bottom:1px dashed #f0ad4e;">
-                        👤 <strong>${escapeHtml(pGrp.name)}</strong>: ${details} 
-                        <span style="color:#7f8c8d; font-size:0.85em;">(letzte Entnahme: ${datumStr})</span>
-                        ${pGrp.kontakt ? ` &bull; 📞 ${escapeHtml(pGrp.kontakt)}` : ''}
-                    </div>
-                `;
+                        👤 <strong>${escapeHtml(grp.name)}</strong>: ${details} <span style="color:#7f8c8d; font-size:0.85em;">(letzte Entnahme: ${grp.datum.toLocaleString('de-DE')})</span>
+                        ${grp.kontakt ? ` &bull; 📞 ${escapeHtml(grp.kontakt)}` : ''}
+                    </div>`;
             });
-            bannerHtml += `</div>`;
-            banner.innerHTML = bannerHtml;
+            banner.innerHTML = bHtml + '</div>';
         }
     }
 
@@ -978,34 +796,22 @@ function renderKistenInhaltListe(lid) {
         else if (ist === -3) statusText = '<span class="bestand-status-pill warn">-</span> 🔴 Nachkaufen nötig';
         else {
             statusText = `Im Lager: <strong>${ist}</strong> von max. <strong>${soll}</strong> ${einheit}`;
-            if (fehlt > 0) statusText += ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>`;
-            else statusText += ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
+            statusText += fehlt > 0 ? ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>` : ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
         }
 
-        let bedienElementeHtml = '';
+        let bedienHtml = '';
         if (istVerbrauch) {
-            bedienElementeHtml = `
+            bedienHtml = `
                 <div style="display:flex; gap:6px;">
-                    <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)" title="Ausreichend vorhanden">🟢 Ausreichend</button>
-                    <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)" title="Auf Einkaufsliste setzen">🔴 Nachkaufen</button>
-                </div>
-            `;
+                    <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)">🟢 Ausreichend</button>
+                    <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)">🔴 Nachkaufen</button>
+                </div>`;
         } else {
-            const canMinus = ist > 0 && !isHelper;
-            const canPlus = ist < soll;
-
-            let minusButton = '';
-            if (isHelper) {
-                minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; opacity:0.35; cursor:not-allowed;" title="Helfer können nicht ausbuchen" disabled>−</button>`;
-            } else {
-                minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück entnehmen' : 'Bereits 0 vorhanden'}">−</button>`;
-            }
-
-            bedienElementeHtml = `
-                ${minusButton}
+            const canMinus = ist > 0 && !isHelper, canPlus = soll <= 0 || ist < soll;
+            bedienHtml = `
+                <button class="btn btn-kiste-minus" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" ${!canMinus ? 'disabled' : ''}>−</button>
                 <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
-                <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : 'Bereits Maximalmenge erreicht'}">+</button>
-            `;
+                <button class="btn btn-kiste-plus" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" ${!canPlus ? 'disabled' : ''}>+</button>`;
         }
 
         card.innerHTML = `
@@ -1014,21 +820,15 @@ function renderKistenInhaltListe(lid) {
                 <div class="kiste-item-subtext" style="font-size:0.85em; color:#555; margin-top:3px;">${statusText}</div>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
-                ${bedienElementeHtml}
+                ${bedienHtml}
                 <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
-            </div>
-        `;
+            </div>`;
         wrapper.appendChild(card);
     });
 }
 
 async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
-    await dbClient.from('bestand').update({
-        menge: statusWert,
-        alte_menge: statusWert,
-        created_at: new Date().toISOString()
-    }).eq('id', bestandId);
-
+    await dbClient.from('bestand').update({ menge: statusWert, alte_menge: statusWert, created_at: new Date().toISOString() }).eq('id', bestandId);
     showToast(statusWert === -3 ? '🔴 Auf Einkaufsliste gesetzt!' : '🟢 Als ausreichend markiert!');
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
@@ -1038,119 +838,80 @@ async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
 // Schnelles Klick-Batching (Debounced Optimistic UI) für + / -
 // -------------------------------------------------------------------------
 function aendereArtikelMengeInKiste(bestandId, delta) {
-    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+    const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
 
-    let currentVirtualIst = Number(eintrag.ist_menge);
-    if (pendingArtikelUpdates.has(bestandId)) {
-        currentVirtualIst = pendingArtikelUpdates.get(bestandId).targetMenge;
-    }
-    if (currentVirtualIst < 0) return;
+    const inputEl = $(`kiste-menge-${bestandId}`);
+    let currentVal = pendingArtikelUpdates.has(bestandId)
+        ? pendingArtikelUpdates.get(bestandId).targetMenge
+        : (inputEl && !Number.isNaN(parseInt(inputEl.value, 10)) ? parseInt(inputEl.value, 10) : Number(eintrag.ist_menge));
 
+    if (currentVal < 0) return;
     const soll = Number(eintrag.soll_menge) || 0;
+    const isHelper = aktiverKistenBenutzer?.isHelper;
 
     if (delta < 0) {
-        if (currentVirtualIst <= 0) {
-            return showToast('Bereits 0 vorhanden – kann nicht weiter entnommen werden!', 'warning');
-        }
-        if (!aktiverKistenBenutzer) {
-            showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning');
-            oeffneKistenBenutzerModal();
-            return;
-        }
-        if (aktiverKistenBenutzer.isHelper) {
-            return showToast('Helfer-Account: Ausbuchen ist gesperrt! Helfer können nur Material einbuchen.', 'warning');
-        }
-    } else if (delta > 0) {
-        if (soll > 0 && currentVirtualIst >= soll) {
-            return showToast(`Maximal ${soll} ${eintrag.artikel?.einheit || 'Stück'} möglich!`, 'warning');
-        }
+        if (currentVal <= 0) return showToast('Bereits 0 vorhanden – kann nicht weiter entnommen werden!', 'warning');
+        if (!aktiverKistenBenutzer) { showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning'); return oeffneKistenBenutzerModal(); }
+        if (isHelper) return showToast('Helfer-Account: Ausbuchen ist gesperrt!', 'warning');
+    } else if (delta > 0 && soll > 0 && currentVal >= soll) {
+        return showToast(`Maximal ${soll} ${eintrag.artikel?.einheit || 'Stück'} möglich!`, 'warning');
     }
 
-    const newTarget = currentVirtualIst + delta;
-    const currentAccumulatedDelta = (pendingArtikelUpdates.get(bestandId)?.delta || 0) + delta;
+    const newTarget = Math.max(0, soll > 0 ? Math.min(soll, currentVal + delta) : currentVal + delta);
+    if (newTarget === currentVal) return;
 
-    // 1. Sofortige UI-Aktualisierung (keine Wartezeit)
-    const inputEl = $(`kiste-menge-${bestandId}`);
-    if (inputEl) {
-        inputEl.value = newTarget;
-        aktualisiereMengeEingabeFarbe(inputEl);
-    }
+    const currentDelta = (pendingArtikelUpdates.get(bestandId)?.delta || 0) + (newTarget - currentVal);
+    eintrag.ist_menge = newTarget;
 
-    const card = $(`kiste-item-card-${bestandId}`) || inputEl?.closest('.kiste-item-card');
+    // 1. Sofortige UI-Aktualisierung
+    if (inputEl) { inputEl.value = newTarget; aktualisiereMengeEingabeFarbe(inputEl); }
+    const card = $(`kiste-item-card-${bestandId}`);
     if (card) {
         const fehlt = (soll > 0 && newTarget >= 0) ? Math.max(0, soll - newTarget) : 0;
-        const einheit = eintrag.artikel?.einheit || 'Stück';
-        let statusHtml = `Im Lager: <strong>${newTarget}</strong> von max. <strong>${soll}</strong> ${einheit}`;
-        if (fehlt > 0) statusHtml += ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>`;
-        else statusHtml += ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`;
-
-        const subTextEl = card.querySelector('.kiste-item-subtext') || card.querySelector('div[style*="font-size:0.85em"]');
-        if (subTextEl) subTextEl.innerHTML = statusHtml;
         card.classList.toggle('fehlend', fehlt > 0);
+        const sub = card.querySelector('.kiste-item-subtext');
+        if (sub) {
+            sub.innerHTML = `Im Lager: <strong>${newTarget}</strong> von max. <strong>${soll}</strong> ${eintrag.artikel?.einheit || 'Stück'}` +
+                (fehlt > 0 ? ` &bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen unterwegs</span>` : ` &bull; <span style="color:#27ae60;">✅ Vollzählig</span>`);
+        }
+        const mBtn = card.querySelector('.btn-kiste-minus'), pBtn = card.querySelector('.btn-kiste-plus');
+        if (mBtn && !isHelper) { mBtn.disabled = newTarget <= 0; mBtn.style.opacity = newTarget <= 0 ? '0.35' : '1'; mBtn.style.cursor = newTarget <= 0 ? 'not-allowed' : 'pointer'; }
+        if (pBtn) { const pMax = soll > 0 && newTarget >= soll; pBtn.disabled = pMax; pBtn.style.opacity = pMax ? '0.35' : '1'; pBtn.style.cursor = pMax ? 'not-allowed' : 'pointer'; }
     }
-
     if (navigator.vibrate) navigator.vibrate(30);
 
-    // 2. 500ms Timer: Nach dem letzten Klick wird gebündelt gespeichert
-    if (pendingArtikelUpdates.has(bestandId)) {
-        clearTimeout(pendingArtikelUpdates.get(bestandId).timer);
-    }
-
-    const timer = setTimeout(() => {
-        flushPendingArtikelUpdate(bestandId);
-    }, 500);
+    // 2. Debounce Timer (500ms)
+    if (pendingArtikelUpdates.has(bestandId)) clearTimeout(pendingArtikelUpdates.get(bestandId).timer);
+    const timer = setTimeout(() => flushPendingArtikelUpdate(bestandId), 500);
 
     pendingArtikelUpdates.set(bestandId, {
-        timer,
-        delta: currentAccumulatedDelta,
-        targetMenge: newTarget,
+        timer, delta: currentDelta, targetMenge: newTarget, sollMenge: soll,
         artikelName: eintrag.artikel?.name || 'Artikel',
-        artikelId: eintrag.artikel_id,
-        kisteId: eintrag.lagerort_id,
-        kisteName: eintrag.lagerorte?.name || 'Kiste',
-        einheit: eintrag.artikel?.einheit || 'Stück'
+        artikelId: eintrag.artikel_id, kisteId: eintrag.lagerort_id, kisteName: eintrag.lagerorte?.name || 'Kiste'
     });
 }
 
-// Bucht offene Entnahmen ab, wenn jemand Artikel per (+) oder Mengeneingabe zurücklegt
 async function reduziereOffeneEntnahmenFuerArtikel(kisteId, bestandId, artikelId, artikelName, mengeZurueck) {
     let verbleibend = mengeZurueck;
     const kIdNum = Number(kisteId);
 
-    // Sortierung: Bevorzuge aktiven Benutzer, dann neueste zuerst
-    const kandidaten = (offeneEntnahmen || []).filter(e => {
-        const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        return mats.some(m => Number(m.kiste_id) === kIdNum);
-    }).sort((a, b) => {
-        const aIsUser = aktiverKistenBenutzer && (
-            (aktiverKistenBenutzer.id && String(a.benutzer_vorlage_id) === String(aktiverKistenBenutzer.id)) ||
-            (a.name && a.name.toLowerCase() === aktiverKistenBenutzer.name.toLowerCase())
-        );
-        const bIsUser = aktiverKistenBenutzer && (
-            (aktiverKistenBenutzer.id && String(b.benutzer_vorlage_id) === String(aktiverKistenBenutzer.id)) ||
-            (b.name && b.name.toLowerCase() === aktiverKistenBenutzer.name.toLowerCase())
-        );
-        if (aIsUser && !bIsUser) return -1;
-        if (!aIsUser && bIsUser) return 1;
-        return new Date(b.created_at) - new Date(a.created_at);
-    });
+    const kandidaten = offeneEntnahmen.filter(e => Array.isArray(e.materialien) && e.materialien.some(m => Number(m.kiste_id) === kIdNum))
+        .sort((a, b) => {
+            const aIsU = aktiverKistenBenutzer && (String(a.benutzer_vorlage_id) === String(aktiverKistenBenutzer.id) || a.name === aktiverKistenBenutzer.name);
+            const bIsU = aktiverKistenBenutzer && (String(b.benutzer_vorlage_id) === String(aktiverKistenBenutzer.id) || b.name === aktiverKistenBenutzer.name);
+            return (bIsU ? 1 : 0) - (aIsU ? 1 : 0) || (new Date(b.created_at) - new Date(a.created_at));
+        });
 
     for (const ent of kandidaten) {
         if (verbleibend <= 0) break;
         let geaendert = false;
-        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-
-        mats.forEach(m => {
+        (ent.materialien || []).forEach(m => {
             if (verbleibend <= 0 || Number(m.kiste_id) !== kIdNum) return;
-
             if (Array.isArray(m.artikel)) {
                 m.artikel.forEach(a => {
                     if (verbleibend <= 0) return;
-                    const match = (bestandId && a.bestand_id === bestandId) ||
-                                  (artikelId && a.artikel_id === artikelId) ||
-                                  (a.name && a.name.toLowerCase() === (artikelName || '').toLowerCase());
-                    if (match) {
+                    if (matchesArtikel(a, { bestandId, artikelId, name: artikelName })) {
                         const abzug = Math.min(verbleibend, a.menge);
                         a.menge -= abzug;
                         verbleibend -= abzug;
@@ -1165,32 +926,11 @@ async function reduziereOffeneEntnahmenFuerArtikel(kisteId, bestandId, artikelId
         });
 
         if (geaendert) {
-            const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
-            if (!saubereMats.length) {
-                await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
-            } else {
-                await dbClient.from('lager_entnahmen').update({ materialien: saubereMats }).eq('id', ent.id);
-            }
-
-            try {
-                await dbClient.from('lager_entnahme_audit').insert([{
-                    name: ent.name,
-                    kontakt: ent.kontakt,
-                    benutzer_vorlage_id: ent.benutzer_vorlage_id,
-                    materialien: [{
-                        kiste_id: kIdNum,
-                        kiste_name: mats[0]?.kiste_name || 'Kiste',
-                        artikel: [{
-                            bestand_id: bestandId,
-                            artikel_id: artikelId,
-                            name: artikelName,
-                            menge: mengeZurueck - verbleibend
-                        }]
-                    }],
-                    ereignis: 'teilrueckgabe',
-                    created_at: new Date().toISOString()
-                }]);
-            } catch (e) {}
+            ent.materialien = await syncEntnahme(ent.id, ent.materialien);
+            dbAudit({
+                name: ent.name, kontakt: ent.kontakt, benutzer_vorlage_id: ent.benutzer_vorlage_id,
+                materialien: [{ kiste_id: kIdNum, kiste_name: ent.materialien[0]?.kiste_name || 'Kiste', artikel: [{ bestand_id: bestandId, artikel_id: artikelId, name: artikelName, menge: mengeZurueck - verbleibend }] }]
+            }, 'teilrueckgabe');
         }
     }
 }
@@ -1199,61 +939,35 @@ async function flushPendingArtikelUpdate(bestandId) {
     if (!pendingArtikelUpdates.has(bestandId)) return;
     const info = pendingArtikelUpdates.get(bestandId);
     pendingArtikelUpdates.delete(bestandId);
-
     if (info.delta === 0) return;
 
     try {
-        // 1. Bestand in Tabelle "bestand" aktualisieren
-        const { error: updErr } = await dbClient.from('bestand').update({
-            menge: info.targetMenge,
-            created_at: new Date().toISOString()
-        }).eq('id', bestandId);
-        if (updErr) throw updErr;
+        const payload = { menge: info.targetMenge, created_at: new Date().toISOString() };
+        if (info.sollMenge > 0) payload.alte_menge = info.sollMenge;
+        await dbClient.from('bestand').update(payload).eq('id', bestandId);
 
-        // 2. Netto-Minus: Entnahme neu erfassen
         if (info.delta < 0 && aktiverKistenBenutzer && !aktiverKistenBenutzer.isHelper) {
-            const entnommeneMenge = Math.abs(info.delta);
+            const entMenge = Math.abs(info.delta);
             const entnahmePayload = {
-                name: aktiverKistenBenutzer.name,
-                kontakt: aktiverKistenBenutzer.kontakt || '',
+                name: aktiverKistenBenutzer.name, kontakt: aktiverKistenBenutzer.kontakt || '',
                 benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
                 materialien: [{
-                    kiste_id: Number(info.kisteId),
-                    kiste_name: info.kisteName,
-                    ganze_kiste: false,
-                    artikel: [{
-                        bestand_id: bestandId,
-                        artikel_id: info.artikelId,
-                        name: info.artikelName,
-                        menge: entnommeneMenge,
-                        typ: 'zaehlbar'
-                    }]
+                    kiste_id: Number(info.kisteId), kiste_name: info.kisteName, ganze_kiste: false,
+                    artikel: [{ bestand_id: bestandId, artikel_id: info.artikelId, name: info.artikelName, menge: entMenge, typ: 'zaehlbar' }]
                 }],
                 created_at: new Date().toISOString()
             };
-
-            const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
-            if (insErr) throw insErr;
-
-            try {
-                await dbClient.from('lager_entnahme_audit').insert([{
-                    ...entnahmePayload,
-                    ereignis: 'entnahme'
-                }]);
-            } catch (auditErr) {}
-
-            showToast(`📤 ${entnommeneMenge}x "${info.artikelName}" an ${aktiverKistenBenutzer.name} ausgebucht!`);
-        } 
-        // 3. Netto-Plus: Offene Entnahmen für diesen Artikel reduzieren
-        else if (info.delta > 0) {
+            await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+            dbAudit(entnahmePayload, 'entnahme');
+            showToast(`📤 ${entMenge}x "${info.artikelName}" an ${aktiverKistenBenutzer.name} ausgebucht!`);
+        } else if (info.delta > 0) {
             await reduziereOffeneEntnahmenFuerArtikel(info.kisteId, bestandId, info.artikelId, info.artikelName, info.delta);
             showToast(`✅ ${info.delta}x "${info.artikelName}" wieder eingebucht.`);
         }
-
         await ladeAlles();
         if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
     } catch (err) {
-        console.error('Fehler beim Speichern der Bestandsänderung:', err);
+        console.error('Fehler beim Speichern:', err);
         showToast('Fehler beim Speichern: ' + (err.message || err), 'error');
         await ladeAlles();
         if (kistenCheckAktuelleId) renderKistenInhaltListe(kistenCheckAktuelleId);
@@ -1261,9 +975,7 @@ async function flushPendingArtikelUpdate(bestandId) {
 }
 
 async function flushAllPendingArtikelUpdates() {
-    if (!pendingArtikelUpdates.size) return;
-    const ids = Array.from(pendingArtikelUpdates.keys());
-    for (const bId of ids) {
+    for (const bId of Array.from(pendingArtikelUpdates.keys())) {
         if (pendingArtikelUpdates.has(bId)) {
             clearTimeout(pendingArtikelUpdates.get(bId).timer);
             await flushPendingArtikelUpdate(bId);
@@ -1271,130 +983,70 @@ async function flushAllPendingArtikelUpdates() {
     }
 }
 
-// -------------------------------------------------------------------------
-// Ganze Kiste ausbuchen & zurückbuchen
-// -------------------------------------------------------------------------
 async function frageKisteAusbuchen() {
     if (kisteAktionInArbeit) return;
     await flushAllPendingArtikelUpdates();
-
     if (!kistenCheckAktuelleId) return;
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(kistenCheckAktuelleId));
+
+    const ort = alleLagerorte.find(o => String(o.id) === String(kistenCheckAktuelleId));
     if (!ort) return;
-
-    if (!aktiverKistenBenutzer) {
-        showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning');
-        oeffneKistenBenutzerModal();
-        return;
-    }
-
-    if (aktiverKistenBenutzer.isHelper) {
-        return showToast('Helfer-Account: Ausbuchen ist gesperrt! Helfer können nur Material einbuchen.', 'warning');
-    }
+    if (!aktiverKistenBenutzer) { showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning'); return oeffneKistenBenutzerModal(); }
+    if (aktiverKistenBenutzer.isHelper) return showToast('Helfer-Account: Ausbuchen ist gesperrt!', 'warning');
 
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
-    const verfuegbare = bestand.filter(z => Number(z.ist_menge) > 0);
-    if (!verfuegbare.length) {
-        return showToast('In dieser Kiste ist aktuell kein Material zum Ausbuchen vorhanden.', 'warning');
-    }
-
+    if (!bestand.some(z => Number(z.ist_menge) > 0)) return showToast('Kein Material zum Ausbuchen vorhanden.', 'warning');
     if (!confirm(`Ganze Kiste "${ort.name}" an ${aktiverKistenBenutzer.name} ausbuchen?`)) return;
 
     kisteAktionInArbeit = true;
     try {
-        const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-            return dbClient.from('bestand').update({
-                menge: 0,
-                alte_menge: z.soll_menge || z.ist_menge,
-                created_at: new Date().toISOString()
-            }).eq('id', z.id);
-        });
-        await Promise.all(updates);
+        await Promise.all(bestand.filter(z => Number(z.ist_menge) >= 0).map(z => 
+            dbClient.from('bestand').update({ menge: 0, alte_menge: z.soll_menge || z.ist_menge, created_at: new Date().toISOString() }).eq('id', z.id)
+        ));
 
         const entnahmePayload = {
-            name: aktiverKistenBenutzer.name,
-            kontakt: aktiverKistenBenutzer.kontakt || '',
+            name: aktiverKistenBenutzer.name, kontakt: aktiverKistenBenutzer.kontakt || '',
             benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
             materialien: [{
-                kiste_id: Number(kistenCheckAktuelleId),
-                kiste_name: ort.name,
-                ganze_kiste: true,
-                artikel: bestand.map(b => ({
-                    bestand_id: b.id,
-                    artikel_id: b.artikel_id,
-                    name: b.artikel?.name,
-                    menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge,
-                    typ: b.artikel?.typ || 'zaehlbar'
-                }))
+                kiste_id: Number(kistenCheckAktuelleId), kiste_name: ort.name, ganze_kiste: true,
+                artikel: bestand.map(b => ({ bestand_id: b.id, artikel_id: b.artikel_id, name: b.artikel?.name, menge: b.ist_menge > 0 ? b.ist_menge : b.soll_menge, typ: b.artikel?.typ || 'zaehlbar' }))
             }],
             created_at: new Date().toISOString()
         };
-
-        const { error: insErr } = await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
-        if (insErr) throw insErr;
-
-        try {
-            await dbClient.from('lager_entnahme_audit').insert([{
-                ...entnahmePayload,
-                ereignis: 'entnahme'
-            }]);
-        } catch (auditErr) {}
+        await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+        dbAudit(entnahmePayload, 'entnahme');
 
         showToast(`📤 "${ort.name}" an ${aktiverKistenBenutzer.name} ausgebucht!`);
         await ladeAlles();
         oeffneKistenCheck(kistenCheckAktuelleId);
     } catch (err) {
-        console.error('Fehler beim Ausbuchen der Kiste:', err);
         showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
-    } finally {
-        kisteAktionInArbeit = false;
-    }
+    } finally { kisteAktionInArbeit = false; }
 }
 
 async function ganzeKisteZurueckbuchen() {
     if (kisteAktionInArbeit) return;
     await flushAllPendingArtikelUpdates();
-
     if (!kistenCheckAktuelleId) return;
-    const bestand = gibKistenBestand(kistenCheckAktuelleId);
 
+    const bestand = gibKistenBestand(kistenCheckAktuelleId);
     kisteAktionInArbeit = true;
     try {
-        const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+        await Promise.all(bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
             const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
-            return dbClient.from('bestand').update({
-                menge: soll,
-                created_at: new Date().toISOString()
-            }).eq('id', z.id);
-        });
-        await Promise.all(updates);
+            return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
+        }));
 
-        const offene = (offeneEntnahmen || []).filter(e => {
-            const mats = Array.isArray(e.materialien) ? e.materialien : [];
-            return mats.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId));
-        });
-
+        const offene = offeneEntnahmen.filter(e => Array.isArray(e.materialien) && e.materialien.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId)));
         for (const ent of offene) {
-            try {
-                await dbClient.from('lager_entnahme_audit').insert([{
-                    entnahme_id: ent.id,
-                    name: ent.name,
-                    kontakt: ent.kontakt,
-                    materialien: ent.materialien,
-                    ereignis: 'rueckgabe',
-                    created_at: new Date().toISOString()
-                }]);
-            } catch (e) {}
+            dbAudit({ entnahme_id: ent.id, name: ent.name, kontakt: ent.kontakt, materialien: ent.materialien }, 'rueckgabe');
             await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
         }
 
         if (navigator.vibrate) navigator.vibrate(200);
-        showToast('✅ Kiste vollständig zurückgebucht & Entnahme abgeschlossen!');
+        showToast('✅ Kiste vollständig zurückgebucht!');
         await ladeAlles();
         oeffneKistenCheck(kistenCheckAktuelleId);
-    } finally {
-        kisteAktionInArbeit = false;
-    }
+    } finally { kisteAktionInArbeit = false; }
 }
 
 async function speichereKisteMengeInput(bId, rawVal) {
@@ -1402,55 +1054,30 @@ async function speichereKisteMengeInput(bId, rawVal) {
         clearTimeout(pendingArtikelUpdates.get(bId).timer);
         pendingArtikelUpdates.delete(bId);
     }
-
-    const eintrag = (aktuelleDaten || []).find(b => b.id === bId);
+    const eintrag = aktuelleDaten.find(b => b.id === bId);
     if (!eintrag) return;
-    const alterWert = Number(eintrag.ist_menge) || 0;
-    const soll = Number(eintrag.soll_menge) || 0;
-    let val = werteMengeAus(rawVal);
-    if (soll > 0 && val > soll) {
-        showToast(`Maximal ${soll} ${eintrag.artikel?.einheit || 'Stück'} möglich!`, 'warning');
-        val = soll;
-    }
-    if (val < 0) val = 0;
+    const alterWert = Number(eintrag.ist_menge) || 0, soll = Number(eintrag.soll_menge) || 0;
+    let val = Math.max(0, werteMengeAus(rawVal));
+    if (soll > 0 && val > soll) { showToast(`Maximal ${soll} möglich!`, 'warning'); val = soll; }
 
     if (aktiverKistenBenutzer?.isHelper && val < alterWert) {
-        showToast('Helfer dürfen Bestände nicht verringern (nur einbuchen)!', 'warning');
-        renderKistenInhaltListe(kistenCheckAktuelleId);
-        return;
+        showToast('Helfer dürfen Bestände nicht verringern!', 'warning');
+        return renderKistenInhaltListe(kistenCheckAktuelleId);
     }
 
-    await dbClient.from('bestand').update({
-        menge: val,
-        created_at: new Date().toISOString()
-    }).eq('id', bId);
-
+    await dbClient.from('bestand').update({ menge: val, created_at: new Date().toISOString() }).eq('id', bId);
     const diff = val - alterWert;
     if (diff > 0) {
         await reduziereOffeneEntnahmenFuerArtikel(eintrag.lagerort_id, bId, eintrag.artikel_id, eintrag.artikel?.name, diff);
     } else if (diff < 0 && aktiverKistenBenutzer && !aktiverKistenBenutzer.isHelper) {
-        const entnommeneMenge = Math.abs(diff);
-        const entnahmePayload = {
-            name: aktiverKistenBenutzer.name,
-            kontakt: aktiverKistenBenutzer.kontakt || '',
-            benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
-            materialien: [{
-                kiste_id: Number(eintrag.lagerort_id),
-                kiste_name: eintrag.lagerorte?.name || 'Kiste',
-                ganze_kiste: false,
-                artikel: [{
-                    bestand_id: bId,
-                    artikel_id: eintrag.artikel_id,
-                    name: eintrag.artikel?.name || 'Artikel',
-                    menge: entnommeneMenge,
-                    typ: 'zaehlbar'
-                }]
-            }],
+        const entPayload = {
+            name: aktiverKistenBenutzer.name, kontakt: aktiverKistenBenutzer.kontakt || '', benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
+            materialien: [{ kiste_id: Number(eintrag.lagerort_id), kiste_name: eintrag.lagerorte?.name || 'Kiste', ganze_kiste: false, artikel: [{ bestand_id: bId, artikel_id: eintrag.artikel_id, name: eintrag.artikel?.name, menge: Math.abs(diff), typ: 'zaehlbar' }] }],
             created_at: new Date().toISOString()
         };
-        await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+        await dbClient.from('lager_entnahmen').insert([entPayload]);
+        dbAudit(entPayload, 'entnahme');
     }
-
     showToast(`Bestand: ${val} / ${soll}`);
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
@@ -1458,79 +1085,44 @@ async function speichereKisteMengeInput(bId, rawVal) {
 
 function toggleKistenEditForm() {
     const el = $('kisten-check-edit-bereich');
-    const istSichtbar = el.style.display !== 'none';
-    el.style.display = istSichtbar ? 'none' : 'block';
-    $('kiste-edit-toggle-btn').innerText = istSichtbar ? '⚙️ Inhalt bearbeiten' : 'Schließen';
+    const istS = el.style.display !== 'none';
+    el.style.display = istS ? 'none' : 'block';
+    $('kiste-edit-toggle-btn').innerText = istS ? '⚙️ Inhalt bearbeiten' : 'Schließen';
 }
 
 async function kistenCheckArtikelHinzufuegen() {
     const inp = $('kisten-check-artikel-input');
     const val = inp.value.trim();
     if (!val) return;
-
-    const art = (alleArtikelInfos || []).find(a => a.name.toLowerCase() === val.toLowerCase());
+    const art = alleArtikelInfos.find(a => a.name.toLowerCase() === val.toLowerCase());
     if (!art) return showToast(`Artikel "${val}" nicht gefunden.`, 'error');
 
-    const sonstigOrt = (alleLagerorte || []).find(o => 
-        o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
-        o.name.trim().toLowerCase() === 'sonstiges'
-    );
-
-    const sonstigEintrag = sonstigOrt 
-        ? (aktuelleDaten || []).find(b => b.artikel_id === art.id && String(b.lagerort_id) === String(sonstigOrt.id))
-        : null;
-
-    const kistenEintrag = (aktuelleDaten || []).find(b => 
-        b.artikel_id === art.id && String(b.lagerort_id) === String(kistenCheckAktuelleId)
-    );
+    const sonstigOrt = alleLagerorte.find(o => ['sonstiger lagerort', 'sonstiges'].includes(o.name.trim().toLowerCase()));
+    const sonstigEintrag = sonstigOrt ? aktuelleDaten.find(b => b.artikel_id === art.id && String(b.lagerort_id) === String(sonstigOrt.id)) : null;
+    const kistenEintrag = aktuelleDaten.find(b => b.artikel_id === art.id && String(b.lagerort_id) === String(kistenCheckAktuelleId));
 
     const aktuellInKiste = kistenEintrag ? Number(kistenEintrag.soll_menge >= 0 ? kistenEintrag.soll_menge : kistenEintrag.menge) : 0;
-    const verfuegbarSonstige = sonstigEintrag ? Number(sonstigEintrag.soll_menge >= 0 ? sonstigEintrag.soll_menge : sonstigEintrag.menge) : 0;
-    const maxMoeglich = aktuellInKiste + verfuegbarSonstige;
+    const verfSonstig = sonstigEintrag ? Number(sonstigEintrag.soll_menge >= 0 ? sonstigEintrag.soll_menge : sonstigEintrag.menge) : 0;
+    const maxMoeglich = aktuellInKiste + verfSonstig;
 
-    if (maxMoeglich <= 0) {
-        return showToast(`Kein Bestand von "${art.name}" bei "Sonstiger Lagerort" vorhanden (0 verfügbar).`, 'warning');
-    }
-
-    const promptText = `Wie viele "${art.name}" sollen in dieser Kiste liegen?\n` +
-        `(Maximal ${maxMoeglich} Stück möglich: ${verfuegbarSonstige} bei "Sonstiger Lagerort"${aktuellInKiste > 0 ? ` + ${aktuellInKiste} bereits in dieser Kiste` : ''})`;
-
-    const startMenge = prompt(promptText, String(maxMoeglich));
+    if (maxMoeglich <= 0) return showToast(`Kein Bestand von "${art.name}" bei "Sonstiger Lagerort" vorhanden.`, 'warning');
+    const startMenge = prompt(`Menge für "${art.name}" (Max. ${maxMoeglich}):`, String(maxMoeglich));
     if (startMenge === null) return;
-
     const zielMenge = werteMengeAus(startMenge);
-    if (zielMenge <= 0) return showToast('Bitte eine Menge größer als 0 eingeben.', 'warning');
-    if (zielMenge > maxMoeglich) return showToast(`Maximal ${maxMoeglich} Stück möglich!`, 'warning');
+    if (zielMenge <= 0 || zielMenge > maxMoeglich) return showToast(`Ungültige Menge (max. ${maxMoeglich})!`, 'warning');
 
     const diff = zielMenge - aktuellInKiste;
-    const neuerSonstigBestand = verfuegbarSonstige - diff;
+    const neuerSonstig = verfSonstig - diff;
 
     if (kistenEintrag) {
-        await dbClient.from('bestand').update({
-            menge: zielMenge,
-            alte_menge: zielMenge,
-            created_at: new Date().toISOString()
-        }).eq('id', kistenEintrag.id);
+        await dbClient.from('bestand').update({ menge: zielMenge, alte_menge: zielMenge, created_at: new Date().toISOString() }).eq('id', kistenEintrag.id);
     } else {
-        await dbClient.from('bestand').insert([{
-            artikel_id: art.id,
-            lagerort_id: Number(kistenCheckAktuelleId),
-            menge: zielMenge,
-            alte_menge: zielMenge,
-            created_at: new Date().toISOString()
-        }]);
+        await dbClient.from('bestand').insert([{ artikel_id: art.id, lagerort_id: Number(kistenCheckAktuelleId), menge: zielMenge, alte_menge: zielMenge, created_at: new Date().toISOString() }]);
     }
 
     if (sonstigEintrag) {
-        if (neuerSonstigBestand <= 0) {
-            await dbClient.from('bestand').delete().eq('id', sonstigEintrag.id);
-        } else {
-            await dbClient.from('bestand').update({
-                menge: neuerSonstigBestand,
-                alte_menge: neuerSonstigBestand,
-                created_at: new Date().toISOString()
-            }).eq('id', sonstigEintrag.id);
-        }
+        if (neuerSonstig <= 0) await dbClient.from('bestand').delete().eq('id', sonstigEintrag.id);
+        else await dbClient.from('bestand').update({ menge: neuerSonstig, alte_menge: neuerSonstig, created_at: new Date().toISOString() }).eq('id', sonstigEintrag.id);
     }
 
     inp.value = '';
@@ -1540,51 +1132,25 @@ async function kistenCheckArtikelHinzufuegen() {
 }
 
 async function entferneArtikelAusKiste(bestandId) {
-    if (!confirm('Diesen Artikel wirklich aus dieser Kiste entfernen und auf "Sonstiger Lagerort" setzen?')) return;
-
-    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+    if (!confirm('Artikel aus dieser Kiste entfernen und auf "Sonstiger Lagerort" verschieben?')) return;
+    const eintrag = aktuelleDaten.find(b => b.id === bestandId);
     if (!eintrag) return;
 
-    let sonstigOrt = (alleLagerorte || []).find(o => 
-        o.name.trim().toLowerCase() === 'sonstiger lagerort' || 
-        o.name.trim().toLowerCase() === 'sonstiges'
-    );
-
+    let sonstigOrt = alleLagerorte.find(o => ['sonstiger lagerort', 'sonstiges'].includes(o.name.trim().toLowerCase()));
     if (!sonstigOrt) {
-        const { data: neuerOrt, error: ortErr } = await dbClient.from('lagerorte').insert([{ name: 'Sonstiger Lagerort' }]).select();
-        if (ortErr || !neuerOrt || !neuerOrt.length) return showToast('Fehler beim Anlegen von Sonstiger Lagerort', 'error');
-        sonstigOrt = neuerOrt[0];
+        const { data } = await dbClient.from('lagerorte').insert([{ name: 'Sonstiger Lagerort' }]).select();
+        sonstigOrt = data[0];
         await ladeLagerorte();
     }
 
-    const existierenderEintrag = (aktuelleDaten || []).find(b => 
-        b.artikel_id === eintrag.artikel_id && 
-        String(b.lagerort_id) === String(sonstigOrt.id) && 
-        b.id !== bestandId
-    );
-
-    if (existierenderEintrag) {
-        let neueMenge;
-        if (Number(existierenderEintrag.menge) < 0 || Number(eintrag.menge) < 0) {
-            neueMenge = existierenderEintrag.menge;
-        } else {
-            neueMenge = Number(existierenderEintrag.menge) + Number(eintrag.menge);
-        }
-
-        await dbClient.from('bestand').update({
-            menge: neueMenge,
-            alte_menge: neueMenge,
-            created_at: new Date().toISOString()
-        }).eq('id', existierenderEintrag.id);
-
+    const exSonstig = aktuelleDaten.find(b => b.artikel_id === eintrag.artikel_id && String(b.lagerort_id) === String(sonstigOrt.id) && b.id !== bestandId);
+    if (exSonstig) {
+        const neueM = (Number(exSonstig.menge) < 0 || Number(eintrag.menge) < 0) ? exSonstig.menge : Number(exSonstig.menge) + Number(eintrag.menge);
+        await dbClient.from('bestand').update({ menge: neueM, alte_menge: neueM, created_at: new Date().toISOString() }).eq('id', exSonstig.id);
         await dbClient.from('bestand').delete().eq('id', bestandId);
     } else {
-        await dbClient.from('bestand').update({
-            lagerort_id: sonstigOrt.id,
-            created_at: new Date().toISOString()
-        }).eq('id', bestandId);
+        await dbClient.from('bestand').update({ lagerort_id: sonstigOrt.id, created_at: new Date().toISOString() }).eq('id', bestandId);
     }
-
     showToast(`Artikel auf "${sonstigOrt.name}" verschoben.`);
     await ladeAlles();
     renderKistenInhaltListe(kistenCheckAktuelleId);
@@ -1599,52 +1165,39 @@ async function schliesseKistenCheckModal() {
 // =========================================================================
 // 6. HARDWARE SCANNING (NFC & QR UNIVERSAL-SCAN)
 // =========================================================================
-
 async function verarbeiteUniversalScan(rawCode) {
     if (scanSperre.kisten) return;
     scanSperre.kisten = true;
-    setTimeout(() => scanSperre.kisten = false, 1500);
+    setTimeout(() => { scanSperre.kisten = false; }, 1500);
 
     const raw = String(rawCode || '').trim();
     let ortCode = null;
-    const mKisteUrl = /kistencheck=([^&\s]+)/i.exec(raw);
-    const mKistePref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
-    if (mKisteUrl) ortCode = decodeURIComponent(mKisteUrl[1]);
-    else if (mKistePref) ortCode = mKistePref[1].trim();
+    const mUrl = /kistencheck=([^&\s]+)/i.exec(raw), mPref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
+    if (mUrl) ortCode = decodeURIComponent(mUrl[1]);
+    else if (mPref) ortCode = mPref[1].trim();
     else ortCode = raw;
 
-    const ort = (alleLagerorte || []).find(o => o.nfc_code && o.nfc_code.toLowerCase() === ortCode.toLowerCase());
+    const ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === ortCode.toLowerCase());
     if (ort) {
         if (navigator.vibrate) navigator.vibrate(120);
-        oeffneKistenCheck(ort.id);
-        return;
+        return oeffneKistenCheck(ort.id);
     }
-
     showToast(`Code "${raw}" wurde nicht erkannt.`, 'error');
 }
 
 async function starteKistenNfc() {
-    if (aktiverNfcModus === 'kisten') {
-        deaktiviereNfc();
-        return showToast('NFC beendet.');
-    }
-
-    if (!('NDEFReader' in window) && typeof window.nfc === 'undefined') {
-        return showToast('Web-NFC wird von diesem Browser/Gerät nicht unterstützt.', 'error');
-    }
+    if (aktiverNfcModus === 'kisten') { deaktiviereNfc(); return showToast('NFC beendet.'); }
+    if (!('NDEFReader' in window) && typeof window.nfc === 'undefined') return showToast('Web-NFC wird nicht unterstützt.', 'error');
 
     aktiverNfcModus = 'kisten';
-    aktualisiereNfcUI(true);
+    const btn = $('tab-nfc-btn');
+    if (btn) { btn.classList.add('nfc-aktiv'); btn.innerText = '📶 NFC aktiv (Stopp)'; }
 
     if (typeof window.nfc !== 'undefined') {
         window.nfc.addNdefListener(evt => {
-            try {
-                const text = window.nfc.bytesToString(evt.tag?.ndefMessage?.[0]?.payload);
-                if (text) verarbeiteUniversalScan(text);
-            } catch {}
+            try { const txt = window.nfc.bytesToString(evt.tag?.ndefMessage?.[0]?.payload); if (txt) verarbeiteUniversalScan(txt); } catch {}
         });
-        showToast('📶 NFC aktiv: Kiste ans Handy halten.');
-        return;
+        return showToast('📶 NFC aktiv: Kiste ans Handy halten.');
     }
 
     try {
@@ -1667,15 +1220,8 @@ async function starteKistenNfc() {
 function deaktiviereNfc() {
     if (nfcAbortController) { nfcAbortController.abort(); nfcAbortController = null; }
     aktiverNfcModus = null;
-    aktualisiereNfcUI(false);
-}
-
-function aktualisiereNfcUI(aktiv) {
     const btn = $('tab-nfc-btn');
-    if (btn) {
-        btn.classList.toggle('nfc-aktiv', aktiv);
-        btn.innerText = aktiv ? '📶 NFC aktiv (Stopp)' : '📶 NFC-Scan';
-    }
+    if (btn) { btn.classList.remove('nfc-aktiv'); btn.innerText = '📶 NFC-Scan'; }
 }
 
 async function holeOderErzeugeOrtCode(ort) {
@@ -1690,84 +1236,50 @@ async function holeOderErzeugeOrtCode(ort) {
 
 async function schreibeNfcTagFuerOrt() {
     const oId = $('manage-ort-select').value;
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(oId));
+    const ort = alleLagerorte.find(o => String(o.id) === String(oId));
     if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
-
     const code = await holeOderErzeugeOrtCode(ort);
     ortSelectChanged();
 
-    const url = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
-
-    if (!('NDEFReader' in window)) return showToast('NFC-Schreiben im Browser nicht unterstützt.', 'error');
+    if (!('NDEFReader' in window)) return showToast('NFC-Schreiben nicht unterstützt.', 'error');
     try {
         const writer = new NDEFReader();
-        showToast('📶 Leeren NFC-Tag an das Handy halten…');
-        await writer.write({ records: [{ recordType: 'url', data: url }] });
+        showToast('📶 Leeren Tag an das Handy halten…');
+        await writer.write({ records: [{ recordType: 'url', data: `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}` }] });
         if (navigator.vibrate) navigator.vibrate(200);
         showToast(`✅ Tag für "${ort.name}" beschrieben!`);
-    } catch (err) {
-        showToast('Fehler beim Schreiben: ' + err.message, 'error');
-    }
+    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
 }
 
 function oeffneKistenKameraModal() {
-    const wrap = $('hub-camera-wrapper');
-    const status = $('hub-scanner-status');
-    const btnText = $('hub-kamera-text');
-    
-    if (wrap.style.display === 'block') {
-        stoppeHubKamera();
-        wrap.style.display = 'none';
-        return;
-    }
+    const wrap = $('hub-camera-wrapper'), status = $('hub-scanner-status'), btnText = $('hub-kamera-text');
+    if (wrap.style.display === 'block') return stoppeHubKamera();
 
     wrap.style.display = 'block';
     status.style.display = 'block';
     status.innerText = 'Kamera startet…';
     if (btnText) btnText.innerText = '✕ Kamera stoppen';
-    hubKameraAktiv = true;
 
-    if (aktiverQrScanner) {
-        try { aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {}
-    }
-
+    if (aktiverQrScanner) { try { aktiverQrScanner.stop(); aktiverQrScanner.clear(); } catch {} }
     aktiverQrScanner = new Html5Qrcode('hub-qr-reader');
-    aktiverQrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decoded) => {
-            status.innerText = 'Erkannt: ' + decoded;
-            stoppeHubKamera();
-            wrap.style.display = 'none';
-            verarbeiteUniversalScan(decoded);
-        },
-        () => {}
-    ).then(() => {
-        status.innerText = 'Bereit – QR-Code vor die Kamera halten.';
-    }).catch(err => {
-        showToast('Kamera konnte nicht gestartet werden: ' + err.message, 'error');
+    aktiverQrScanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 220, height: 220 } }, (decoded) => {
         stoppeHubKamera();
-        wrap.style.display = 'none';
-    });
+        verarbeiteUniversalScan(decoded);
+    }, () => {}).then(() => { status.innerText = 'Bereit – QR-Code vor die Kamera halten.'; })
+    .catch(err => { showToast('Kamera-Fehler: ' + err.message, 'error'); stoppeHubKamera(); });
 }
 
 function stoppeHubKamera() {
-    if (aktiverQrScanner) {
-        aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; });
-    }
-    const wrap = $('hub-camera-wrapper');
-    const status = $('hub-scanner-status');
-    const btnText = $('hub-kamera-text');
+    if (aktiverQrScanner) { aktiverQrScanner.stop().then(() => aktiverQrScanner.clear()).catch(() => {}).finally(() => { aktiverQrScanner = null; }); }
+    const wrap = $('hub-camera-wrapper'), status = $('hub-scanner-status'), btnText = $('hub-kamera-text');
     if (wrap) wrap.style.display = 'none';
     if (status) status.style.display = 'none';
     if (btnText) btnText.innerText = 'Kamera-Scan';
-    hubKameraAktiv = false;
 }
 
 // =========================================================================
-// 7. LAGER-MODUS (TABELLE & SORTIERUNG)
+// 7. LAGER-MODUS (TABELLE & FILTER)
 // =========================================================================
-
 function wendeFilterAn() {
     const katFilter = $('kategorie-filter')?.value || 'ALLE';
     const comboFilter = $('ort-filter-combo')?.value || '';
@@ -1776,31 +1288,21 @@ function wendeFilterAn() {
     let ortFilter = 'ALLE', regalTemp = '';
     if (comboFilter.startsWith('ort:')) ortFilter = comboFilter.substring(4);
     else if (comboFilter.startsWith('regal:')) regalTemp = comboFilter.substring(6);
-
     aktiverRegalFilter = regalTemp || (comboFilter === '' ? '' : aktiverRegalFilter);
 
-    let gefiltert = (aktuelleDaten || []).filter(z => {
-        if (suchText) {
-            const matches = [z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name, String(z.artikel?.id ?? '')]
-                .some(field => (field || '').toLowerCase().includes(suchText));
-            if (!matches) return false;
-        }
+    const gefiltert = aktuelleDaten.filter(z => {
+        if (suchText && ![z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name, String(z.artikel?.id ?? '')].some(f => (f || '').toLowerCase().includes(suchText))) return false;
         if (aktiverRegalFilter && ![z.artikel?.name, z.artikel?.kategorie, z.lagerorte?.name].some(t => textEnthaeltRegal(t, aktiverRegalFilter))) return false;
         if (katFilter !== 'ALLE' && z.artikel?.kategorie !== katFilter) return false;
         if (ortFilter !== 'ALLE' && String(z.lagerort_id) !== String(ortFilter)) return false;
         return true;
     });
-
     tabelleAktualisieren(gefiltert);
 }
 
 function ortComboChanged() {
     const val = $('ort-filter-combo')?.value || '';
-    if (val.startsWith('regal:')) {
-        aktiverRegalFilter = val.substring(6);
-    } else {
-        aktiverRegalFilter = '';
-    }
+    aktiverRegalFilter = val.startsWith('regal:') ? val.substring(6) : '';
     wendeFilterAn();
 }
 
@@ -1809,21 +1311,14 @@ function toggleSortierung() {
     $('btn-sort').innerText = sortAscending ? 'A-Z' : 'Z-A';
     wendeFilterAn();
 }
-
-function toggleGruppe(name) {
-    if (offeneGruppen.has(name)) offeneGruppen.delete(name); else offeneGruppen.add(name);
-    wendeFilterAn();
-}
+function toggleGruppe(name) { offeneGruppen.has(name) ? offeneGruppen.delete(name) : offeneGruppen.add(name); wendeFilterAn(); }
 function toggleAlleGruppen() {
     isAllOpen = !isAllOpen;
     offeneGruppen.clear();
-    if (isAllOpen) (aktuelleDaten || []).forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
+    if (isAllOpen) aktuelleDaten.forEach(z => { if (z.artikel) offeneGruppen.add(z.artikel.kategorie || 'Ohne Kategorie'); });
     wendeFilterAn();
 }
-function toggleAlleArtikelSichtbarkeit() {
-    zeigeAlleArtikel = !zeigeAlleArtikel;
-    wendeFilterAn();
-}
+function toggleAlleArtikelSichtbarkeit() { zeigeAlleArtikel = !zeigeAlleArtikel; wendeFilterAn(); }
 
 function tabelleAktualisieren(daten) {
     const tbody = $('lager-tabelle');
@@ -1834,33 +1329,29 @@ function tabelleAktualisieren(daten) {
     const isSearching = suchText.length > 0 || aktiverRegalFilter !== '';
 
     const resMap = {};
-    (packlistenPositionen || []).forEach(p => {
+    packlistenPositionen.forEach(p => {
         if (!p.artikel_id) return;
         if (!resMap[p.artikel_id]) resMap[p.artikel_id] = { gesamt: 0, listen: {} };
         resMap[p.artikel_id].gesamt += Number(p.menge);
-        const pl = (packlisten || []).find(l => String(l.id) === String(p.packliste_id));
-        const plName = pl ? pl.name : 'Unbekannt';
-        resMap[p.artikel_id].listen[plName] = (resMap[p.artikel_id].listen[plName] || 0) + Number(p.menge);
+        const pl = packlisten.find(l => String(l.id) === String(p.packliste_id));
+        resMap[p.artikel_id].listen[pl ? pl.name : 'Unbekannt'] = (resMap[p.artikel_id].listen[pl ? pl.name : 'Unbekannt'] || 0) + Number(p.menge);
     });
 
-    const anzeigeDaten = (zeigeAlleArtikel || isSearching) ? daten : (daten || []).filter(z => z.artikel?.wichtig);
-
+    const anzeigeDaten = (zeigeAlleArtikel || isSearching) ? daten : daten.filter(z => z.artikel?.wichtig);
     const gruppen = {};
-    (anzeigeDaten || []).forEach(z => {
+    anzeigeDaten.forEach(z => {
         if (!z.artikel) return;
         const kat = z.artikel.kategorie || 'Ohne Kategorie';
-        if (!gruppen[kat]) gruppen[kat] = [];
-        gruppen[kat].push(z);
+        (gruppen[kat] = gruppen[kat] || []).push(z);
     });
 
     const sortFactor = sortAscending ? 1 : -1;
     const sortedKategorien = Object.keys(gruppen).sort((a, b) => {
-        if (a === 'Ohne Kategorie') return 1;
-        if (b === 'Ohne Kategorie') return -1;
+        if (a === 'Ohne Kategorie') return 1; if (b === 'Ohne Kategorie') return -1;
         return a.localeCompare(b, 'de') * sortFactor;
     });
 
-    if (anzeigeDaten.length === 0) {
+    if (!anzeigeDaten.length) {
         tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; padding:25px; color:#666;">${zeigeAlleArtikel ? 'Keine Artikel vorhanden.' : 'Keine markierten Artikel vorhanden.'}</td></tr>`;
         return;
     }
@@ -1874,7 +1365,6 @@ function tabelleAktualisieren(daten) {
             if (Number(z.menge) === -1) hatUnendlich = true;
             else if (Number(z.menge) >= 0) ordnerSumme += Number(z.soll_menge >= 0 ? z.soll_menge : z.menge);
         });
-        const sumText = hatUnendlich ? (ordnerSumme > 0 ? `${ordnerSumme} + ∞` : '∞') : ordnerSumme;
 
         const headerTr = document.createElement('tr');
         headerTr.style.cursor = 'pointer';
@@ -1883,7 +1373,7 @@ function tabelleAktualisieren(daten) {
             <td colspan="3" style="background-color:#e2e8f0; color:#2c3e50; font-weight:bold; padding:12px; user-select:none;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span>${isOpen ? '📂' : '📁'} ${escapeHtml(katName)}</span>
-                    <span class="summen-badge">Gesamt: ${sumText}</span>
+                    <span class="summen-badge">Gesamt: ${hatUnendlich ? (ordnerSumme > 0 ? `${ordnerSumme} + ∞` : '∞') : ordnerSumme}</span>
                 </div>
             </td>`;
         tbody.appendChild(headerTr);
@@ -1895,17 +1385,12 @@ function tabelleAktualisieren(daten) {
             artMap.get(z.artikel_id).bestaende.push(z);
         });
 
-        const prefixArtikelSets = {};
-        const prefixSums = {};
-        const prefixInf = {};
-
+        const prefixArtikelSets = {}, prefixSums = {}, prefixInf = {};
         artMap.forEach(grp => {
             const parts = grp.artikel.name.trim().split(' ');
             if (parts.length > 1) {
                 const pref = parts[0];
-                if (!prefixArtikelSets[pref]) prefixArtikelSets[pref] = new Set();
-                prefixArtikelSets[pref].add(grp.artikel.id);
-
+                (prefixArtikelSets[pref] = prefixArtikelSets[pref] || new Set()).add(grp.artikel.id);
                 grp.bestaende.forEach(b => {
                     if (Number(b.menge) === -1) prefixInf[pref] = true;
                     else if (Number(b.menge) >= 0) prefixSums[pref] = (prefixSums[pref] || 0) + Number(b.soll_menge >= 0 ? b.soll_menge : b.menge);
@@ -1914,83 +1399,58 @@ function tabelleAktualisieren(daten) {
         });
 
         const sortierteArtikel = Array.from(artMap.entries()).map(([artId, grp]) => ({
-            artId, grp,
-            sortRegal: ermittleRegalSchluessel(grp.bestaende),
-            sortName: grp.artikel.name.trim()
-        })).sort((a, b) => {
-            const regalCmp = vergleicheRegalNamen(a.sortRegal, b.sortRegal, sortFactor);
-            return regalCmp !== 0 ? regalCmp : a.sortName.localeCompare(b.sortName, 'de', { numeric: true }) * sortFactor;
-        });
+            artId, grp, sortRegal: ermittleRegalSchluessel(grp.bestaende), sortName: grp.artikel.name.trim()
+        })).sort((a, b) => vergleicheRegalNamen(a.sortRegal, b.sortRegal, sortFactor) || a.sortName.localeCompare(b.sortName, 'de', { numeric: true }) * sortFactor);
 
         let currentPrefix = null;
         sortierteArtikel.forEach(({ grp, artId }) => {
             grp.bestaende.sort((a, b) => vergleicheRegalNamen(a.lagerorte?.name || '', b.lagerorte?.name || '', sortFactor));
             const parts = grp.artikel.name.trim().split(' ');
+            const hatMehrere = parts.length > 1 && prefixArtikelSets[parts[0]]?.size > 1;
+            const pref = hatMehrere ? parts[0] : null;
 
-            const hatMehrereVerschiedeneArtikel = parts.length > 1 && prefixArtikelSets[parts[0]] && prefixArtikelSets[parts[0]].size > 1;
-            const pref = hatMehrereVerschiedeneArtikel ? parts[0] : null;
-
-            if (hatMehrereVerschiedeneArtikel && currentPrefix !== pref) {
-                const pSum = prefixSums[pref] || 0;
-                const pInf = prefixInf[pref];
-                const pText = pInf ? (pSum > 0 ? `${pSum} + ∞` : '∞') : pSum;
+            if (hatMehrere && currentPrefix !== pref) {
+                const pSum = prefixSums[pref] || 0, pInf = prefixInf[pref];
                 const subTr = document.createElement('tr');
                 subTr.innerHTML = `
                     <td colspan="3" style="padding-left:25px; background:#fafafa; color:#7f8c8d; font-size:0.85em; font-weight:bold; border-bottom:1px dashed #ddd; user-select:none;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span>🏷️ ${escapeHtml(pref)}</span>
-                            <span class="sub-sum-badge">Gesamt: ${pText}</span>
+                            <span class="sub-sum-badge">Gesamt: ${pInf ? (pSum > 0 ? `${pSum} + ∞` : '∞') : pSum}</span>
                         </div>
                     </td>`;
                 tbody.appendChild(subTr);
                 currentPrefix = pref;
-            } else if (!hatMehrereVerschiedeneArtikel) {
-                currentPrefix = null;
-            }
+            } else if (!hatMehrere) { currentPrefix = null; }
 
             const tr = document.createElement('tr');
             tr.style.cursor = isEditMode ? 'pointer' : 'default';
-            tr.onclick = (e) => {
-                if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId);
-            };
+            tr.onclick = (e) => { if (!['INPUT', 'BUTTON', 'SVG', 'PATH'].includes(e.target.tagName)) openEditModal(artId); };
 
-            const displayName = hatMehrereVerschiedeneArtikel ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
+            const displayName = hatMehrere ? grp.artikel.name.trim().substring(pref.length).trim() : grp.artikel.name;
             const wichtigBadge = grp.artikel.wichtig ? '<span class="badge-markiert">MARKIERT</span>' : '';
             const hatKommentar = Boolean(grp.artikel.kommentar?.trim());
             const kommentarIcon = isEditMode ? `
                 <span onclick="openKommentarModal('${artId}', event)" style="cursor:pointer; margin-left:8px; vertical-align:middle; opacity:${hatKommentar ? '1' : '0.5'};" title="Notiz bearbeiten">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="${hatKommentar ? '#3498db' : 'none'}" stroke="${hatKommentar ? '#3498db' : '#bdc3c7'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
                 </span>` : '';
-            const kommentarAnzeige = !isEditMode && hatKommentar ? `
-                <div class="bestand-kommentar-anzeige">
-                    <span style="color:#3498db;">💬</span>
-                    <span style="word-break:break-word;">${escapeHtml(grp.artikel.kommentar.trim())}</span>
-                </div>` : '';
+            const kommentarAnzeige = !isEditMode && hatKommentar ? `<div class="bestand-kommentar-anzeige"><span style="color:#3498db;">💬</span><span style="word-break:break-word;">${escapeHtml(grp.artikel.kommentar.trim())}</span></div>` : '';
 
-            let resHtml = '';
             const res = resMap[artId];
-            if (res && res.gesamt > 0) {
-                let hoverText = '<strong>Reserviert für:</strong><br>' + Object.entries(res.listen).map(([l, m]) => `• ${m}x in <i>${escapeHtml(l)}</i><br>`).join('');
-                resHtml = `<div class="bestand-reserviert-info" data-hover-type="res" data-hover-content="${hoverText}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">📦 Reserviert: ${res.gesamt}</div>`;
-            }
+            const resHtml = res?.gesamt > 0 ? `<div class="bestand-reserviert-info" data-hover-type="res" data-hover-content="${escapeHtml('<strong>Reserviert für:</strong><br>' + Object.entries(res.listen).map(([l, m]) => `• ${m}x in <i>${escapeHtml(l)}</i><br>`).join(''))}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">📦 Reserviert: ${res.gesamt}</div>` : '';
 
             const einheit = grp.artikel.einheit || 'Stück';
-            let bestandRowsHtml = grp.bestaende.map(b => {
-                const m = Number(b.menge);
-                const soll = Number(b.soll_menge);
-                const ist = Number(b.ist_menge);
+            const bestandRowsHtml = grp.bestaende.map(b => {
+                const m = Number(b.menge), soll = Number(b.soll_menge), ist = Number(b.ist_menge);
                 const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
-                
                 let zelle = '';
-                if (m === -1) {
-                    zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
-                } else if (m === -2 || m === -3) {
-                    zelle = `<span class="bestand-status-pill ${m === -3 ? 'warn' : 'ok'}">-</span>`;
-                } else {
+                if (m === -1) zelle = `<span style="font-size:1.2em; color:#7f8c8d; font-weight:bold;">∞</span> <small class="bestand-einheit">${einheit}</small>`;
+                else if (m === -2 || m === -3) zelle = `<span class="bestand-status-pill ${m === -3 ? 'warn' : 'ok'}">-</span>`;
+                else {
                     zelle = `
                         <div style="display:flex; flex-direction:column; align-items:flex-end;">
                             <div class="bestand-ort-qty-wrap">
-                                <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${soll > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${soll}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width:60px;" title="Gesamtbestand im Verein">
+                                <input type="text" id="menge-${b.id}" class="menge-input bestand-menge-input ${soll > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${soll}" onchange="speichereMenge(${b.id})" oninput="aktualisiereMengeEingabeFarbe(this)" style="width:60px;" title="Gesamtbestand">
                                 <small class="bestand-einheit">${einheit}</small>
                             </div>
                             ${fehlt > 0 ? `<div style="font-size:0.8em; color:#c0392b; font-weight:bold; margin-top:2px;">⚠️ ${fehlt} unterwegs (${ist} im Lager)</div>` : ''}
@@ -2004,8 +1464,8 @@ function tabelleAktualisieren(daten) {
             const dateStr = latestDate ? latestDate.toLocaleDateString('de-DE') + ' ' + latestDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : 'Unbekannt';
 
             tr.innerHTML = `
-                <td style="padding-left:${hatMehrereVerschiedeneArtikel ? 45 : 25}px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
-                    ${hatMehrereVerschiedeneArtikel ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
+                <td style="padding-left:${hatMehrere ? 45 : 25}px;" data-hover-type="date" data-hover-content="${dateStr}" onmouseenter="handleMouseEnter(event)" onmouseleave="handleMouseLeave(event)">
+                    ${hatMehrere ? '◦' : '↳'} <strong>${escapeHtml(displayName)}</strong>${wichtigBadge}${kommentarIcon}${kommentarAnzeige}
                     <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(grp.artikel.id)}</div>
                 </td>
                 <td colspan="2">
@@ -2018,15 +1478,10 @@ function tabelleAktualisieren(daten) {
         });
     });
 
-    const hiddenCount = (aktuelleDaten || []).filter(z => z.artikel && !z.artikel.wichtig).length;
+    const hiddenCount = aktuelleDaten.filter(z => z.artikel && !z.artikel.wichtig).length;
     if (hiddenCount > 0 && !isSearching) {
         const footTr = document.createElement('tr');
-        footTr.innerHTML = `
-            <td colspan="3" style="padding:14px; text-align:center; background:#f8fafc; border-top:1px solid #dfe6e9;">
-                <button class="btn" onclick="toggleAlleArtikelSichtbarkeit()" style="background:#34495e; width:auto; min-width:220px;">
-                    ${zeigeAlleArtikel ? 'Weniger anzeigen' : `Mehr anzeigen (${hiddenCount} weitere)`}
-                </button>
-            </td>`;
+        footTr.innerHTML = `<td colspan="3" style="padding:14px; text-align:center; background:#f8fafc; border-top:1px solid #dfe6e9;"><button class="btn" onclick="toggleAlleArtikelSichtbarkeit()" style="background:#34495e; width:auto; min-width:220px;">${zeigeAlleArtikel ? 'Weniger anzeigen' : `Mehr anzeigen (${hiddenCount} weitere)`}</button></td>`;
         tbody.appendChild(footTr);
     }
 }
@@ -2035,32 +1490,16 @@ async function speichereMenge(bId) {
     const f = $(`menge-${bId}`);
     if (!f) return;
     const val = f.value.trim();
-    let neueMenge;
-    if (val === '∞') neueMenge = -1;
-    else if (val === '-') neueMenge = BESTAND_STRICH_AUSREICHEND;
-    else neueMenge = werteMengeAus(val);
-
+    const neueMenge = val === '∞' ? -1 : (val === '-' ? BESTAND_STRICH_AUSREICHEND : werteMengeAus(val));
     f.value = neueMenge === -1 ? '∞' : (neueMenge < 0 ? '-' : neueMenge);
     aktualisiereMengeEingabeFarbe(f);
     f.style.backgroundColor = '#fff3cd';
 
-    const datum = new Date().toISOString();
-    const eintrag = (aktuelleDaten || []).find(b => b.id === bId);
-    const altesSoll = Number(eintrag?.soll_menge) || 0;
-    const altesIst = Number(eintrag?.ist_menge) || 0;
+    const eintrag = aktuelleDaten.find(b => b.id === bId);
+    const altesSoll = Number(eintrag?.soll_menge) || 0, altesIst = Number(eintrag?.ist_menge) || 0;
+    const neuesIst = neueMenge >= 0 ? Math.max(0, Math.min(neueMenge, (altesIst >= 0 ? altesIst : neueMenge) + (neueMenge - altesSoll))) : neueMenge;
 
-    let neuesIst = neueMenge;
-    if (neueMenge >= 0) {
-        const diff = neueMenge - altesSoll;
-        neuesIst = Math.max(0, Math.min(neueMenge, (altesIst >= 0 ? altesIst : neueMenge) + diff));
-    }
-
-    let { error } = await dbClient.from('bestand').update({
-        menge: neueMenge < 0 ? neueMenge : neuesIst,
-        alte_menge: neueMenge,
-        created_at: datum
-    }).eq('id', bId);
-
+    const { error } = await dbClient.from('bestand').update({ menge: neueMenge < 0 ? neueMenge : neuesIst, alte_menge: neueMenge, created_at: new Date().toISOString() }).eq('id', bId);
     if (!error) {
         f.style.backgroundColor = '#d4edda';
         showToast(`Gesamtbestand gespeichert: ${f.value}`);
@@ -2078,7 +1517,6 @@ window.handleMouseLeave = () => { $('hover-date-info').style.display = 'none'; $
 // =========================================================================
 // 8. KISTEN-ANSICHT, OFFENE ENTNAHMEN, AUDIT-LOG & AUTO-REFRESH
 // =========================================================================
-
 function kistenFilterSucheGeaendert() {
     if (kistenAnsichtFilter === 'log') renderAuditLogListe();
     else if (kistenAnsichtFilter === 'unterwegs_wer') renderKistenUnterwegsKombiniert();
@@ -2087,38 +1525,23 @@ function kistenFilterSucheGeaendert() {
 
 function setzeKistenAnsichtFilter(filterName) {
     kistenAnsichtFilter = filterName || 'alle';
-    ['alle', 'unterwegs_wer', 'log'].forEach(f => {
-        const btn = $(`filter-kisten-${f.replace('_', '-')}`);
-        if (btn) btn.classList.toggle('active', f === kistenAnsichtFilter);
-    });
+    ['alle', 'unterwegs_wer', 'log'].forEach(f => $(`filter-kisten-${f.replace('_', '-')}`)?.classList.toggle('active', f === kistenAnsichtFilter));
 
-    const kistenTabelle = $('kisten-tabelle-bereich');
-    const kombiniertBereich = $('kisten-unterwegs-kombiniert-bereich');
-    const auditBereich = $('audit-log-bereich');
+    if ($('kisten-tabelle-bereich')) $('kisten-tabelle-bereich').style.display = (kistenAnsichtFilter === 'alle') ? 'block' : 'none';
+    if ($('kisten-unterwegs-kombiniert-bereich')) $('kisten-unterwegs-kombiniert-bereich').style.display = (kistenAnsichtFilter === 'unterwegs_wer') ? 'block' : 'none';
+    if ($('audit-log-bereich')) $('audit-log-bereich').style.display = (kistenAnsichtFilter === 'log') ? 'block' : 'none';
 
-    if (kistenTabelle) kistenTabelle.style.display = (kistenAnsichtFilter === 'alle') ? 'block' : 'none';
-    if (kombiniertBereich) kombiniertBereich.style.display = (kistenAnsichtFilter === 'unterwegs_wer') ? 'block' : 'none';
-    if (auditBereich) auditBereich.style.display = (kistenAnsichtFilter === 'log') ? 'block' : 'none';
-
-    if (kistenAnsichtFilter === 'unterwegs_wer') {
-        renderKistenUnterwegsKombiniert();
-        starteUnterwegsAutoRefresh();
-    } else {
-        stoppeUnterwegsAutoRefresh();
-        if (kistenAnsichtFilter === 'log') renderAuditLogListe();
-        else renderKistenListe();
-    }
+    if (kistenAnsichtFilter === 'unterwegs_wer') { renderKistenUnterwegsKombiniert(); starteUnterwegsAutoRefresh(); }
+    else { stoppeUnterwegsAutoRefresh(); if (kistenAnsichtFilter === 'log') renderAuditLogListe(); else renderKistenListe(); }
 }
 
 function starteUnterwegsAutoRefresh() {
     stoppeUnterwegsAutoRefresh();
     unterwegsRefreshInterval = setInterval(async () => {
         if (aktuellerModus === 'kisten' && kistenAnsichtFilter === 'unterwegs_wer') {
-            const activeEl = document.activeElement;
-            const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-            if (!isTyping) {
-                await ladeBestand();
-                await ladeEntnahmeDaten();
+            const el = document.activeElement;
+            if (!el || !['INPUT', 'TEXTAREA'].includes(el.tagName)) {
+                await Promise.all([ladeBestand(), ladeEntnahmeDaten()]);
                 renderKistenUnterwegsKombiniert();
             }
         }
@@ -2126,46 +1549,29 @@ function starteUnterwegsAutoRefresh() {
 }
 
 function stoppeUnterwegsAutoRefresh() {
-    if (unterwegsRefreshInterval) {
-        clearInterval(unterwegsRefreshInterval);
-        unterwegsRefreshInterval = null;
-    }
+    if (unterwegsRefreshInterval) { clearInterval(unterwegsRefreshInterval); unterwegsRefreshInterval = null; }
 }
 
 async function manuelleAktualisierungUnterwegs() {
     showToast('Aktualisiere Entnahmen...');
-    await ladeBestand();
-    await ladeEntnahmeDaten();
+    await Promise.all([ladeBestand(), ladeEntnahmeDaten()]);
     renderKistenUnterwegsKombiniert();
 }
 
 function renderKistenListe() {
     const ziel = $('kisten-tabelle');
     if (!ziel) return;
-
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
+    const liste = alleLagerorte.filter(o => !suchText || o.name.toLowerCase().includes(suchText) || (o.nfc_code || '').toLowerCase().includes(suchText));
 
-    let liste = (alleLagerorte || []).filter(o => {
-        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
-            return false;
-        }
-        return true;
-    });
-
-    if (!liste.length) {
-        ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine passenden Kisten gefunden.</td></tr>';
-        return;
-    }
-
+    if (!liste.length) { ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine passenden Kisten gefunden.</td></tr>'; return; }
     ziel.innerHTML = liste.map(o => {
         const bestand = gibKistenBestand(o.id);
-        const statusCell = ermittleKistenStatusCell(o.id, bestand);
-
         return `
             <tr>
                 <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
                 <td>${bestand.length} Artikel</td>
-                <td>${statusCell}</td>
+                <td>${ermittleKistenStatusCell(o.id, bestand)}</td>
                 <td>
                     <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
                     <button class="btn" style="background:#3498db; padding:8px 12px; width:auto;" onclick="openOrteVerwalten(${o.id})">⚙️</button>
@@ -2174,168 +1580,93 @@ function renderKistenListe() {
     }).join('');
 }
 
-// -------------------------------------------------------------------------
-// UNTERWEGS: ZUSAMMENFASSUNG NACH BENUTZER & TEILRÜCKGABE
-// -------------------------------------------------------------------------
 function renderKistenUnterwegsKombiniert() {
     const ziel = $('kisten-unterwegs-kombiniert-bereich');
     if (!ziel) return;
-
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
 
-    const offeneGefiltert = (offeneEntnahmen || []).filter(e => {
+    const offeneGefiltert = offeneEntnahmen.filter(e => {
         if (!suchText) return true;
-        const nameMatch = (e.name || '').toLowerCase().includes(suchText);
+        const nMatch = (e.name || '').toLowerCase().includes(suchText);
         const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        const matMatch = mats.some(m => {
-            if (m.kiste_name && m.kiste_name.toLowerCase().includes(suchText)) return true;
-            if (Array.isArray(m.artikel)) {
-                return m.artikel.some(a => (a.name || '').toLowerCase().includes(suchText));
-            }
-            return (m.name || m.label || '').toLowerCase().includes(suchText);
-        });
-        return nameMatch || matMatch;
+        return nMatch || mats.some(m => (m.kiste_name || '').toLowerCase().includes(suchText) || (Array.isArray(m.artikel) && m.artikel.some(a => (a.name || '').toLowerCase().includes(suchText))) || (m.name || m.label || '').toLowerCase().includes(suchText));
     });
 
-    // Gruppierung aller Entnahmen nach Benutzer
     const userMap = new Map();
     offeneGefiltert.forEach(ent => {
         const userKey = ent.benutzer_vorlage_id ? String(ent.benutzer_vorlage_id) : (ent.name || 'unbekannt').trim().toLowerCase();
-        if (!userMap.has(userKey)) {
-            userMap.set(userKey, {
-                userKey,
-                name: ent.name || 'Unbekannt',
-                kontakt: ent.kontakt || '',
-                neuestesDatum: new Date(ent.created_at),
-                entnahmen: []
-            });
-        }
+        if (!userMap.has(userKey)) userMap.set(userKey, { userKey, name: ent.name || 'Unbekannt', kontakt: ent.kontakt || '', neuestesDatum: new Date(ent.created_at), entnahmen: [] });
         const u = userMap.get(userKey);
         if (new Date(ent.created_at) > u.neuestesDatum) u.neuestesDatum = new Date(ent.created_at);
         u.entnahmen.push(ent);
     });
 
-    const kistenGefiltert = (alleLagerorte || []).filter(o => {
-        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) {
-            return false;
-        }
-        const bestand = gibKistenBestand(o.id);
-        const entnahmen = ermittleAlleKistenEntnahmen(o.id);
-        const fehlt = bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge));
-        return Boolean(entnahmen.length || fehlt);
+    const kistenGefiltert = alleLagerorte.filter(o => {
+        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) return false;
+        const bestand = gibKistenBestand(o.id), entnahmen = ermittleAlleKistenEntnahmen(o.id);
+        return Boolean(entnahmen.length || bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge)));
     });
 
-    let html = '';
-
-    html += `
+    let html = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
             <div class="kombiniert-subtitel" style="margin:0;">👤 Aktive Entleiher &amp; Resortleiter (${userMap.size})</div>
             <div style="display:flex; align-items:center; gap:8px;">
                 <span style="font-size:0.8em; color:#27ae60; font-weight:bold;">● Live-Aktualisierung (15s)</span>
                 <button type="button" class="btn" style="background:#34495e; padding:4px 10px; font-size:0.8em; width:auto; min-height:30px;" onclick="manuelleAktualisierungUnterwegs()">🔄 Jetzt aktualisieren</button>
             </div>
-        </div>
-    `;
+        </div>`;
 
     if (!userMap.size) {
-        html += `
-            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px; margin-bottom:18px;">
-                <p style="margin:0; color:#1f7a37; font-weight:bold;">🎉 Aktuell keine offenen Personen-Entnahmen vermerkt.</p>
-            </div>
-        `;
+        html += `<div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px; margin-bottom:18px;"><p style="margin:0; color:#1f7a37; font-weight:bold;">🎉 Aktuell keine offenen Personen-Entnahmen vermerkt.</p></div>`;
     } else {
         userMap.forEach(u => {
-            const datumStr = u.neuestesDatum.toLocaleString('de-DE');
-
-            // Artikel dieses Nutzers zusammenfassen
             const artikelMap = new Map();
             u.entnahmen.forEach(ent => {
-                const posList = extrahiereEntnahmePositionen(ent);
-                posList.forEach(pos => {
-                    const itemKey = `${pos.kisteId || 'null'}_${pos.bestandId || pos.artikelId || pos.name}`;
-                    if (!artikelMap.has(itemKey)) {
-                        artikelMap.set(itemKey, {
-                            name: pos.name,
-                            kisteName: pos.kisteName,
-                            ganzeKiste: pos.ganzeKiste,
-                            menge: 0
-                        });
-                    }
-                    artikelMap.get(itemKey).menge += pos.menge;
+                extrahiereEntnahmePositionen(ent).forEach(pos => {
+                    const k = `${pos.kisteId || 'null'}_${pos.bestandId || pos.artikelId || pos.name}`;
+                    if (!artikelMap.has(k)) artikelMap.set(k, { name: pos.name, kisteName: pos.kisteName, ganzeKiste: pos.ganzeKiste, menge: 0 });
+                    artikelMap.get(k).menge += pos.menge;
                 });
             });
 
-            const itemsHtml = Array.from(artikelMap.values()).map(item => {
-                if (item.ganzeKiste) {
-                    return `<li><strong>📦 ${escapeHtml(item.kisteName || 'Kiste')}</strong> (Kiste komplett entnommen)</li>`;
-                }
-                return `<li><strong>${item.menge}x</strong> ${escapeHtml(item.name)} <span style="color:#7f8c8d; font-size:0.88em;">(aus 📦 ${escapeHtml(item.kisteName || 'Kiste')})</span></li>`;
-            }).join('');
+            const itemsHtml = Array.from(artikelMap.values()).map(item => item.ganzeKiste 
+                ? `<li><strong>📦 ${escapeHtml(item.kisteName || 'Kiste')}</strong> (Kiste komplett entnommen)</li>`
+                : `<li><strong>${item.menge}x</strong> ${escapeHtml(item.name)} <span style="color:#7f8c8d; font-size:0.88em;">(aus 📦 ${escapeHtml(item.kisteName || 'Kiste')})</span></li>`
+            ).join('');
 
             html += `
                 <div class="entnahme-card">
                     <div class="entnahme-card-header">
                         <div>
                             <strong style="font-size:1.1em; color:#2c3e50;">👤 ${escapeHtml(u.name)}</strong>
-                            <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">
-                                📅 Letzte Entnahme am: ${datumStr} ${u.kontakt ? `&bull; 📞 ${escapeHtml(u.kontakt)}` : ''}
-                            </div>
+                            <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">📅 Letzte Entnahme am: ${u.neuestesDatum.toLocaleString('de-DE')} ${u.kontakt ? `&bull; 📞 ${escapeHtml(u.kontakt)}` : ''}</div>
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                            <button class="btn" style="background:#f39c12; padding:6px 12px; font-size:0.85em; width:auto;" onclick="oeffneTeilrueckgabeModal('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">
-                                🔄 Teilrückgabe
-                            </button>
-                            <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseAlleEntnahmenFuerBenutzer('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">
-                                ✅ Vollständig zurückgebucht
-                            </button>
+                            <button class="btn" style="background:#f39c12; padding:6px 12px; font-size:0.85em; width:auto;" onclick="oeffneTeilrueckgabeModal('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">🔄 Teilrückgabe</button>
+                            <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseAlleEntnahmenFuerBenutzer('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">✅ Vollständig zurückgebucht</button>
                         </div>
                     </div>
-                    <div style="font-size:0.9em; color:#444;">
-                        <ul style="margin:6px 0; padding-left:20px;">
-                            ${itemsHtml}
-                        </ul>
-                    </div>
-                </div>
-            `;
+                    <div style="font-size:0.9em; color:#444;"><ul style="margin:6px 0; padding-left:20px;">${itemsHtml}</ul></div>
+                </div>`;
         });
     }
 
     html += `<div class="kombiniert-subtitel" style="margin-top:24px;">📦 Fehlende oder unvollständige Kisten (${kistenGefiltert.length})</div>`;
     if (!kistenGefiltert.length) {
-        html += `
-            <div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px;">
-                <p style="margin:0; color:#1f7a37; font-weight:bold;">✔️ Alle Kisten stehen vollständig im Lager.</p>
-            </div>
-        `;
+        html += `<div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px;"><p style="margin:0; color:#1f7a37; font-weight:bold;">✔️ Alle Kisten stehen vollständig im Lager.</p></div>`;
     } else {
         html += `
-            <div class="table-responsive">
-                <table>
-                    <thead style="background-color: #2c3e50;">
-                        <tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status / Entleiher</th><th>Aktionen</th></tr>
-                    </thead>
-                    <tbody>
-                        ${kistenGefiltert.map(o => {
-                            const bestand = gibKistenBestand(o.id);
-                            const statusCell = ermittleKistenStatusCell(o.id, bestand);
-
-                            return `
-                                <tr>
-                                    <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
-                                    <td>${bestand.length} Artikel</td>
-                                    <td>${statusCell}</td>
-                                    <td>
-                                        <button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
+            <div class="table-responsive"><table>
+                <thead style="background-color: #2c3e50;"><tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status / Entleiher</th><th>Aktionen</th></tr></thead>
+                <tbody>${kistenGefiltert.map(o => `
+                    <tr>
+                        <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
+                        <td>${gibKistenBestand(o.id).length} Artikel</td>
+                        <td>${ermittleKistenStatusCell(o.id, gibKistenBestand(o.id))}</td>
+                        <td><button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button></td>
+                    </tr>`).join('')}</tbody>
+            </table></div>`;
     }
-
     ziel.innerHTML = html;
 }
 
@@ -2344,34 +1675,15 @@ function renderKistenUnterwegsKombiniert() {
 // -------------------------------------------------------------------------
 function oeffneTeilrueckgabeModal(userKey) {
     aktiverTeilrueckgabeUserKey = userKey;
-    const ents = (offeneEntnahmen || []).filter(e => {
-        const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
-        return k === userKey;
-    });
+    const ents = offeneEntnahmen.filter(e => (e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase()) === userKey);
+    if (!ents.length) return showToast('Keine offenen Entnahmen gefunden.', 'warning');
 
-    if (!ents.length) return showToast('Keine offenen Entnahmen für diese Person gefunden.', 'warning');
-
-    const userName = ents[0].name || 'Unbekannt';
-    $('teilrueckgabe-person-name').innerText = userName;
-
-    // Artikel aggregieren
+    $('teilrueckgabe-person-name').innerText = ents[0].name || 'Unbekannt';
     const itemMap = new Map();
     ents.forEach(e => {
-        const posList = extrahiereEntnahmePositionen(e);
-        posList.forEach(p => {
+        extrahiereEntnahmePositionen(e).forEach(p => {
             const key = `${p.kisteId || 'null'}_${p.bestandId || p.artikelId || p.name}`;
-            if (!itemMap.has(key)) {
-                itemMap.set(key, {
-                    key,
-                    name: p.name,
-                    kisteId: p.kisteId,
-                    kisteName: p.kisteName,
-                    bestandId: p.bestandId,
-                    artikelId: p.artikelId,
-                    gesamtMenge: 0,
-                    ganzeKiste: p.ganzeKiste
-                });
-            }
+            if (!itemMap.has(key)) itemMap.set(key, { key, name: p.name, kisteId: p.kisteId, kisteName: p.kisteName, bestandId: p.bestandId, artikelId: p.artikelId, gesamtMenge: 0, ganzeKiste: p.ganzeKiste });
             itemMap.get(key).gesamtMenge += p.menge;
         });
     });
@@ -2380,367 +1692,168 @@ function oeffneTeilrueckgabeModal(userKey) {
     const container = $('teilrueckgabe-artikel-liste');
     if (!container) return;
 
-    if (!aktiverTeilrueckgabeItems.length) {
-        container.innerHTML = '<p style="text-align:center; color:#7f8c8d;">Keine Artikel zum Zurückgeben vorhanden.</p>';
-        return;
-    }
-
-    container.innerHTML = aktiverTeilrueckgabeItems.map(item => {
-        return `
-            <div class="teilrueck-zeile">
-                <div style="flex:1;">
-                    <strong style="color:#2c3e50; font-size:1.02em;">${escapeHtml(item.name)}</strong>
-                    <div style="font-size:0.82em; color:#7f8c8d; margin-top:2px;">
-                        aus 📦 ${escapeHtml(item.kisteName || 'Kiste')} &bull; Offen bei Person: <b>${item.gesamtMenge}</b>
-                    </div>
-                </div>
-                <div style="display:flex; align-items:center; gap:6px;">
-                    <span style="font-size:0.85em; color:#555; font-weight:bold;">Zurück:</span>
-                    <button type="button" class="btn" style="width:34px; min-width:34px; height:34px; padding:0; background:#95a5a6; font-size:1.1em;" onclick="aendereTeilrueckMenge('${item.key}', -1)">−</button>
-                    <input type="number" id="teilrueck-qty-${item.key}" class="menge-input" value="0" min="0" max="${item.gesamtMenge}" style="width:55px; height:34px; padding:2px; font-weight:bold;" oninput="pruefeTeilrueckInput(this, ${item.gesamtMenge})">
-                    <button type="button" class="btn" style="width:34px; min-width:34px; height:34px; padding:0; background:#27ae60; font-size:1.1em;" onclick="aendereTeilrueckMenge('${item.key}', 1, ${item.gesamtMenge})">+</button>
-                    <button type="button" class="btn" style="padding:4px 8px; font-size:0.8em; background:#34495e; width:auto; height:34px;" onclick="setzeTeilrueckAlle('${item.key}', ${item.gesamtMenge})">Alle</button>
-                </div>
+    container.innerHTML = aktiverTeilrueckgabeItems.map(item => `
+        <div class="teilrueck-zeile">
+            <div style="flex:1;">
+                <strong style="color:#2c3e50; font-size:1.02em;">${escapeHtml(item.name)}</strong>
+                <div style="font-size:0.82em; color:#7f8c8d; margin-top:2px;">aus 📦 ${escapeHtml(item.kisteName || 'Kiste')} &bull; Offen bei Person: <b>${item.gesamtMenge}</b></div>
             </div>
-        `;
-    }).join('');
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:0.85em; color:#555; font-weight:bold;">Zurück:</span>
+                <button type="button" class="btn" style="width:34px; min-width:34px; height:34px; padding:0; background:#95a5a6; font-size:1.1em;" onclick="aendereTeilrueckMenge('${item.key}', -1)">−</button>
+                <input type="number" id="teilrueck-qty-${item.key}" class="menge-input" value="0" min="0" max="${item.gesamtMenge}" style="width:55px; height:34px; padding:2px; font-weight:bold;" oninput="pruefeTeilrueckInput(this, ${item.gesamtMenge})">
+                <button type="button" class="btn" style="width:34px; min-width:34px; height:34px; padding:0; background:#27ae60; font-size:1.1em;" onclick="aendereTeilrueckMenge('${item.key}', 1, ${item.gesamtMenge})">+</button>
+                <button type="button" class="btn" style="padding:4px 8px; font-size:0.8em; background:#34495e; width:auto; height:34px;" onclick="setzeTeilrueckAlle('${item.key}', ${item.gesamtMenge})">Alle</button>
+            </div>
+        </div>`).join('') || '<p style="text-align:center; color:#7f8c8d;">Keine Artikel vorhanden.</p>';
 
     openModalById('teilrueckgabeModal');
 }
 
 function aendereTeilrueckMenge(key, delta, max) {
     const input = $(`teilrueck-qty-${key}`);
-    if (!input) return;
-    let cur = parseInt(input.value, 10) || 0;
-    cur += delta;
-    if (cur < 0) cur = 0;
-    if (max !== undefined && cur > max) cur = max;
-    input.value = cur;
+    if (input) input.value = Math.max(0, Math.min(max ?? Infinity, (parseInt(input.value, 10) || 0) + delta));
 }
-
-function setzeTeilrueckAlle(key, max) {
-    const input = $(`teilrueck-qty-${key}`);
-    if (input) input.value = max;
-}
-
-function pruefeTeilrueckInput(input, max) {
-    let val = parseInt(input.value, 10) || 0;
-    if (val < 0) val = 0;
-    if (val > max) val = max;
-    input.value = val;
-}
+function setzeTeilrueckAlle(key, max) { const input = $(`teilrueck-qty-${key}`); if (input) input.value = max; }
+function pruefeTeilrueckInput(input, max) { input.value = Math.max(0, Math.min(max, parseInt(input.value, 10) || 0)); }
 
 async function speichereTeilrueckgabe() {
-    if (kisteAktionInArbeit) return;
-    if (!aktiverTeilrueckgabeUserKey || !aktiverTeilrueckgabeItems.length) return;
+    if (kisteAktionInArbeit || !aktiverTeilrueckgabeUserKey) return;
+    const rueckgaben = aktiverTeilrueckgabeItems.map(item => ({ ...item, returnQty: parseInt($(`teilrueck-qty-${item.key}`)?.value, 10) || 0 })).filter(r => r.returnQty > 0);
+    if (!rueckgaben.length) return showToast('Bitte mindestens eine Rückgabemenge größer als 0 angeben.', 'warning');
 
-    // Ausgewählte Rückgabemengen auslesen
-    const rueckgaben = [];
-    aktiverTeilrueckgabeItems.forEach(item => {
-        const inp = $(`teilrueck-qty-${item.key}`);
-        const qty = inp ? (parseInt(inp.value, 10) || 0) : 0;
-        if (qty > 0) {
-            rueckgaben.push({ ...item, returnQty: qty });
-        }
-    });
-
-    if (!rueckgaben.length) {
-        return showToast('Bitte mindestens bei einem Artikel eine Rückgabemenge größer als 0 angeben.', 'warning');
-    }
-
-    const ents = (offeneEntnahmen || []).filter(e => {
-        const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
-        return k === aktiverTeilrueckgabeUserKey;
-    });
-
+    const ents = offeneEntnahmen.filter(e => (e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase()) === aktiverTeilrueckgabeUserKey);
     kisteAktionInArbeit = true;
+
     try {
-        // 1. Bestände in Tabelle "bestand" erhöhen
         for (const r of rueckgaben) {
-            let bEintrag = null;
-            if (r.bestandId) {
-                bEintrag = (aktuelleDaten || []).find(b => b.id === r.bestandId);
-            } else if (r.artikelId && r.kisteId) {
-                bEintrag = (aktuelleDaten || []).find(b => b.artikel_id === r.artikelId && Number(b.lagerort_id) === Number(r.kisteId));
+            const b = r.bestandId ? aktuelleDaten.find(x => x.id === r.bestandId) : (r.artikelId && r.kisteId ? aktuelleDaten.find(x => x.artikel_id === r.artikelId && Number(x.lagerort_id) === Number(r.kisteId)) : null);
+            if (b && Number(b.menge) >= 0) {
+                const aktuell = Number(b.ist_menge) >= 0 ? Number(b.ist_menge) : 0, soll = Number(b.soll_menge) || 0;
+                await dbClient.from('bestand').update({ menge: soll > 0 ? Math.min(soll, aktuell + r.returnQty) : aktuell + r.returnQty, created_at: new Date().toISOString() }).eq('id', b.id);
             }
 
-            if (bEintrag && Number(bEintrag.menge) >= 0) {
-                const aktuell = Number(bEintrag.ist_menge) >= 0 ? Number(bEintrag.ist_menge) : 0;
-                const soll = Number(bEintrag.soll_menge) || 0;
-                const neu = soll > 0 ? Math.min(soll, aktuell + r.returnQty) : aktuell + r.returnQty;
-
-                await dbClient.from('bestand').update({
-                    menge: neu,
-                    created_at: new Date().toISOString()
-                }).eq('id', bEintrag.id);
-            }
-        }
-
-        // 2. Offene Entnahme-Einträge reduzieren oder löschen
-        for (const r of rueckgaben) {
-            let verbleibendZurueck = r.returnQty;
-
+            let verbleibend = r.returnQty;
             for (const ent of ents) {
-                if (verbleibendZurueck <= 0) break;
+                if (verbleibend <= 0) break;
                 let geaendert = false;
-                const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-
-                mats.forEach(m => {
-                    if (verbleibendZurueck <= 0) return;
-                    if (r.kisteId && Number(m.kiste_id) !== Number(r.kisteId)) return;
-
+                (ent.materialien || []).forEach(m => {
+                    if (verbleibend <= 0 || (r.kisteId && Number(m.kiste_id) !== Number(r.kisteId))) return;
                     if (Array.isArray(m.artikel)) {
                         m.artikel.forEach(a => {
-                            if (verbleibendZurueck <= 0) return;
-                            const match = (r.bestandId && a.bestand_id === r.bestandId) || 
-                                          (r.artikelId && a.artikel_id === r.artikelId) || 
-                                          (a.name === r.name);
-                            if (match) {
-                                const abzug = Math.min(verbleibendZurueck, a.menge);
+                            if (verbleibend <= 0) return;
+                            if (matchesArtikel(a, r)) {
+                                const abzug = Math.min(verbleibend, a.menge);
                                 a.menge -= abzug;
-                                verbleibendZurueck -= abzug;
+                                verbleibend -= abzug;
                                 geaendert = true;
                             }
                         });
                         m.artikel = m.artikel.filter(a => a.menge > 0);
-                    } else if (m.ganze_kiste) {
-                        m.ganze_kiste = false;
-                        geaendert = true;
-                    }
+                    } else if (m.ganze_kiste) { m.ganze_kiste = false; geaendert = true; }
                 });
-
-                if (geaendert) {
-                    const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
-
-                    if (!saubereMats.length) {
-                        await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
-                        ent.materialien = [];
-                    } else {
-                        await dbClient.from('lager_entnahmen').update({
-                            materialien: saubereMats
-                        }).eq('id', ent.id);
-                        ent.materialien = saubereMats;
-                    }
-                }
+                if (geaendert) ent.materialien = await syncEntnahme(ent.id, ent.materialien);
             }
         }
 
-        // 3. Audit-Log Eintrag schreiben
-        const userName = ents[0]?.name || 'Unbekannt';
-        const userKontakt = ents[0]?.kontakt || '';
-        const userVorlageId = ents[0]?.benutzer_vorlage_id || null;
-
-        try {
-            await dbClient.from('lager_entnahme_audit').insert([{
-                name: userName,
-                kontakt: userKontakt,
-                benutzer_vorlage_id: userVorlageId,
-                materialien: [{
-                    kiste_id: rueckgaben[0]?.kisteId || null,
-                    kiste_name: rueckgaben[0]?.kisteName || 'Kiste',
-                    artikel: rueckgaben.map(r => ({
-                        bestand_id: r.bestandId,
-                        artikel_id: r.artikelId,
-                        name: r.name,
-                        menge: r.returnQty
-                    }))
-                }],
-                ereignis: 'teilrueckgabe',
-                created_at: new Date().toISOString()
-            }]);
-        } catch (auditErr) {}
+        dbAudit({
+            name: ents[0]?.name || 'Unbekannt', kontakt: ents[0]?.kontakt || '', benutzer_vorlage_id: ents[0]?.benutzer_vorlage_id || null,
+            materialien: [{ kiste_id: rueckgaben[0]?.kisteId || null, kiste_name: rueckgaben[0]?.kisteName || 'Kiste', artikel: rueckgaben.map(r => ({ bestand_id: r.bestandId, artikel_id: r.artikelId, name: r.name, menge: r.returnQty })) }]
+        }, 'teilrueckgabe');
 
         closeModal('teilrueckgabeModal');
         showToast('✅ Teilrückgabe erfolgreich verbucht!');
         await ladeAlles();
         if (kistenCheckAktuelleId) oeffneKistenCheck(kistenCheckAktuelleId);
     } catch (err) {
-        console.error('Fehler bei Teilrückgabe:', err);
         showToast('Fehler bei Teilrückgabe: ' + (err.message || err), 'error');
-    } finally {
-        kisteAktionInArbeit = false;
-    }
+    } finally { kisteAktionInArbeit = false; }
 }
 
 async function schliesseAlleEntnahmenFuerBenutzer(userKey) {
     if (kisteAktionInArbeit) return;
-    const ents = (offeneEntnahmen || []).filter(e => {
-        const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
-        return k === userKey;
-    });
-
+    const ents = offeneEntnahmen.filter(e => (e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase()) === userKey);
     if (!ents.length) return;
-    const userName = ents[0].name || 'diese Person';
-
-    if (!confirm(`Sollen wirklich ALLE Entnahmen von ${userName} als vollständig zurückgebracht verbucht werden?`)) return;
+    if (!confirm(`Sollen wirklich ALLE Entnahmen von ${ents[0].name || 'dieser Person'} als vollständig zurückgebracht verbucht werden?`)) return;
 
     kisteAktionInArbeit = true;
     try {
         for (const ent of ents) {
-            const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-            for (const m of mats) {
+            for (const m of (ent.materialien || [])) {
                 if (m.kiste_id && m.ganze_kiste) {
-                    const bestand = gibKistenBestand(m.kiste_id);
-                    const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-                        const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
-                        return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
-                    });
-                    await Promise.all(updates);
+                    await Promise.all(gibKistenBestand(m.kiste_id).filter(z => Number(z.ist_menge) >= 0).map(z =>
+                        dbClient.from('bestand').update({ menge: z.soll_menge > 0 ? z.soll_menge : z.ist_menge, created_at: new Date().toISOString() }).eq('id', z.id)
+                    ));
                 } else if (Array.isArray(m.artikel)) {
                     for (const a of m.artikel) {
-                        if (a.bestand_id) {
-                            const b = (aktuelleDaten || []).find(x => x.id === a.bestand_id);
-                            if (b && Number(b.menge) >= 0) {
-                                const neu = Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1));
-                                await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
-                            }
+                        if (!a.bestand_id) continue;
+                        const b = aktuelleDaten.find(x => x.id === a.bestand_id);
+                        if (b && Number(b.menge) >= 0) {
+                            await dbClient.from('bestand').update({ menge: Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1)), created_at: new Date().toISOString() }).eq('id', b.id);
                         }
                     }
                 }
             }
-
-            try {
-                await dbClient.from('lager_entnahme_audit').insert([{
-                    entnahme_id: ent.id,
-                    name: ent.name,
-                    kontakt: ent.kontakt,
-                    materialien: ent.materialien,
-                    ereignis: 'rueckgabe',
-                    created_at: new Date().toISOString()
-                }]);
-            } catch (e) {}
-
+            dbAudit({ entnahme_id: ent.id, name: ent.name, kontakt: ent.kontakt, materialien: ent.materialien }, 'rueckgabe');
             await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
         }
-
-        showToast(`✅ Alle Entnahmen von ${userName} abgeschlossen!`);
+        showToast(`✅ Alle Entnahmen von ${ents[0].name} abgeschlossen!`);
         await ladeAlles();
     } catch (err) {
-        console.error('Fehler beim Abschließen aller Entnahmen:', err);
-        showToast('Fehler beim Abschließen: ' + (err.message || err), 'error');
-    } finally {
-        kisteAktionInArbeit = false;
-    }
+        showToast('Fehler: ' + (err.message || err), 'error');
+    } finally { kisteAktionInArbeit = false; }
 }
 
 function renderAuditLogListe() {
     const ziel = $('audit-log-bereich');
     if (!ziel) return;
-
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-    const gefiltert = (auditLogs || []).filter(a => {
-        if (!suchText) return true;
-        const nameMatch = (a.name || '').toLowerCase().includes(suchText);
-        const mats = Array.isArray(a.materialien) ? a.materialien : [];
-        const matMatch = mats.some(m => {
-            if (m.kiste_name && m.kiste_name.toLowerCase().includes(suchText)) return true;
-            if (Array.isArray(m.artikel)) {
-                return m.artikel.some(art => (art.name || '').toLowerCase().includes(suchText));
-            }
-            return (m.name || m.label || '').toLowerCase().includes(suchText);
-        });
-        return nameMatch || matMatch;
-    });
+    const gefiltert = auditLogs.filter(a => !suchText || (a.name || '').toLowerCase().includes(suchText) || (Array.isArray(a.materialien) && a.materialien.some(m => (m.kiste_name || '').toLowerCase().includes(suchText) || (Array.isArray(m.artikel) && m.artikel.some(art => (art.name || '').toLowerCase().includes(suchText))) || (m.name || m.label || '').toLowerCase().includes(suchText))));
 
-    if (!gefiltert.length) {
-        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:25px;">Keine Log-Einträge gefunden.</p>';
-        return;
-    }
-
+    if (!gefiltert.length) { ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:25px;">Keine Log-Einträge gefunden.</p>'; return; }
     ziel.innerHTML = `
-        <div class="table-responsive">
-            <table>
-                <thead style="background-color: #2c3e50;">
-                    <tr>
-                        <th style="width:160px;">Datum &amp; Uhrzeit</th>
-                        <th style="width:130px;">Aktion</th>
-                        <th style="width:180px;">Person</th>
-                        <th>Details / Kisten / Material</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${gefiltert.map(log => {
-                        const datum = new Date(log.created_at).toLocaleString('de-DE');
-                        const mats = Array.isArray(log.materialien) ? log.materialien : [];
-                        const typ = log.ereignis || 'entnahme';
-                        
-                        let badgeHtml = '';
-                        if (typ === 'rueckgabe') badgeHtml = '<span class="audit-badge rueckgabe">📥 Rückgabe</span>';
-                        else if (typ === 'teilrueckgabe') badgeHtml = '<span class="audit-badge teilrueckgabe">🔄 Teilrückgabe</span>';
-                        else badgeHtml = '<span class="audit-badge entnahme">📤 Entnahme</span>';
+        <div class="table-responsive"><table>
+            <thead style="background-color: #2c3e50;"><tr><th style="width:160px;">Datum &amp; Uhrzeit</th><th style="width:130px;">Aktion</th><th style="width:180px;">Person</th><th>Details / Kisten / Material</th></tr></thead>
+            <tbody>${gefiltert.map(log => {
+                const typ = log.ereignis || 'entnahme';
+                const badge = typ === 'rueckgabe' ? '<span class="audit-badge rueckgabe">📥 Rückgabe</span>' : (typ === 'teilrueckgabe' ? '<span class="audit-badge teilrueckgabe">🔄 Teilrückgabe</span>' : '<span class="audit-badge entnahme">📤 Entnahme</span>');
+                const details = (Array.isArray(log.materialien) ? log.materialien : []).map(m => {
+                    if (Array.isArray(m.artikel) && m.artikel.length > 0) return m.ganze_kiste ? `📦 ${escapeHtml(m.kiste_name || 'Kiste')} (Ganze Kiste)` : m.artikel.map(a => `${a.menge || 1}x ${escapeHtml(a.name || 'Artikel')} (aus ${escapeHtml(m.kiste_name || 'Kiste')})`).join(', ');
+                    return m.kiste_name ? `📦 ${escapeHtml(m.kiste_name)}` : `${m.menge || 1}x ${escapeHtml(m.name || m.label || 'Material')}`;
+                }).join(', ') || '–';
 
-                        const detailsText = mats.map(m => {
-                            if (Array.isArray(m.artikel) && m.artikel.length > 0) {
-                                if (m.ganze_kiste) return `📦 ${escapeHtml(m.kiste_name || 'Kiste')} (Ganze Kiste)`;
-                                return m.artikel.map(a => `${a.menge || 1}x ${escapeHtml(a.name || 'Artikel')} (aus ${escapeHtml(m.kiste_name || 'Kiste')})`).join(', ');
-                            }
-                            if (m.kiste_name) return `📦 ${escapeHtml(m.kiste_name)}`;
-                            return `${m.menge || 1}x ${escapeHtml(m.name || m.label || 'Material')}`;
-                        }).join(', ') || '–';
-
-                        return `
-                            <tr>
-                                <td><small>${datum}</small></td>
-                                <td>${badgeHtml}</td>
-                                <td><strong>👤 ${escapeHtml(log.name || 'Unbekannt')}</strong></td>
-                                <td>${detailsText}</td>
-                            </tr>
-                        `;
-                    }).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
+                return `<tr><td><small>${new Date(log.created_at).toLocaleString('de-DE')}</small></td><td>${badge}</td><td><strong>👤 ${escapeHtml(log.name || 'Unbekannt')}</strong></td><td>${details}</td></tr>`;
+            }).join('')}</tbody>
+        </table></div>`;
 }
 
 async function schliesseEntnahmeKomplett(entnahmeId) {
-    if (kisteAktionInArbeit) return;
-    if (!confirm('Soll diese Entnahme als vollständig zurückgebracht verbucht und abgeschlossen werden?')) return;
-
-    const ent = (offeneEntnahmen || []).find(e => String(e.id) === String(entnahmeId));
+    if (kisteAktionInArbeit || !confirm('Entnahme als vollständig zurückgebracht abschließen?')) return;
+    const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
     if (!ent) return;
 
     kisteAktionInArbeit = true;
     try {
-        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-        for (const m of mats) {
+        for (const m of (Array.isArray(ent.materialien) ? ent.materialien : [])) {
             if (m.kiste_id && m.ganze_kiste) {
-                const bestand = gibKistenBestand(m.kiste_id);
-                const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-                    const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
-                    return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
-                });
-                await Promise.all(updates);
+                await Promise.all(gibKistenBestand(m.kiste_id).filter(z => Number(z.ist_menge) >= 0).map(z =>
+                    dbClient.from('bestand').update({ menge: z.soll_menge > 0 ? z.soll_menge : z.ist_menge, created_at: new Date().toISOString() }).eq('id', z.id)
+                ));
             } else if (Array.isArray(m.artikel)) {
                 for (const a of m.artikel) {
-                    if (a.bestand_id) {
-                        const b = (aktuelleDaten || []).find(x => x.id === a.bestand_id);
-                        if (b && Number(b.menge) >= 0) {
-                            const neu = Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1));
-                            await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
-                        }
+                    if (!a.bestand_id) continue;
+                    const b = aktuelleDaten.find(x => x.id === a.bestand_id);
+                    if (b && Number(b.menge) >= 0) {
+                        await dbClient.from('bestand').update({ menge: Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1)), created_at: new Date().toISOString() }).eq('id', b.id);
                     }
                 }
             }
         }
-
-        try {
-            await dbClient.from('lager_entnahme_audit').insert([{
-                entnahme_id: ent.id,
-                name: ent.name,
-                kontakt: ent.kontakt,
-                materialien: ent.materialien,
-                ereignis: 'rueckgabe',
-                created_at: new Date().toISOString()
-            }]);
-        } catch (e) {}
-
+        dbAudit({ entnahme_id: ent.id, name: ent.name, kontakt: ent.kontakt, materialien: ent.materialien }, 'rueckgabe');
         await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
         showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
         await ladeAlles();
-    } finally {
-        kisteAktionInArbeit = false;
-    }
+    } finally { kisteAktionInArbeit = false; }
 }
 
 function openNeuOrtModal() { $('neu-ort-name').value = ''; openModalById('neuOrtModal'); }
@@ -2751,10 +1864,7 @@ async function speichereNeuenOrt() {
     closeModal('neuOrtModal');
     showToast('Lagerort angelegt!');
     await ladeAlles();
-    if ($('manage-ort-select')) {
-        populateSelect($('manage-ort-select'), alleLagerorte);
-        ortSelectChanged();
-    }
+    if ($('manage-ort-select')) { populateSelect($('manage-ort-select'), alleLagerorte); ortSelectChanged(); }
 }
 
 function openOrteVerwalten(preselectId = null) {
@@ -2765,14 +1875,12 @@ function openOrteVerwalten(preselectId = null) {
 
 function ortSelectChanged() {
     const selId = $('manage-ort-select').value;
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
+    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
     if (ort) $('manage-ort-name').value = ort.name;
     const statusEl = $('manage-ort-code-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
     if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein Code hinterlegt (wird beim ersten NFC-Schreiben oder QR-Erstellen automatisch generiert).';
     if (delBtn) delBtn.style.display = ort?.nfc_code ? 'block' : 'none';
-
-    const qrBox = $('manage-ort-qr-box');
-    if (qrBox) qrBox.style.display = 'none';
+    if ($('manage-ort-qr-box')) $('manage-ort-qr-box').style.display = 'none';
 }
 
 async function speichereOrt() {
@@ -2794,28 +1902,22 @@ async function entferneNfcVonOrt() {
 
 async function zeigeEinzelKisteQr() {
     const selId = $('manage-ort-select').value;
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
+    const ort = alleLagerorte.find(o => String(o.id) === String(selId));
     if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
-
     const code = await holeOderErzeugeOrtCode(ort);
     ortSelectChanged();
 
-    const qrBox = $('manage-ort-qr-box');
-    const preview = $('manage-ort-qr-preview');
+    const qrBox = $('manage-ort-qr-box'), preview = $('manage-ort-qr-preview');
     if (!qrBox || !preview) return;
-
     preview.innerHTML = '';
-    const url = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
-    new QRCode(preview, { text: url, width: 140, height: 140 });
+    new QRCode(preview, { text: `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`, width: 140, height: 140 });
     qrBox.style.display = 'block';
 }
 
 function downloadEinzelKistenQr() {
-    const selId = $('manage-ort-select').value;
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
+    const ort = alleLagerorte.find(o => String(o.id) === String($('manage-ort-select').value));
     const canvas = $('manage-ort-qr-preview')?.querySelector('canvas');
     if (!canvas || !ort) return;
-
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
     a.download = `QR_${ort.name.replace(/[^a-z0-9]/gi, '_')}.png`;
@@ -2823,17 +1925,14 @@ function downloadEinzelKistenQr() {
 }
 
 function druckeEinzelKistenQr() {
-    const selId = $('manage-ort-select').value;
-    const ort = (alleLagerorte || []).find(o => String(o.id) === String(selId));
+    const ort = alleLagerorte.find(o => String(o.id) === String($('manage-ort-select').value));
     if (ort) druckeKistenEtiketten([ort]);
 }
 
 function openKistenEtikettenModal() {
     kistenEtikettenAuswahlIds.clear();
-    const allChk = $('kisten-etiketten-alle');
-    if (allChk) allChk.checked = false;
-    const sInp = $('kisten-etiketten-suche');
-    if (sInp) sInp.value = '';
+    if ($('kisten-etiketten-alle')) $('kisten-etiketten-alle').checked = false;
+    if ($('kisten-etiketten-suche')) $('kisten-etiketten-suche').value = '';
     renderKistenEtikettenListe();
     openModalById('kistenEtikettenModal');
 }
@@ -2842,13 +1941,9 @@ function renderKistenEtikettenListe() {
     const ziel = $('kisten-etiketten-liste');
     if (!ziel) return;
     const filter = ($('kisten-etiketten-suche')?.value || '').toLowerCase().trim();
-    const liste = (alleLagerorte || []).filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
+    const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
 
-    if (!liste.length) {
-        ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine Kisten gefunden.</p>';
-        return;
-    }
-
+    if (!liste.length) { ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine Kisten gefunden.</p>'; return; }
     ziel.innerHTML = liste.map(ort => {
         const isChk = kistenEtikettenAuswahlIds.has(String(ort.id));
         return `
@@ -2858,34 +1953,28 @@ function renderKistenEtikettenListe() {
                     <strong>📦 ${escapeHtml(ort.name)}</strong>
                     <div style="font-size:0.8em; color:#7f8c8d;">${escapeHtml(ort.nfc_code || 'Code wird beim Druck automatisch vergeben')}</div>
                 </div>
-            </label>
-        `;
+            </label>`;
     }).join('');
-
     $('kisten-etiketten-count').textContent = kistenEtikettenAuswahlIds.size;
     $('kisten-etiketten-drucken-btn').disabled = !kistenEtikettenAuswahlIds.size;
 }
 
 function toggleKistenEtikettAuswahl(id, chk) {
-    if (chk) kistenEtikettenAuswahlIds.add(String(id));
-    else kistenEtikettenAuswahlIds.delete(String(id));
+    if (chk) kistenEtikettenAuswahlIds.add(String(id)); else kistenEtikettenAuswahlIds.delete(String(id));
     $('kisten-etiketten-count').textContent = kistenEtikettenAuswahlIds.size;
     $('kisten-etiketten-drucken-btn').disabled = !kistenEtikettenAuswahlIds.size;
 }
 
 function toggleAlleKistenEtiketten(chk) {
     kistenEtikettenAuswahlIds.clear();
-    if (chk) (alleLagerorte || []).forEach(o => kistenEtikettenAuswahlIds.add(String(o.id)));
+    if (chk) alleLagerorte.forEach(o => kistenEtikettenAuswahlIds.add(String(o.id)));
     renderKistenEtikettenListe();
 }
 
 async function druckeAusgewaehlteKistenEtiketten() {
-    const ausgewaehlt = (alleLagerorte || []).filter(o => kistenEtikettenAuswahlIds.has(String(o.id)));
+    const ausgewaehlt = alleLagerorte.filter(o => kistenEtikettenAuswahlIds.has(String(o.id)));
     if (!ausgewaehlt.length) return;
-
-    for (const ort of ausgewaehlt) {
-        await holeOderErzeugeOrtCode(ort);
-    }
+    for (const ort of ausgewaehlt) await holeOderErzeugeOrtCode(ort);
     await ladeLagerorte();
     druckeKistenEtiketten(ausgewaehlt);
 }
@@ -2894,17 +1983,15 @@ function druckeKistenEtiketten(liste) {
     const win = window.open('', '_blank');
     const itemsHtml = (liste || []).map(o => {
         const code = o.nfc_code || `kiste-${o.id}`;
-        const link = `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`;
         return `
             <div class="kiste-label-card">
-                <div class="kiste-label-qr" data-link="${link}"></div>
+                <div class="kiste-label-qr" data-link="https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}"></div>
                 <div class="kiste-label-info">
                     <div class="kiste-label-title">${escapeHtml(o.name)}</div>
                     <div class="kiste-label-sub">📦 TRISPORT LAGER</div>
                     <div class="kiste-label-code">${escapeHtml(code)}</div>
                 </div>
-            </div>
-        `;
+            </div>`;
     }).join('');
 
     win.document.write(`
@@ -2927,13 +2014,7 @@ function druckeKistenEtiketten(liste) {
         </head><body>
             <button class="no-p" onclick="window.print()">🖨️ Etiketten drucken</button>
             <div class="labels-grid">${itemsHtml}</div>
-            <script>
-                window.onload = function() {
-                    document.querySelectorAll('.kiste-label-qr').forEach(el => {
-                        new QRCode(el, { text: el.dataset.link, width: 140, height: 140 });
-                    });
-                };
-            <\/script>
+            <script>window.onload = function() { document.querySelectorAll('.kiste-label-qr').forEach(el => new QRCode(el, { text: el.dataset.link, width: 140, height: 140 })); };<\/script>
         </body></html>`);
     win.document.close();
 }
@@ -2950,22 +2031,17 @@ function toggleEditMode() {
 }
 
 function openModal() {
-    $('new-name').value = '';
-    $('new-kategorie').value = '';
-    $('new-einheit').value = 'Stück';
+    $('new-name').value = ''; $('new-kategorie').value = ''; $('new-einheit').value = 'Stück';
     if ($('new-wichtig')) $('new-wichtig').checked = false;
     if ($('new-typ')) $('new-typ').value = 'zaehlbar';
 
     const wrapper = $('new-orte-wrapper');
     const rows = wrapper.querySelectorAll('.lagerort-row');
     for (let i = 1; i < rows.length; i++) rows[i].remove();
-
-    const first = rows[0];
-    const input = first.querySelector('.new-menge');
+    const input = rows[0].querySelector('.new-menge');
     input.value = '0';
     aktualisiereMengeEingabeFarbe(input);
-    setzeBestandStatus(first, 'zahl');
-
+    setzeBestandStatus(rows[0], 'zahl');
     openModalById('artikelModal');
 }
 
@@ -2982,7 +2058,7 @@ function addOrtRow() {
 function removeNewOrtRow(btn) {
     const wrapper = $('new-orte-wrapper');
     if (wrapper.querySelectorAll('.lagerort-row').length > 1) btn.closest('.lagerort-row').remove();
-    else showToast('Ein Artikel muss mindestens einen Lagerort haben!', 'warning');
+    else showToast('Mindestens ein Lagerort erforderlich!', 'warning');
 }
 
 async function artikelAnlegen() {
@@ -2991,23 +2067,15 @@ async function artikelAnlegen() {
     if (!name) return showToast('Bitte Namen eingeben.', 'warning');
 
     let artId = null;
-    let existierenderArtikel = (alleArtikelInfos || []).find(a => a.name.trim().toLowerCase() === name.toLowerCase());
-
-    if (!existierenderArtikel) {
-        const { data: dbCheck } = await dbClient.from('artikel').select('*').ilike('name', name);
-        if (dbCheck && dbCheck.length > 0) existierenderArtikel = dbCheck[0];
+    let ex = alleArtikelInfos.find(a => a.name.trim().toLowerCase() === name.toLowerCase());
+    if (!ex) {
+        const { data } = await dbClient.from('artikel').select('*').ilike('name', name);
+        if (data?.length) ex = data[0];
     }
 
-    if (existierenderArtikel) {
-        artId = existierenderArtikel.id;
-        const { error: updateErr } = await dbClient.from('artikel').update({
-            name,
-            kategorie: kat,
-            einheit,
-            wichtig,
-            typ
-        }).eq('id', artId);
-        if (updateErr) return showToast('Fehler beim Aktualisieren: ' + updateErr.message, 'error');
+    if (ex) {
+        artId = ex.id;
+        await dbClient.from('artikel').update({ name, kategorie: kat, einheit, wichtig, typ }).eq('id', artId);
         await dbClient.from('bestand').delete().eq('artikel_id', artId);
     } else {
         const { data, error } = await dbClient.from('artikel').insert([{ name, kategorie: kat, einheit, wichtig, typ }]).select();
@@ -3019,17 +2087,12 @@ async function artikelAnlegen() {
         const menge = leseBestandswertAusZeile(row);
         const oldVal = werteMengeAus(row.querySelector('.new-menge')?.getAttribute('data-old-value') || '0');
         const soll = menge < 0 ? oldVal : menge;
-        return {
-            artikel_id: artId,
-            lagerort_id: row.querySelector('.new-ort').value,
-            menge: menge < 0 ? menge : soll,
-            alte_menge: soll
-        };
+        return { artikel_id: artId, lagerort_id: row.querySelector('.new-ort').value, menge: menge < 0 ? menge : soll, alte_menge: soll };
     });
 
     if (inserts.length) await dbClient.from('bestand').insert(inserts);
     closeModal('artikelModal');
-    showToast(existierenderArtikel ? 'Artikel reaktiviert und gespeichert!' : 'Artikel gespeichert!');
+    showToast(ex ? 'Artikel aktualisiert!' : 'Artikel gespeichert!');
     await ladeAlles();
 }
 
@@ -3039,24 +2102,21 @@ function addEditOrtRow(data = null) {
     div.className = 'edit-ort-row';
     div.style = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
 
-    const options = (alleLagerorte || []).map(o => `<option value="${o.id}" ${(data?.lagerort_id == o.id) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('');
-
+    const options = alleLagerorte.map(o => `<option value="${o.id}" ${(data?.lagerort_id == o.id) ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('');
     let displayVal = '0', status = 'zahl';
     if (data) {
         const m = Number(data.menge);
         if (m === -1) { displayVal = '∞'; status = 'inf'; }
         else if (m === -2) { displayVal = '-'; status = 'strich-ok'; }
         else if (m === -3) { displayVal = '-'; status = 'strich-warn'; }
-        else {
-            displayVal = (data.soll_menge !== undefined && data.soll_menge >= 0) ? data.soll_menge : (data.alte_menge ?? m);
-        }
+        else displayVal = (data.soll_menge !== undefined && data.soll_menge >= 0) ? data.soll_menge : (data.alte_menge ?? m);
     }
 
     div.innerHTML = `
         <div class="bestand-row-stack" style="width:100%;">
             <select class="edit-ort-select" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;">${options}</select>
             <div class="bestand-action-row" style="flex-wrap:nowrap; width:100%;">
-                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;" title="Gesamtbestand im Verein">
+                <input type="text" class="edit-menge-input bestand-menge-input bestand-form-quantity" value="${displayVal}" data-old-value="${data?.alte_menge ?? 0}" oninput="bestandEingabeGeaendert(this)" style="flex:1.25; min-width:0; padding:12px; border-radius:6px; border:1px solid #ccc; text-align:center;" title="Gesamtbestand">
                 <button type="button" class="btn bestand-mode-btn bestand-btn-inf" style="background:#95a5a6; padding:10px; width:auto; min-width:68px; font-weight:bold;" onclick="toggleBestandInf(this)">∞</button>
                 <button type="button" class="btn bestand-mode-btn bestand-btn-minus" style="background:#95a5a6; padding:10px; width:auto; min-width:44px; font-weight:bold;" onclick="toggleBestandMinus(this)">-</button>
             </div>
@@ -3070,8 +2130,8 @@ function addEditOrtRow(data = null) {
 
 async function openEditModal(artikelId) {
     if (!isEditMode) return;
-    const art = (alleArtikelInfos || []).find(a => a.id === artikelId);
-    const bestaende = (aktuelleDaten || []).filter(b => b.artikel_id === artikelId);
+    const art = alleArtikelInfos.find(a => a.id === artikelId);
+    const bestaende = aktuelleDaten.filter(b => b.artikel_id === artikelId);
 
     $('edit-artikel-id').value = artikelId;
     $('edit-name').value = art.name;
@@ -3082,9 +2142,7 @@ async function openEditModal(artikelId) {
 
     const wrapper = $('edit-orte-wrapper');
     wrapper.innerHTML = '';
-    if (bestaende.length) bestaende.forEach(b => addEditOrtRow(b));
-    else addEditOrtRow();
-
+    if (bestaende.length) bestaende.forEach(b => addEditOrtRow(b)); else addEditOrtRow();
     openModalById('editModal');
 }
 
@@ -3094,8 +2152,7 @@ async function speichereBearbeitung() {
     const typ = $('edit-typ').value, wichtig = $('edit-wichtig').checked;
 
     await dbClient.from('artikel').update({ name, kategorie: kat, einheit, typ, wichtig }).eq('id', aid);
-
-    const alteBestaende = (aktuelleDaten || []).filter(b => String(b.artikel_id) === String(aid));
+    const alteBestaende = aktuelleDaten.filter(b => String(b.artikel_id) === String(aid));
     await dbClient.from('bestand').delete().eq('artikel_id', aid);
 
     const inserts = Array.from(document.querySelectorAll('#edit-orte-wrapper .edit-ort-row')).map(row => {
@@ -3107,16 +2164,9 @@ async function speichereBearbeitung() {
         const vorher = alteBestaende.find(b => String(b.lagerort_id) === String(oid));
         let neuesIst = soll;
         if (vorher && vorher.soll_menge > 0 && soll > 0) {
-            const diff = soll - vorher.soll_menge;
-            neuesIst = Math.max(0, Math.min(soll, (vorher.ist_menge >= 0 ? vorher.ist_menge : soll) + diff));
+            neuesIst = Math.max(0, Math.min(soll, (vorher.ist_menge >= 0 ? vorher.ist_menge : soll) + (soll - vorher.soll_menge)));
         }
-
-        return {
-            artikel_id: Number(aid),
-            lagerort_id: Number(oid),
-            menge: neuesSoll < 0 ? neuesSoll : neuesIst,
-            alte_menge: soll
-        };
+        return { artikel_id: Number(aid), lagerort_id: Number(oid), menge: neuesSoll < 0 ? neuesSoll : neuesIst, alte_menge: soll };
     });
 
     if (inserts.length) await dbClient.from('bestand').insert(inserts);
@@ -3137,7 +2187,7 @@ async function artikelLoeschen() {
 
 function openKommentarModal(artikelId, event) {
     if (event) event.stopPropagation();
-    const art = (alleArtikelInfos || []).find(a => String(a.id) === String(artikelId));
+    const art = alleArtikelInfos.find(a => String(a.id) === String(artikelId));
     if (!art) return;
     $('kommentar-artikel-id').value = artikelId;
     $('kommentar-artikel-name').innerText = art.name;
@@ -3145,8 +2195,7 @@ function openKommentarModal(artikelId, event) {
     openModalById('kommentarModal');
 }
 async function speichereKommentar() {
-    const aid = $('kommentar-artikel-id').value, text = $('kommentar-text').value;
-    await dbClient.from('artikel').update({ kommentar: text }).eq('id', aid);
+    await dbClient.from('artikel').update({ kommentar: $('kommentar-text').value }).eq('id', $('kommentar-artikel-id').value);
     closeModal('kommentarModal');
     showToast('Notiz gespeichert!');
     ladeAlles();
@@ -3159,9 +2208,8 @@ function wechsleModus(modus) {
     flushAllPendingArtikelUpdates();
     aktuellerModus = modus;
     ['lager', 'kisten', 'event'].forEach(m => {
-        const v = $(`ansicht-${m}`), t = $(`tab-${m}`);
-        if (v) v.style.display = m === modus ? 'block' : 'none';
-        if (t) t.className = m === modus ? 'btn btn-modus active' : 'btn btn-modus';
+        $(`ansicht-${m}`) && ($(`ansicht-${m}`).style.display = m === modus ? 'block' : 'none');
+        $(`tab-${m}`) && ($(`tab-${m}`).className = m === modus ? 'btn btn-modus active' : 'btn btn-modus');
     });
 
     if (modus === 'kisten') {
@@ -3170,7 +2218,6 @@ function wechsleModus(modus) {
     } else {
         stoppeUnterwegsAutoRefresh();
     }
-
     if (modus === 'event') zeigePackliste();
 }
 
@@ -3182,52 +2229,32 @@ function zeigePackliste() {
     if (!currentId) { details.style.display = 'none'; return; }
     details.style.display = 'block';
 
-    const positionen = (packlistenPositionen || []).filter(p => String(p.packliste_id) === String(currentId));
-    if (!positionen.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Positionen in dieser Packliste.</td></tr>';
-        return;
-    }
+    const positionen = packlistenPositionen.filter(p => String(p.packliste_id) === String(currentId));
+    if (!positionen.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Noch keine Positionen in dieser Packliste.</td></tr>'; return; }
 
     positionen.forEach(pos => {
-        let name = pos.artikel?.name || pos.eigener_name || 'Unbekannt';
-        let verfuegbar = '-';
-        let status = '<span class="event-ok">✅ OK</span>';
+        const name = pos.artikel?.name || pos.eigener_name || 'Unbekannt';
+        let verfuegbar = '-', status = '<span class="event-ok">✅ OK</span>';
 
         if (pos.artikel_id) {
-            const bestandArtikel = (aktuelleDaten || []).filter(b => b.artikel_id === pos.artikel_id);
-            verfuegbar = bestandArtikel.reduce((sum, b) => sum + (Number(b.ist_menge) >= 0 ? Number(b.ist_menge) : 0), 0);
+            verfuegbar = aktuelleDaten.filter(b => b.artikel_id === pos.artikel_id).reduce((sum, b) => sum + (Number(b.ist_menge) >= 0 ? Number(b.ist_menge) : 0), 0);
             if (verfuegbar < pos.menge) status = `<span class="event-warning">❌ Zu wenig (${verfuegbar - pos.menge})</span>`;
         }
 
-        const mengeZelle = isEventEditMode 
-            ? `<input type="text" class="menge-input" value="${pos.menge}" onchange="speicherePackMengeDirekt(${pos.id}, this.value)" style="width:65px; height:34px; padding:4px;">` 
-            : `<strong>${pos.menge}</strong>`;
-
-        let actionCell = isEventEditMode ? `
+        const mengeZelle = isEventEditMode ? `<input type="text" class="menge-input" value="${pos.menge}" onchange="speicherePackMengeDirekt(${pos.id}, this.value)" style="width:65px; height:34px; padding:4px;">` : `<strong>${pos.menge}</strong>`;
+        const actionCell = isEventEditMode ? `
             <button class="btn" style="background:#3498db; padding:4px 8px; font-size:0.8em; margin-left:8px;" onclick="openPackItemModal(${pos.id})" title="Position bearbeiten">✏️</button>
-            <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:4px;" onclick="loeschePackPosition(${pos.id})" title="Löschen">🗑️</button>
-        ` : '';
+            <button class="btn" style="background:#e74c3c; padding:4px 8px; font-size:0.8em; margin-left:4px;" onclick="loeschePackPosition(${pos.id})" title="Löschen">🗑️</button>` : '';
 
-        tbody.innerHTML += `
-            <tr>
-                <td><strong>${escapeHtml(name)}</strong></td>
-                <td>${mengeZelle}</td>
-                <td>${verfuegbar}</td>
-                <td>${status} ${actionCell}</td>
-            </tr>`;
+        tbody.innerHTML += `<tr><td><strong>${escapeHtml(name)}</strong></td><td>${mengeZelle}</td><td>${verfuegbar}</td><td>${status} ${actionCell}</td></tr>`;
     });
 }
 
 async function speicherePackMengeDirekt(posId, rawVal) {
     const neueMenge = werteMengeAus(rawVal) || 1;
     const { error } = await dbClient.from('packlisten_positionen').update({ menge: neueMenge }).eq('id', posId);
-    if (error) {
-        showToast('Fehler beim Speichern: ' + error.message, 'error');
-    } else {
-        showToast(`Menge auf ${neueMenge} geändert!`);
-        await ladePacklistenDaten();
-        zeigePackliste();
-    }
+    if (error) showToast('Fehler beim Speichern: ' + error.message, 'error');
+    else { showToast(`Menge auf ${neueMenge} geändert!`); await ladePacklistenDaten(); zeigePackliste(); }
 }
 
 function toggleEventEditMode() {
@@ -3240,27 +2267,17 @@ function toggleEventEditMode() {
 
 function openPackItemModal(posId = null) {
     if (!$('packlisten-auswahl')?.value) return showToast('Bitte wähle zuerst eine Packliste aus.', 'warning');
-
-    const idInp = $('pack-pos-id');
-    const titleEl = $('pack-modal-title');
-    const btnEl = $('pack-modal-save-btn');
+    const idInp = $('pack-pos-id'), titleEl = $('pack-modal-title'), btnEl = $('pack-modal-save-btn');
 
     if (posId) {
-        const pos = (packlistenPositionen || []).find(p => p.id === posId);
+        const pos = packlistenPositionen.find(p => p.id === posId);
         if (!pos) return;
         if (idInp) idInp.value = pos.id;
         if (titleEl) titleEl.innerText = 'Position bearbeiten';
         if (btnEl) btnEl.innerText = 'Speichern';
-
-        if (pos.artikel_id) {
-            $('pack-typ').value = 'lager';
-            $('pack-artikel-input').value = pos.artikel?.name || '';
-            $('pack-eigener-name').value = '';
-        } else {
-            $('pack-typ').value = 'custom';
-            $('pack-eigener-name').value = pos.eigener_name || '';
-            $('pack-artikel-input').value = '';
-        }
+        $('pack-typ').value = pos.artikel_id ? 'lager' : 'custom';
+        $('pack-artikel-input').value = pos.artikel?.name || '';
+        $('pack-eigener-name').value = pos.eigener_name || '';
         $('pack-menge').value = pos.menge;
     } else {
         if (idInp) idInp.value = '';
@@ -3271,7 +2288,6 @@ function openPackItemModal(posId = null) {
         $('pack-eigener-name').value = '';
         $('pack-menge').value = '1';
     }
-
     togglePackTyp();
     openModalById('packItemModal');
 }
@@ -3283,44 +2299,25 @@ function togglePackTyp() {
 }
 
 async function packPositionSpeichern() {
-    const plId = $('packlisten-auswahl').value;
-    const typ = $('pack-typ').value;
-    const menge = werteMengeAus($('pack-menge').value) || 1;
-    const editId = $('pack-pos-id')?.value;
-
-    let artikelId = null;
-    let eigenerName = null;
+    const plId = $('packlisten-auswahl').value, typ = $('pack-typ').value;
+    const menge = werteMengeAus($('pack-menge').value) || 1, editId = $('pack-pos-id')?.value;
+    let artikelId = null, eigenerName = null;
 
     if (typ === 'lager') {
-        const artName = $('pack-artikel-input').value.trim();
-        const art = (alleArtikelInfos || []).find(a => a.name.toLowerCase() === artName.toLowerCase());
+        const art = alleArtikelInfos.find(a => a.name.toLowerCase() === $('pack-artikel-input').value.trim().toLowerCase());
         if (!art) return showToast('Artikel nicht im Lager gefunden.', 'warning');
         artikelId = art.id;
     } else {
-        const cName = $('pack-eigener-name').value.trim();
-        if (!cName) return showToast('Bitte Namen eingeben.', 'warning');
-        eigenerName = cName;
+        eigenerName = $('pack-eigener-name').value.trim();
+        if (!eigenerName) return showToast('Bitte Namen eingeben.', 'warning');
     }
 
-    const payload = {
-        packliste_id: Number(plId),
-        menge,
-        artikel_id: artikelId,
-        eigener_name: eigenerName
-    };
+    const payload = { packliste_id: Number(plId), menge, artikel_id: artikelId, eigener_name: eigenerName };
+    const { error } = editId ? await dbClient.from('packlisten_positionen').update(payload).eq('id', editId) : await dbClient.from('packlisten_positionen').insert([payload]);
+    if (error) return showToast('Fehler: ' + error.message, 'error');
 
-    if (editId) {
-        const { error } = await dbClient.from('packlisten_positionen').update(payload).eq('id', editId);
-        if (error) return showToast('Fehler beim Aktualisieren: ' + error.message, 'error');
-        showToast('Position aktualisiert!');
-    } else {
-        const { error } = await dbClient.from('packlisten_positionen').insert([payload]);
-        if (error) return showToast('Fehler beim Hinzufügen: ' + error.message, 'error');
-        showToast('Position hinzugefügt!');
-    }
-
+    showToast(editId ? 'Position aktualisiert!' : 'Position hinzugefügt!');
     closeModal('packItemModal');
-    if ($('pack-pos-id')) $('pack-pos-id').value = '';
     await ladePacklistenDaten();
     zeigePackliste();
 }
@@ -3338,15 +2335,17 @@ async function neuePacklisteAnlegen() {
     await dbClient.from('packlisten').insert([{ name: n.trim() }]);
     await ladePacklistenDaten();
 }
+
 async function umbenennePackliste() {
     const id = $('packlisten-auswahl').value;
-    const cur = (packlisten || []).find(p => String(p.id) === String(id));
+    const cur = packlisten.find(p => String(p.id) === String(id));
     const n = prompt('Neuer Name:', cur?.name);
     if (n?.trim() && n !== cur.name) {
         await dbClient.from('packlisten').update({ name: n.trim() }).eq('id', id);
         await ladePacklistenDaten();
     }
 }
+
 async function loeschePackliste() {
     const id = $('packlisten-auswahl').value;
     if (!confirm('Packliste wirklich löschen?')) return;
@@ -3359,13 +2358,13 @@ async function loeschePackliste() {
 function druckePackliste() {
     const listId = $('packlisten-auswahl').value;
     if (!listId) return;
-    const pl = (packlisten || []).find(p => String(p.id) === String(listId));
-    const pos = (packlistenPositionen || []).filter(p => String(p.packliste_id) === String(listId));
+    const pl = packlisten.find(p => String(p.id) === String(listId));
+    const pos = packlistenPositionen.filter(p => String(p.packliste_id) === String(listId));
 
     const win = window.open('', '_blank');
     const rowsHtml = pos.map(p => {
         const art = p.artikel?.name || p.eigener_name;
-        const ort = p.artikel_id ? ((aktuelleDaten || []).filter(b => b.artikel_id === p.artikel_id).map(b => b.lagerorte?.name).join(', ') || '-') : 'Sonderposten';
+        const ort = p.artikel_id ? (aktuelleDaten.filter(b => b.artikel_id === p.artikel_id).map(b => b.lagerorte?.name).join(', ') || '-') : 'Sonderposten';
         return `<tr><td style="width:30px; text-align:center;"><input type="checkbox"></td><td><strong>${escapeHtml(art)}</strong></td><td>${p.menge}</td><td>${escapeHtml(ort)}</td></tr>`;
     }).join('');
 
@@ -3381,69 +2380,56 @@ function druckePackliste() {
 }
 
 function startEinkaufsliste() {
-    autoFehlbestandListe = [];
-    eigeneVorschlaegeListe = [];
-    manuelleEintraegeListe = [];
+    autoFehlbestandListe = []; eigeneVorschlaegeListe = []; manuelleEintraegeListe = [];
     const bestandMap = {}, nachkaufSet = new Set(), bedarfMap = {}, eigeneMap = {};
 
-    (aktuelleDaten || []).forEach(b => {
+    aktuelleDaten.forEach(b => {
         const m = Number(b.menge);
         if (m === BESTAND_STRICH_NACHKAUF) nachkaufSet.add(String(b.artikel_id));
         else if (m >= 0) bestandMap[b.artikel_id] = (bestandMap[b.artikel_id] || 0) + (b.ist_menge >= 0 ? b.ist_menge : m);
     });
 
-    (packlistenPositionen || []).forEach(p => {
+    packlistenPositionen.forEach(p => {
         if (p.artikel_id) bedarfMap[p.artikel_id] = (bedarfMap[p.artikel_id] || 0) + Number(p.menge);
         else if (p.eigener_name) eigeneMap[p.eigener_name] = (eigeneMap[p.eigener_name] || 0) + Number(p.menge);
     });
 
-    (alleArtikelInfos || []).forEach(art => {
+    alleArtikelInfos.forEach(art => {
         const bestand = nachkaufSet.has(String(art.id)) ? 0 : (bestandMap[art.id] || 0);
         const bedarf = bedarfMap[art.id] || 0;
-        if (nachkaufSet.has(String(art.id))) {
-            autoFehlbestandListe.push({ artikel: art.name, menge: Math.max(1, bedarf), grund: 'Nachkauf markiert (🔴)' });
-        } else if (bedarf > bestand) {
-            autoFehlbestandListe.push({ artikel: art.name, menge: bedarf - bestand, grund: 'Fehlt im Lager für Packliste' });
-        }
+        if (nachkaufSet.has(String(art.id))) autoFehlbestandListe.push({ artikel: art.name, menge: Math.max(1, bedarf), grund: 'Nachkauf markiert (🔴)' });
+        else if (bedarf > bestand) autoFehlbestandListe.push({ artikel: art.name, menge: bedarf - bestand, grund: 'Fehlt im Lager für Packliste' });
     });
 
-    const autoEl = $('auto-kauf-liste');
-    if (autoEl) {
-        autoEl.innerHTML = autoFehlbestandListe.length ? 
-            autoFehlbestandListe.map(i => `<li><strong>${i.menge}x</strong> ${escapeHtml(i.artikel)} <small style="color:#7f8c8d;">(${i.grund})</small></li>`).join('') : 
-            '<li style="color:#27ae60;">Alles grün! Keine Fehlbestände.</li>';
+    if ($('auto-kauf-liste')) {
+        $('auto-kauf-liste').innerHTML = autoFehlbestandListe.length 
+            ? autoFehlbestandListe.map(i => `<li><strong>${i.menge}x</strong> ${escapeHtml(i.artikel)} <small style="color:#7f8c8d;">(${i.grund})</small></li>`).join('')
+            : '<li style="color:#27ae60;">Alles grün! Keine Fehlbestände.</li>';
     }
 
-    const eigeneEl = $('eigene-kauf-liste');
-    if (eigeneEl) {
-        eigeneEl.innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
+    if ($('eigene-kauf-liste')) {
+        $('eigene-kauf-liste').innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
             eigeneVorschlaegeListe.push({ artikel: name, menge: m, grund: 'Sonderposten Packliste' });
             return `<li style="margin-bottom:6px;"><label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="eigene-kauf-check" data-index="${idx}" checked onchange="aktualisiereEinkaufslisteAuswahl()"><span>${m}x ${escapeHtml(name)}</span></label></li>`;
         }).join('') || '<li style="color:#7f8c8d;">Keine Sonderposten in Packlisten.</li>';
     }
 
-    const manEl = $('manuell-kauf-liste');
-    if (manEl) manEl.innerHTML = '';
-
+    if ($('manuell-kauf-liste')) $('manuell-kauf-liste').innerHTML = '';
     aktualisiereEinkaufslisteAuswahl();
     openModalById('kauflisteModal');
 }
 
 function aktualisiereEinkaufslisteAuswahl() {
-    const ausgewaehlt = Array.from(document.querySelectorAll('.eigene-kauf-check:checked'))
-        .map(chk => eigeneVorschlaegeListe[Number(chk.dataset.index)])
-        .filter(Boolean);
+    const ausgewaehlt = Array.from(document.querySelectorAll('.eigene-kauf-check:checked')).map(chk => eigeneVorschlaegeListe[Number(chk.dataset.index)]).filter(Boolean);
     einkaufslisteArray = [...autoFehlbestandListe, ...ausgewaehlt, ...manuelleEintraegeListe];
 }
 
 function manuellAufZettel() {
-    const n = $('manuell-kauf-name')?.value.trim();
-    const m = werteMengeAus($('manuell-kauf-menge')?.value) || 1;
+    const n = $('manuell-kauf-name')?.value.trim(), m = werteMengeAus($('manuell-kauf-menge')?.value) || 1;
     if (!n || m <= 0) return;
     manuelleEintraegeListe.push({ artikel: n, menge: m, grund: 'Manuell hinzugefügt' });
     aktualisiereEinkaufslisteAuswahl();
-    const manEl = $('manuell-kauf-liste');
-    if (manEl) manEl.innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
+    if ($('manuell-kauf-liste')) $('manuell-kauf-liste').innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
     if ($('manuell-kauf-name')) $('manuell-kauf-name').value = '';
     if ($('manuell-kauf-menge')) $('manuell-kauf-menge').value = '1';
 }
@@ -3452,12 +2438,10 @@ async function downloadExcel() {
     if (!einkaufslisteArray.length) return showToast('Die Liste ist leer.', 'warning');
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Einkaufsliste');
-
     ws.addRow(['EINKAUFSLISTE - TRISPORT ERDING']);
     ws.addRow(['Erstellt am: ' + new Date().toLocaleString('de-DE')]);
     ws.addRow([]);
     ws.addRow(['ARTIKEL / GEGENSTAND', 'MENGE', 'HINWEIS']);
-
     einkaufslisteArray.forEach(i => ws.addRow([i.artikel, i.menge, i.grund]));
     ws.getColumn(1).width = 40; ws.getColumn(2).width = 12; ws.getColumn(3).width = 30;
 
@@ -3472,7 +2456,6 @@ async function downloadExcel() {
 // =========================================================================
 // 11. REGAL-QR & FEEDBACK
 // =========================================================================
-
 function oeffneQrGeneratorFenster() { window.open('?qrgen=1', '_blank'); }
 
 function aktualisiereRegalQrVorschau() {
@@ -3484,6 +2467,7 @@ function aktualisiereRegalQrVorschau() {
     new QRCode(prev, { text: url, width: 220, height: 220 });
     link.href = url; link.innerText = url;
 }
+
 function downloadRegalQrDatei(fmt = 'png') {
     const c = $('regal-qr-preview')?.querySelector('canvas');
     if (!c) return;
@@ -3495,13 +2479,13 @@ function downloadRegalQrDatei(fmt = 'png') {
 
 async function formularAntwortSpeichern() {
     const name = $('formular-name')?.value.trim() || 'Anonym';
-    const frage1 = $('formular-frage1')?.value.trim() || '';
-    const frage2 = $('formular-frage2')?.value.trim() || '';
+    const frage1 = $('formular-frage1')?.value.trim() || '', frage2 = $('formular-frage2')?.value.trim() || '';
     if (!frage1 && !frage2) return showToast('Bitte mindestens eine Frage beantworten.', 'warning');
     await dbClient.from(TABLES.FORMULAR).insert([{ name, frage1, frage2 }]);
     showToast('Danke für dein Feedback!');
     $('formular-frage1').value = ''; $('formular-frage2').value = '';
 }
+
 async function formularAntwortenLaden() {
     const ziel = $('formular-antworten');
     const { data } = await dbClient.from(TABLES.FORMULAR).select('*').order('created_at', { ascending: false });
@@ -3525,12 +2509,9 @@ function zurueckZurHauptseite() {
 // 12. APP STARTUP / DOMCONTENTLOADED
 // =========================================================================
 document.addEventListener('DOMContentLoaded', async () => {
-    window.addEventListener('beforeunload', () => {
-        flushAllPendingArtikelUpdates();
-    });
+    window.addEventListener('beforeunload', () => { flushAllPendingArtikelUpdates(); });
 
     const urlParams = new URLSearchParams(window.location.search);
-
     if (urlParams.get('qrgen') === '1') {
         $('qrgen-ansicht').style.display = 'block';
         $('login-overlay').style.display = 'none';
@@ -3550,7 +2531,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('login-overlay').style.display = 'none';
         ladeKistenBenutzerSession();
         await ladeAlles();
-        pruefeUndZeigeOnboarding();
+        if (!window.localStorage.getItem(STORAGE_KEYS.ONBOARDING)) openModalById('onboardingModal');
 
         const kistenCode = urlParams.get('kistencheck');
         if (kistenCode) verarbeiteUniversalScan('kistencheck=' + kistenCode);
