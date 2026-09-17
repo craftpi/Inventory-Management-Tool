@@ -55,6 +55,10 @@ let unterwegsRefreshInterval = null;
 let aktiverTeilrueckgabeUserKey = null;
 let aktiverTeilrueckgabeItems = [];
 
+// Sperren gegen Mehrfach-Klicks / Race Conditions
+const artikelAktionInArbeit = new Set();
+let kisteAktionInArbeit = false;
+
 // =========================================================================
 // 2. RECHNER-PARSER & MENGEN-HILFSFUNKTIONEN
 // =========================================================================
@@ -810,7 +814,7 @@ function oeffneKistenCheck(lid) {
         } else {
             banner.style.display = 'block';
 
-            // ZUSAMMENFASSUNG NACH PERSON FÜR DIESE KISTE
+            // Zusammenfassung nach Person für diese Kiste
             const personGroups = new Map();
             boxEntnahmen.forEach(ent => {
                 const userKey = ent.benutzer_vorlage_id ? String(ent.benutzer_vorlage_id) : (ent.name || 'unbekannt').trim().toLowerCase();
@@ -891,9 +895,12 @@ function renderKistenInhaltListe(lid) {
         const fehlt = (soll > 0 && ist >= 0) ? Math.max(0, soll - ist) : 0;
         const istVerbrauch = (z.artikel?.typ === 'verbrauch') || (ist < 0);
         const einheit = z.artikel?.einheit || 'Stück';
+        const inArbeit = artikelAktionInArbeit.has(z.id);
 
         const card = document.createElement('div');
         card.className = `kiste-item-card ${fehlt > 0 ? 'fehlend' : ''}`;
+        card.id = `kiste-item-card-${z.id}`;
+        if (inArbeit) card.style.opacity = '0.55';
 
         let statusText = '';
         if (ist === -1) statusText = '<span style="font-size:1.1em; font-weight:bold; color:#7f8c8d;">∞</span> (Unbegrenzt)';
@@ -909,25 +916,25 @@ function renderKistenInhaltListe(lid) {
         if (istVerbrauch) {
             bedienElementeHtml = `
                 <div style="display:flex; gap:6px;">
-                    <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)" title="Ausreichend vorhanden">🟢 Ausreichend</button>
-                    <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)" title="Auf Einkaufsliste setzen">🔴 Nachkaufen</button>
+                    <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)" title="Ausreichend vorhanden" ${inArbeit ? 'disabled' : ''}>🟢 Ausreichend</button>
+                    <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)" title="Auf Einkaufsliste setzen" ${inArbeit ? 'disabled' : ''}>🔴 Nachkaufen</button>
                 </div>
             `;
         } else {
-            const canMinus = ist > 0 && !isHelper;
-            const canPlus = ist < soll;
+            const canMinus = ist > 0 && !isHelper && !inArbeit;
+            const canPlus = ist < soll && !inArbeit;
 
             let minusButton = '';
             if (isHelper) {
                 minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; opacity:0.35; cursor:not-allowed;" title="Helfer können nicht ausbuchen" disabled>−</button>`;
             } else {
-                minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück entnehmen' : 'Bereits 0 vorhanden'}">−</button>`;
+                minusButton = `<button class="btn" style="background:#e74c3c; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canMinus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, -1)" title="${canMinus ? '1 Stück entnehmen' : (inArbeit ? 'Wird gespeichert…' : 'Bereits 0 vorhanden')}" ${!canMinus ? 'disabled' : ''}>−</button>`;
             }
 
             bedienElementeHtml = `
                 ${minusButton}
-                <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;">
-                <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="1 Stück einbuchen">+</button>
+                <input type="text" id="kiste-menge-${z.id}" class="menge-input bestand-menge-input ${ist > 0 ? 'bestand-menge-ok' : 'bestand-menge-low'}" value="${ist}" onchange="speichereKisteMengeInput(${z.id}, this.value)" style="width:60px; height:36px;" ${inArbeit ? 'disabled' : ''}>
+                <button class="btn" style="background:#27ae60; width:36px; min-width:36px; height:36px; padding:0; font-size:1.1em; ${!canPlus ? 'opacity:0.35; cursor:not-allowed;' : ''}" onclick="aendereArtikelMengeInKiste(${z.id}, 1)" title="${canPlus ? '1 Stück einbuchen' : (inArbeit ? 'Wird gespeichert…' : 'Maximalbestand erreicht')}" ${!canPlus ? 'disabled' : ''}>+</button>
             `;
         }
 
@@ -938,7 +945,7 @@ function renderKistenInhaltListe(lid) {
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
                 ${bedienElementeHtml}
-                <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen">🗑️</button>
+                <button class="btn" style="background:#e74c3c; padding:6px 10px; width:auto; min-height:36px; margin-left:6px;" onclick="entferneArtikelAusKiste(${z.id})" title="Aus dieser Kiste entfernen" ${inArbeit ? 'disabled' : ''}>🗑️</button>
             </div>
         `;
         wrapper.appendChild(card);
@@ -946,21 +953,29 @@ function renderKistenInhaltListe(lid) {
 }
 
 async function setzeKistenVerbrauchStatus(bestandId, statusWert) {
-    await dbClient.from('bestand').update({
-        menge: statusWert,
-        alte_menge: statusWert,
-        created_at: new Date().toISOString()
-    }).eq('id', bestandId);
+    if (artikelAktionInArbeit.has(bestandId)) return;
+    artikelAktionInArbeit.add(bestandId);
 
-    showToast(statusWert === -3 ? '🔴 Auf Einkaufsliste gesetzt!' : '🟢 Als ausreichend markiert!');
-    await ladeAlles();
-    renderKistenInhaltListe(kistenCheckAktuelleId);
+    try {
+        await dbClient.from('bestand').update({
+            menge: statusWert,
+            alte_menge: statusWert,
+            created_at: new Date().toISOString()
+        }).eq('id', bestandId);
+
+        showToast(statusWert === -3 ? '🔴 Auf Einkaufsliste gesetzt!' : '🟢 Als ausreichend markiert!');
+        await ladeAlles();
+        renderKistenInhaltListe(kistenCheckAktuelleId);
+    } finally {
+        artikelAktionInArbeit.delete(bestandId);
+    }
 }
 
 // -------------------------------------------------------------------------
-// Entnahme & Einbuchen mit fixem Sitzungs-Benutzer
+// Entnahme & Einbuchen mit Sperre gegen schnelle Doppelklicks
 // -------------------------------------------------------------------------
 async function frageKisteAusbuchen() {
+    if (kisteAktionInArbeit) return;
     if (!kistenCheckAktuelleId) return;
     const ort = (alleLagerorte || []).find(o => String(o.id) === String(kistenCheckAktuelleId));
     if (!ort) return;
@@ -983,6 +998,7 @@ async function frageKisteAusbuchen() {
 
     if (!confirm(`Ganze Kiste "${ort.name}" an ${aktiverKistenBenutzer.name} ausbuchen?`)) return;
 
+    kisteAktionInArbeit = true;
     try {
         const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
             return dbClient.from('bestand').update({
@@ -1028,35 +1044,43 @@ async function frageKisteAusbuchen() {
     } catch (err) {
         console.error('Fehler beim Ausbuchen der Kiste:', err);
         showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
+    } finally {
+        kisteAktionInArbeit = false;
     }
 }
 
 async function aendereArtikelMengeInKiste(bestandId, delta) {
-    const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
-    if (!eintrag) return;
-    const aktuell = Number(eintrag.ist_menge);
-    if (aktuell < 0) return;
+    if (artikelAktionInArbeit.has(bestandId)) return;
+    artikelAktionInArbeit.add(bestandId);
 
-    if (delta > 0) {
-        await ausfuehrenArtikelEinbuchung(bestandId, delta);
-        return;
-    }
-
-    if (delta < 0 && aktuell <= 0) {
-        return showToast('Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!', 'warning');
-    }
-
-    if (!aktiverKistenBenutzer) {
-        showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning');
-        oeffneKistenBenutzerModal();
-        return;
-    }
-
-    if (aktiverKistenBenutzer.isHelper) {
-        return showToast('Helfer-Account: Ausbuchen ist gesperrt! Helfer können nur Material einbuchen.', 'warning');
-    }
+    const card = $(`kiste-item-card-${bestandId}`);
+    if (card) card.style.opacity = '0.55';
 
     try {
+        const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
+        if (!eintrag) return;
+        const aktuell = Number(eintrag.ist_menge);
+        if (aktuell < 0) return;
+
+        if (delta > 0) {
+            await ausfuehrenArtikelEinbuchung(bestandId, delta);
+            return;
+        }
+
+        if (delta < 0 && aktuell <= 0) {
+            return showToast('Bereits 0 vorhanden – kann nicht weiter ausgebucht werden!', 'warning');
+        }
+
+        if (!aktiverKistenBenutzer) {
+            showToast('Bitte wähle zuerst einen Benutzer aus!', 'warning');
+            oeffneKistenBenutzerModal();
+            return;
+        }
+
+        if (aktiverKistenBenutzer.isHelper) {
+            return showToast('Helfer-Account: Ausbuchen ist gesperrt! Helfer können nur Material einbuchen.', 'warning');
+        }
+
         const neu = Math.max(0, aktuell + delta);
         const { error: updErr } = await dbClient.from('bestand').update({
             menge: neu,
@@ -1100,6 +1124,9 @@ async function aendereArtikelMengeInKiste(bestandId, delta) {
     } catch (err) {
         console.error('Fehler in aendereArtikelMengeInKiste:', err);
         showToast('Fehler beim Ausbuchen: ' + (err.message || err), 'error');
+    } finally {
+        artikelAktionInArbeit.delete(bestandId);
+        if (card) card.style.opacity = '1';
     }
 }
 
@@ -1125,41 +1152,47 @@ async function ausfuehrenArtikelEinbuchung(bestandId, delta) {
 // Rückgabe der Kiste
 // -------------------------------------------------------------------------
 async function ganzeKisteZurueckbuchen() {
+    if (kisteAktionInArbeit) return;
     if (!kistenCheckAktuelleId) return;
     const bestand = gibKistenBestand(kistenCheckAktuelleId);
 
-    const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-        const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
-        return dbClient.from('bestand').update({
-            menge: soll,
-            created_at: new Date().toISOString()
-        }).eq('id', z.id);
-    });
-    await Promise.all(updates);
-
-    const offene = (offeneEntnahmen || []).filter(e => {
-        const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        return mats.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId));
-    });
-
-    for (const ent of offene) {
-        try {
-            await dbClient.from('lager_entnahme_audit').insert([{
-                entnahme_id: ent.id,
-                name: ent.name,
-                kontakt: ent.kontakt,
-                materialien: ent.materialien,
-                ereignis: 'rueckgabe',
+    kisteAktionInArbeit = true;
+    try {
+        const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+            const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
+            return dbClient.from('bestand').update({
+                menge: soll,
                 created_at: new Date().toISOString()
-            }]);
-        } catch (e) {}
-        await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
-    }
+            }).eq('id', z.id);
+        });
+        await Promise.all(updates);
 
-    if (navigator.vibrate) navigator.vibrate(200);
-    showToast('✅ Kiste vollständig zurückgebucht & Entnahme abgeschlossen!');
-    await ladeAlles();
-    oeffneKistenCheck(kistenCheckAktuelleId);
+        const offene = (offeneEntnahmen || []).filter(e => {
+            const mats = Array.isArray(e.materialien) ? e.materialien : [];
+            return mats.some(m => String(m.kiste_id) === String(kistenCheckAktuelleId));
+        });
+
+        for (const ent of offene) {
+            try {
+                await dbClient.from('lager_entnahme_audit').insert([{
+                    entnahme_id: ent.id,
+                    name: ent.name,
+                    kontakt: ent.kontakt,
+                    materialien: ent.materialien,
+                    ereignis: 'rueckgabe',
+                    created_at: new Date().toISOString()
+                }]);
+            } catch (e) {}
+            await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+        }
+
+        if (navigator.vibrate) navigator.vibrate(200);
+        showToast('✅ Kiste vollständig zurückgebucht & Entnahme abgeschlossen!');
+        await ladeAlles();
+        oeffneKistenCheck(kistenCheckAktuelleId);
+    } finally {
+        kisteAktionInArbeit = false;
+    }
 }
 
 async function speichereKisteMengeInput(bId, rawVal) {
@@ -2164,6 +2197,7 @@ function pruefeTeilrueckInput(input, max) {
 }
 
 async function speichereTeilrueckgabe() {
+    if (kisteAktionInArbeit) return;
     if (!aktiverTeilrueckgabeUserKey || !aktiverTeilrueckgabeItems.length) return;
 
     // Ausgewählte Rückgabemengen auslesen
@@ -2185,6 +2219,7 @@ async function speichereTeilrueckgabe() {
         return k === aktiverTeilrueckgabeUserKey;
     });
 
+    kisteAktionInArbeit = true;
     try {
         // 1. Bestände in Tabelle "bestand" erhöhen
         for (const r of rueckgaben) {
@@ -2233,7 +2268,6 @@ async function speichereTeilrueckgabe() {
                                 geaendert = true;
                             }
                         });
-                        // Positionen mit menge <= 0 entfernen
                         m.artikel = m.artikel.filter(a => a.menge > 0);
                     } else if (m.ganze_kiste) {
                         m.ganze_kiste = false;
@@ -2242,7 +2276,6 @@ async function speichereTeilrueckgabe() {
                 });
 
                 if (geaendert) {
-                    // Kisten ohne Artikel entfernen
                     const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
 
                     if (!saubereMats.length) {
@@ -2290,10 +2323,13 @@ async function speichereTeilrueckgabe() {
     } catch (err) {
         console.error('Fehler bei Teilrückgabe:', err);
         showToast('Fehler bei Teilrückgabe: ' + (err.message || err), 'error');
+    } finally {
+        kisteAktionInArbeit = false;
     }
 }
 
 async function schliesseAlleEntnahmenFuerBenutzer(userKey) {
+    if (kisteAktionInArbeit) return;
     const ents = (offeneEntnahmen || []).filter(e => {
         const k = e.benutzer_vorlage_id ? String(e.benutzer_vorlage_id) : (e.name || 'unbekannt').trim().toLowerCase();
         return k === userKey;
@@ -2304,6 +2340,7 @@ async function schliesseAlleEntnahmenFuerBenutzer(userKey) {
 
     if (!confirm(`Sollen wirklich ALLE Entnahmen von ${userName} als vollständig zurückgebracht verbucht werden?`)) return;
 
+    kisteAktionInArbeit = true;
     try {
         for (const ent of ents) {
             const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
@@ -2347,6 +2384,8 @@ async function schliesseAlleEntnahmenFuerBenutzer(userKey) {
     } catch (err) {
         console.error('Fehler beim Abschließen aller Entnahmen:', err);
         showToast('Fehler beim Abschließen: ' + (err.message || err), 'error');
+    } finally {
+        kisteAktionInArbeit = false;
     }
 }
 
@@ -2421,47 +2460,53 @@ function renderAuditLogListe() {
 }
 
 async function schliesseEntnahmeKomplett(entnahmeId) {
+    if (kisteAktionInArbeit) return;
     if (!confirm('Soll diese Entnahme als vollständig zurückgebracht verbucht und abgeschlossen werden?')) return;
 
     const ent = (offeneEntnahmen || []).find(e => String(e.id) === String(entnahmeId));
     if (!ent) return;
 
-    const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
-    for (const m of mats) {
-        if (m.kiste_id && m.ganze_kiste) {
-            const bestand = gibKistenBestand(m.kiste_id);
-            const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
-                const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
-                return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
-            });
-            await Promise.all(updates);
-        } else if (Array.isArray(m.artikel)) {
-            for (const a of m.artikel) {
-                if (a.bestand_id) {
-                    const b = (aktuelleDaten || []).find(x => x.id === a.bestand_id);
-                    if (b && Number(b.menge) >= 0) {
-                        const neu = Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1));
-                        await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
+    kisteAktionInArbeit = true;
+    try {
+        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+        for (const m of mats) {
+            if (m.kiste_id && m.ganze_kiste) {
+                const bestand = gibKistenBestand(m.kiste_id);
+                const updates = bestand.filter(z => Number(z.ist_menge) >= 0).map(z => {
+                    const soll = z.soll_menge > 0 ? z.soll_menge : (z.alte_menge > 0 ? z.alte_menge : z.ist_menge);
+                    return dbClient.from('bestand').update({ menge: soll, created_at: new Date().toISOString() }).eq('id', z.id);
+                });
+                await Promise.all(updates);
+            } else if (Array.isArray(m.artikel)) {
+                for (const a of m.artikel) {
+                    if (a.bestand_id) {
+                        const b = (aktuelleDaten || []).find(x => x.id === a.bestand_id);
+                        if (b && Number(b.menge) >= 0) {
+                            const neu = Math.min(Number(b.soll_menge) || 0, (Number(b.ist_menge) || 0) + (Number(a.menge) || 1));
+                            await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
+                        }
                     }
                 }
             }
         }
+
+        try {
+            await dbClient.from('lager_entnahme_audit').insert([{
+                entnahme_id: ent.id,
+                name: ent.name,
+                kontakt: ent.kontakt,
+                materialien: ent.materialien,
+                ereignis: 'rueckgabe',
+                created_at: new Date().toISOString()
+            }]);
+        } catch (e) {}
+
+        await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+        showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
+        await ladeAlles();
+    } finally {
+        kisteAktionInArbeit = false;
     }
-
-    try {
-        await dbClient.from('lager_entnahme_audit').insert([{
-            entnahme_id: ent.id,
-            name: ent.name,
-            kontakt: ent.kontakt,
-            materialien: ent.materialien,
-            ereignis: 'rueckgabe',
-            created_at: new Date().toISOString()
-        }]);
-    } catch (e) {}
-
-    await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
-    showToast(`✅ Entnahme von ${ent.name} abgeschlossen!`);
-    await ladeAlles();
 }
 
 function openNeuOrtModal() { $('neu-ort-name').value = ''; openModalById('neuOrtModal'); }
