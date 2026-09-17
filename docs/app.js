@@ -783,13 +783,84 @@ function extrahiereEntnahmePositionen(ent) {
     return res;
 }
 
-function oeffneKistenCheck(lid) {
+// Bereinigt automatisch verwaiste Entnahmen, falls mehr gebucht war als physisch fehlt
+async function bereinigeKistenEntnahmenUeberhang(lid) {
+    const bestand = gibKistenBestand(lid);
+    let gabAenderung = false;
+
+    for (const b of bestand) {
+        const soll = Number(b.soll_menge) || 0;
+        const ist = Number(b.ist_menge) || 0;
+        if (soll <= 0 || ist < 0) continue;
+        const maxFehlend = Math.max(0, soll - ist);
+
+        const matchingEnts = [];
+        let totalGebucht = 0;
+
+        (offeneEntnahmen || []).forEach(ent => {
+            const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+            mats.forEach(m => {
+                if (String(m.kiste_id) !== String(lid)) return;
+                if (Array.isArray(m.artikel)) {
+                    m.artikel.forEach(a => {
+                        const match = (a.bestand_id && a.bestand_id === b.id) ||
+                                      (a.artikel_id && a.artikel_id === b.artikel_id) ||
+                                      (a.name && a.name.toLowerCase() === (b.artikel?.name || '').toLowerCase());
+                        if (match) {
+                            totalGebucht += Number(a.menge) || 0;
+                            matchingEnts.push({ ent, m, a });
+                        }
+                    });
+                }
+            });
+        });
+
+        if (totalGebucht > maxFehlend) {
+            let ueberhang = totalGebucht - maxFehlend;
+            // Neueste Entnahmen zuerst reduzieren
+            matchingEnts.sort((x, y) => new Date(y.ent.created_at) - new Date(x.ent.created_at));
+
+            for (const item of matchingEnts) {
+                if (ueberhang <= 0) break;
+                const abzug = Math.min(ueberhang, item.a.menge);
+                item.a.menge -= abzug;
+                ueberhang -= abzug;
+                gabAenderung = true;
+
+                const mats = item.ent.materialien;
+                mats.forEach(m => {
+                    if (Array.isArray(m.artikel)) {
+                        m.artikel = m.artikel.filter(art => art.menge > 0);
+                    }
+                });
+                const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
+
+                if (!saubereMats.length) {
+                    await dbClient.from('lager_entnahmen').delete().eq('id', item.ent.id);
+                    item.ent.materialien = [];
+                } else {
+                    await dbClient.from('lager_entnahmen').update({ materialien: saubereMats }).eq('id', item.ent.id);
+                    item.ent.materialien = saubereMats;
+                }
+            }
+        }
+    }
+
+    if (gabAenderung) {
+        await ladeEntnahmeDaten();
+    }
+}
+
+async function oeffneKistenCheck(lid) {
     const ort = (alleLagerorte || []).find(o => String(o.id) === String(lid));
     if (!ort) return;
     kistenCheckAktuelleId = lid;
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
     $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
+
+    // Einmalig eventuelle Altdaten-Überhänge bereinigen
+    await bereinigeKistenEntnahmenUeberhang(lid);
 
     const ausbuchenBtn = $('kiste-ausbuchen-btn');
     if (ausbuchenBtn) {
@@ -890,7 +961,6 @@ function renderKistenInhaltListe(lid) {
     const isHelper = aktiverKistenBenutzer?.isHelper;
 
     bestand.forEach(z => {
-        // Berücksichtige ggf. noch gepuffertes lokales Delta
         const pending = pendingArtikelUpdates.get(z.id);
         const ist = pending ? pending.targetMenge : Number(z.ist_menge);
         const soll = Number(z.soll_menge);
@@ -971,7 +1041,6 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     const eintrag = (aktuelleDaten || []).find(b => b.id === bestandId);
     if (!eintrag) return;
 
-    // Aktuelle virtuelle Menge (inkl. vorheriger schneller Klicks)
     let currentVirtualIst = Number(eintrag.ist_menge);
     if (pendingArtikelUpdates.has(bestandId)) {
         currentVirtualIst = pendingArtikelUpdates.get(bestandId).targetMenge;
@@ -1001,7 +1070,7 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     const newTarget = currentVirtualIst + delta;
     const currentAccumulatedDelta = (pendingArtikelUpdates.get(bestandId)?.delta || 0) + delta;
 
-    // 1. Sofortige UI-Aktualisierung (kein Warten, kein Ruckeln)
+    // 1. Sofortige UI-Aktualisierung (keine Wartezeit)
     const inputEl = $(`kiste-menge-${bestandId}`);
     if (inputEl) {
         inputEl.value = newTarget;
@@ -1023,7 +1092,7 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
 
     if (navigator.vibrate) navigator.vibrate(30);
 
-    // 2. Vorherigen Timer verwerfen und 500ms nach dem letzten Klick einmalig abschicken
+    // 2. 500ms Timer: Nach dem letzten Klick wird gebündelt gespeichert
     if (pendingArtikelUpdates.has(bestandId)) {
         clearTimeout(pendingArtikelUpdates.get(bestandId).timer);
     }
@@ -1044,22 +1113,104 @@ function aendereArtikelMengeInKiste(bestandId, delta) {
     });
 }
 
+// Bucht offene Entnahmen ab, wenn jemand Artikel per (+) oder Mengeneingabe zurücklegt
+async function reduziereOffeneEntnahmenFuerArtikel(kisteId, bestandId, artikelId, artikelName, mengeZurueck) {
+    let verbleibend = mengeZurueck;
+    const kIdNum = Number(kisteId);
+
+    // Sortierung: Bevorzuge aktiven Benutzer, dann neueste zuerst
+    const kandidaten = (offeneEntnahmen || []).filter(e => {
+        const mats = Array.isArray(e.materialien) ? e.materialien : [];
+        return mats.some(m => Number(m.kiste_id) === kIdNum);
+    }).sort((a, b) => {
+        const aIsUser = aktiverKistenBenutzer && (
+            (aktiverKistenBenutzer.id && String(a.benutzer_vorlage_id) === String(aktiverKistenBenutzer.id)) ||
+            (a.name && a.name.toLowerCase() === aktiverKistenBenutzer.name.toLowerCase())
+        );
+        const bIsUser = aktiverKistenBenutzer && (
+            (aktiverKistenBenutzer.id && String(b.benutzer_vorlage_id) === String(aktiverKistenBenutzer.id)) ||
+            (b.name && b.name.toLowerCase() === aktiverKistenBenutzer.name.toLowerCase())
+        );
+        if (aIsUser && !bIsUser) return -1;
+        if (!aIsUser && bIsUser) return 1;
+        return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    for (const ent of kandidaten) {
+        if (verbleibend <= 0) break;
+        let geaendert = false;
+        const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
+
+        mats.forEach(m => {
+            if (verbleibend <= 0 || Number(m.kiste_id) !== kIdNum) return;
+
+            if (Array.isArray(m.artikel)) {
+                m.artikel.forEach(a => {
+                    if (verbleibend <= 0) return;
+                    const match = (bestandId && a.bestand_id === bestandId) ||
+                                  (artikelId && a.artikel_id === artikelId) ||
+                                  (a.name && a.name.toLowerCase() === (artikelName || '').toLowerCase());
+                    if (match) {
+                        const abzug = Math.min(verbleibend, a.menge);
+                        a.menge -= abzug;
+                        verbleibend -= abzug;
+                        geaendert = true;
+                    }
+                });
+                m.artikel = m.artikel.filter(a => a.menge > 0);
+            } else if (m.ganze_kiste) {
+                m.ganze_kiste = false;
+                geaendert = true;
+            }
+        });
+
+        if (geaendert) {
+            const saubereMats = mats.filter(m => (Array.isArray(m.artikel) && m.artikel.length > 0) || m.ganze_kiste);
+            if (!saubereMats.length) {
+                await dbClient.from('lager_entnahmen').delete().eq('id', ent.id);
+            } else {
+                await dbClient.from('lager_entnahmen').update({ materialien: saubereMats }).eq('id', ent.id);
+            }
+
+            try {
+                await dbClient.from('lager_entnahme_audit').insert([{
+                    name: ent.name,
+                    kontakt: ent.kontakt,
+                    benutzer_vorlage_id: ent.benutzer_vorlage_id,
+                    materialien: [{
+                        kiste_id: kIdNum,
+                        kiste_name: mats[0]?.kiste_name || 'Kiste',
+                        artikel: [{
+                            bestand_id: bestandId,
+                            artikel_id: artikelId,
+                            name: artikelName,
+                            menge: mengeZurueck - verbleibend
+                        }]
+                    }],
+                    ereignis: 'teilrueckgabe',
+                    created_at: new Date().toISOString()
+                }]);
+            } catch (e) {}
+        }
+    }
+}
+
 async function flushPendingArtikelUpdate(bestandId) {
     if (!pendingArtikelUpdates.has(bestandId)) return;
     const info = pendingArtikelUpdates.get(bestandId);
     pendingArtikelUpdates.delete(bestandId);
 
-    if (info.delta === 0) return; // Saldo hebt sich auf
+    if (info.delta === 0) return;
 
     try {
-        // 1. Bestand aktualisieren
+        // 1. Bestand in Tabelle "bestand" aktualisieren
         const { error: updErr } = await dbClient.from('bestand').update({
             menge: info.targetMenge,
             created_at: new Date().toISOString()
         }).eq('id', bestandId);
         if (updErr) throw updErr;
 
-        // 2. Entnahme erfassen (bei Netto-Minus)
+        // 2. Netto-Minus: Entnahme neu erfassen
         if (info.delta < 0 && aktiverKistenBenutzer && !aktiverKistenBenutzer.isHelper) {
             const entnommeneMenge = Math.abs(info.delta);
             const entnahmePayload = {
@@ -1092,8 +1243,11 @@ async function flushPendingArtikelUpdate(bestandId) {
             } catch (auditErr) {}
 
             showToast(`📤 ${entnommeneMenge}x "${info.artikelName}" an ${aktiverKistenBenutzer.name} ausgebucht!`);
-        } else if (info.delta > 0) {
-            showToast(`✅ ${info.delta}x "${info.artikelName}" eingebucht.`);
+        } 
+        // 3. Netto-Plus: Offene Entnahmen für diesen Artikel reduzieren
+        else if (info.delta > 0) {
+            await reduziereOffeneEntnahmenFuerArtikel(info.kisteId, bestandId, info.artikelId, info.artikelName, info.delta);
+            showToast(`✅ ${info.delta}x "${info.artikelName}" wieder eingebucht.`);
         }
 
         await ladeAlles();
@@ -1251,6 +1405,7 @@ async function speichereKisteMengeInput(bId, rawVal) {
 
     const eintrag = (aktuelleDaten || []).find(b => b.id === bId);
     if (!eintrag) return;
+    const alterWert = Number(eintrag.ist_menge) || 0;
     const soll = Number(eintrag.soll_menge) || 0;
     let val = werteMengeAus(rawVal);
     if (soll > 0 && val > soll) {
@@ -1259,7 +1414,7 @@ async function speichereKisteMengeInput(bId, rawVal) {
     }
     if (val < 0) val = 0;
 
-    if (aktiverKistenBenutzer?.isHelper && val < Number(eintrag.ist_menge)) {
+    if (aktiverKistenBenutzer?.isHelper && val < alterWert) {
         showToast('Helfer dürfen Bestände nicht verringern (nur einbuchen)!', 'warning');
         renderKistenInhaltListe(kistenCheckAktuelleId);
         return;
@@ -1269,6 +1424,32 @@ async function speichereKisteMengeInput(bId, rawVal) {
         menge: val,
         created_at: new Date().toISOString()
     }).eq('id', bId);
+
+    const diff = val - alterWert;
+    if (diff > 0) {
+        await reduziereOffeneEntnahmenFuerArtikel(eintrag.lagerort_id, bId, eintrag.artikel_id, eintrag.artikel?.name, diff);
+    } else if (diff < 0 && aktiverKistenBenutzer && !aktiverKistenBenutzer.isHelper) {
+        const entnommeneMenge = Math.abs(diff);
+        const entnahmePayload = {
+            name: aktiverKistenBenutzer.name,
+            kontakt: aktiverKistenBenutzer.kontakt || '',
+            benutzer_vorlage_id: aktiverKistenBenutzer.id || null,
+            materialien: [{
+                kiste_id: Number(eintrag.lagerort_id),
+                kiste_name: eintrag.lagerorte?.name || 'Kiste',
+                ganze_kiste: false,
+                artikel: [{
+                    bestand_id: bId,
+                    artikel_id: eintrag.artikel_id,
+                    name: eintrag.artikel?.name || 'Artikel',
+                    menge: entnommeneMenge,
+                    typ: 'zaehlbar'
+                }]
+            }],
+            created_at: new Date().toISOString()
+        };
+        await dbClient.from('lager_entnahmen').insert([entnahmePayload]);
+    }
 
     showToast(`Bestand: ${val} / ${soll}`);
     await ladeAlles();
