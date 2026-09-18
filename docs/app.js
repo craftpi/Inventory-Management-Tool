@@ -705,7 +705,7 @@ async function oeffneKistenCheck(lid) {
     kisteUnendlichOffen = false;
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
-    $('kisten-check-code').innerText = `Kisten-ID: #${ort.id}`;
+    $('kisten-check-code').innerText = `ID: ${formatArtikelId(ort.id)}`;
 
     await bereinigeKistenEntnahmenUeberhang(lid);
 
@@ -1626,7 +1626,10 @@ function renderKistenListe() {
 
     const renderRow = (o, bestand) => `
         <tr>
-            <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
+            <td>
+                <strong>${escapeHtml(o.name)}</strong>
+                <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(o.id)}</div>
+            </td>
             <td>${bestand.length} Artikel</td>
             <td>${ermittleKistenStatusCell(o.id, bestand)}</td>
             <td>
@@ -1990,7 +1993,10 @@ function renderKistenUnterwegsKombiniert() {
                 <thead style="background-color: #2c3e50;"><tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status / Entleiher</th><th>Aktionen</th></tr></thead>
                 <tbody>${kistenGefiltert.map(o => `
                     <tr>
-                        <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
+                        <td>
+                            <strong>${escapeHtml(o.name)}</strong>
+                            <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(o.id)}</div>
+                        </td>
                         <td>${gibKistenBestand(o.id).length} Artikel</td>
                         <td>${ermittleKistenStatusCell(o.id, gibKistenBestand(o.id))}</td>
                         <td><button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button></td>
@@ -2281,7 +2287,7 @@ function renderKistenEtikettenListe() {
                 <input type="checkbox" style="width:18px; height:18px;" ${isChk ? 'checked' : ''} onchange="toggleKistenEtikettAuswahl('${ort.id}', this.checked)">
                 <div style="flex:1;">
                     <strong>📦 ${escapeHtml(ort.name)}</strong>
-                    <div style="font-size:0.8em; color:#7f8c8d;">${escapeHtml(ort.nfc_code || 'Code wird beim Druck automatisch vergeben')}</div>
+                    <div style="font-size:0.7em; color:#b0b0b0; margin-top:2px;">ID: ${formatArtikelId(ort.id)}</div>
                 </div>
             </label>`;
     }).join('');
@@ -2319,7 +2325,7 @@ function druckeKistenEtiketten(liste) {
                 <div class="kiste-label-info">
                     <div class="kiste-label-title">${escapeHtml(o.name)}</div>
                     <div class="kiste-label-sub">📦 TRISPORT LAGER</div>
-                    <div class="kiste-label-code">ID: ${escapeHtml(code)}</div>
+                    <div class="kiste-label-code">ID: ${formatArtikelId(o.id)}</div>
                 </div>
             </div>`;
     }).join('');
