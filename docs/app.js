@@ -798,8 +798,8 @@ function erzeugeKistenItemCard(z, isHelper) {
     } else if (istVerbrauch) {
         bedienHtml = `
             <div style="display:flex; gap:6px;">
-                <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)">🟢 Ausreichend</button>
-                <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)">🔴 Nachkaufen</button>
+                <button class="btn" style="background:#27ae60; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -2)">🟢  Setze Ausreichend</button>
+                <button class="btn" style="background:#c0392b; padding:6px 10px; font-size:0.85em; width:auto; min-height:36px;" onclick="setzeKistenVerbrauchStatus(${z.id}, -3)">🔴 Setze Nachkaufen</button>
             </div>`;
     } else {
         const canMinus = ist > 0 && !isHelper, canPlus = soll <= 0 || ist < soll;
