@@ -705,7 +705,7 @@ async function oeffneKistenCheck(lid) {
     kisteUnendlichOffen = false;
 
     $('kisten-check-titel').innerText = `📦 ${ort.name}`;
-    $('kisten-check-code').innerText = ort.nfc_code ? `NFC/QR-Code: ${ort.nfc_code}` : 'Kein Code hinterlegt';
+    $('kisten-check-code').innerText = `Kisten-ID: #${ort.id}${ort.nfc_code ? ` • NFC: ${ort.nfc_code}` : ''}`;
 
     await bereinigeKistenEntnahmenUeberhang(lid);
 
@@ -1197,13 +1197,35 @@ async function verarbeiteUniversalScan(rawCode) {
     setTimeout(() => { scanSperre.kisten = false; }, 1500);
 
     const raw = String(rawCode || '').trim();
-    let ortCode = null;
-    const mUrl = /kistencheck=([^&\s]+)/i.exec(raw), mPref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
-    if (mUrl) ortCode = decodeURIComponent(mUrl[1]);
-    else if (mPref) ortCode = mPref[1].trim();
-    else ortCode = raw;
+    let queryVal = null;
+    const mUrl = /kistencheck=([^&\s]+)/i.exec(raw), mPref = /^(?:ort|behaelter|kiste):(.+)$/i.exec(raw);
+    if (mUrl) queryVal = decodeURIComponent(mUrl[1]).trim();
+    else if (mPref) queryVal = mPref[1].trim();
+    else queryVal = raw;
 
-    const ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === ortCode.toLowerCase());
+    let ort = null;
+
+    // 1. Suche nach reiner Kisten-ID (z. B. "25" oder "kiste-25")
+    const numMatch = queryVal.match(/^(?:kiste-)?(\d+)$/i);
+    if (numMatch) {
+        const targetId = Number(numMatch[1]);
+        ort = alleLagerorte.find(o => Number(o.id) === targetId);
+    }
+
+    // 2. Suche nach NFC-Code
+    if (!ort) {
+        ort = alleLagerorte.find(o => o.nfc_code && o.nfc_code.toLowerCase() === queryVal.toLowerCase());
+    }
+
+    // 3. Fallback: Slug mit angehängter ID am Ende (z. B. "kiste-...-25")
+    if (!ort) {
+        const endIdMatch = queryVal.match(/-(\d+)$/);
+        if (endIdMatch) {
+            const targetId = Number(endIdMatch[1]);
+            ort = alleLagerorte.find(o => Number(o.id) === targetId);
+        }
+    }
+
     if (ort) {
         if (navigator.vibrate) navigator.vibrate(120);
         return oeffneKistenCheck(ort.id);
@@ -1592,7 +1614,7 @@ function renderKistenListe() {
     const ziel = $('kisten-tabelle');
     if (!ziel) return;
     const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-    const liste = alleLagerorte.filter(o => !suchText || o.name.toLowerCase().includes(suchText) || (o.nfc_code || '').toLowerCase().includes(suchText));
+    const liste = alleLagerorte.filter(o => !suchText || o.name.toLowerCase().includes(suchText) || String(o.id).includes(suchText) || (o.nfc_code || '').toLowerCase().includes(suchText));
 
     if (!liste.length) { ziel.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">Keine passenden Kisten gefunden.</td></tr>'; return; }
 
@@ -1606,7 +1628,11 @@ function renderKistenListe() {
 
     const renderRow = (o, bestand) => `
         <tr>
-            <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
+            <td>
+                <span class="summen-badge" style="background:#475569; font-size:0.75em; padding:2px 6px; margin-right:4px;">#${o.id}</span>
+                <strong>${escapeHtml(o.name)}</strong><br>
+                <small style="color:#7f8c8d;">QR: ID #${o.id} ${o.nfc_code ? `&bull; NFC: ${escapeHtml(o.nfc_code)}` : ''}</small>
+            </td>
             <td>${bestand.length} Artikel</td>
             <td>${ermittleKistenStatusCell(o.id, bestand)}</td>
             <td>
@@ -1657,7 +1683,6 @@ function renderKistenArtikelSuche() {
         treffer = alleArtikelInfos.filter(a => (a.name || '').toLowerCase().includes(suchText) || (a.kategorie || '').toLowerCase().includes(suchText));
     }
 
-    // Wenn aktuell ausgewählter Artikel nicht in Treffern und Suche aktiv ist
     let ausgewaehlterArtikel = null;
     if (kistenArtikelSucheAuswahlId) {
         ausgewaehlterArtikel = alleArtikelInfos.find(a => a.id === kistenArtikelSucheAuswahlId);
@@ -1698,7 +1723,6 @@ function renderKistenArtikelSuche() {
     const bestaende = aktuelleDaten.filter(b => b.artikel_id === artId);
     const einheit = ausgewaehlterArtikel.einheit || 'Stück';
 
-    // 1. Kisten / Lagerorte
     let orteHtml = '';
     if (!bestaende.length) {
         orteHtml = '<p style="color:#7f8c8d; margin:6px 0;">Dieser Artikel ist derzeit keinem Lagerort bzw. keiner Kiste zugeordnet.</p>';
@@ -1713,7 +1737,7 @@ function renderKistenArtikelSuche() {
                     return `
                         <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; gap:8px;">
                             <div>
-                                <strong style="font-size:1.02em; color:#2c3e50;">📦 ${escapeHtml(b.lagerorte?.name || 'Kiste')}</strong>
+                                <strong style="font-size:1.02em; color:#2c3e50;">📦 #${b.lagerort_id} ${escapeHtml(b.lagerorte?.name || 'Kiste')}</strong>
                                 <div style="font-size:0.85em; color:#555; margin-top:2px;">
                                     ${qtyStr} ${fehlt > 0 ? `&bull; <span style="color:#c0392b; font-weight:bold;">${fehlt} fehlen</span>` : ''}
                                 </div>
@@ -1728,7 +1752,6 @@ function renderKistenArtikelSuche() {
         `;
     }
 
-    // 2. Offene Entnahmen für diesen Artikel
     const offeneFuerArtikel = [];
     offeneEntnahmen.forEach(ent => {
         const mats = Array.isArray(ent.materialien) ? ent.materialien : [];
@@ -1749,7 +1772,6 @@ function renderKistenArtikelSuche() {
                     }
                 });
             } else if (m.ganze_kiste && m.kiste_id) {
-                // Prüfe, ob dieser Artikel in dieser ganzen Kiste liegt
                 const inBox = (gibKistenBestand(m.kiste_id) || []).some(b => b.artikel_id === artId);
                 if (inBox) {
                     offeneFuerArtikel.push({
@@ -1830,7 +1852,6 @@ async function artikelAusSucheZurueckbuchen(entnahmeId, kisteId, bestandId, arti
 
     kisteAktionInArbeit = true;
     try {
-        // 1. Bestand in der Kiste erhöhen
         let b = null;
         if (bestandId) b = aktuelleDaten.find(x => x.id === Number(bestandId));
         else if (kisteId && artikelId) b = aktuelleDaten.find(x => x.artikel_id === Number(artikelId) && Number(x.lagerort_id) === Number(kisteId));
@@ -1842,7 +1863,6 @@ async function artikelAusSucheZurueckbuchen(entnahmeId, kisteId, bestandId, arti
             await dbClient.from('bestand').update({ menge: neu, created_at: new Date().toISOString() }).eq('id', b.id);
         }
 
-        // 2. Aus Entnahme abbuchen
         const ent = offeneEntnahmen.find(e => String(e.id) === String(entnahmeId));
         if (ent) {
             let verbleibend = menge;
@@ -1888,100 +1908,6 @@ async function artikelAusSucheZurueckbuchen(entnahmeId, kisteId, bestandId, arti
 
 // -------------------------------------------------------------------------
 // UNTERWEGS: ZUSAMMENFASSUNG NACH BENUTZER & TEILRÜCKGABE
-// -------------------------------------------------------------------------
-function renderKistenUnterwegsKombiniert() {
-    const ziel = $('kisten-unterwegs-kombiniert-bereich');
-    if (!ziel) return;
-
-    const suchText = ($('kisten-such-filter')?.value || '').toLowerCase().trim();
-
-    const offeneGefiltert = offeneEntnahmen.filter(e => {
-        if (!suchText) return true;
-        const nMatch = (e.name || '').toLowerCase().includes(suchText);
-        const mats = Array.isArray(e.materialien) ? e.materialien : [];
-        return nMatch || mats.some(m => (m.kiste_name || '').toLowerCase().includes(suchText) || (Array.isArray(m.artikel) && m.artikel.some(a => (a.name || '').toLowerCase().includes(suchText))) || (m.name || m.label || '').toLowerCase().includes(suchText));
-    });
-
-    const userMap = new Map();
-    offeneGefiltert.forEach(ent => {
-        const userKey = ent.benutzer_vorlage_id ? String(ent.benutzer_vorlage_id) : (ent.name || 'unbekannt').trim().toLowerCase();
-        if (!userMap.has(userKey)) userMap.set(userKey, { userKey, name: ent.name || 'Unbekannt', kontakt: ent.kontakt || '', neuestesDatum: new Date(ent.created_at), entnahmen: [] });
-        const u = userMap.get(userKey);
-        if (new Date(ent.created_at) > u.neuestesDatum) u.neuestesDatum = new Date(ent.created_at);
-        u.entnahmen.push(ent);
-    });
-
-    const kistenGefiltert = alleLagerorte.filter(o => {
-        if (suchText && !o.name.toLowerCase().includes(suchText) && !(o.nfc_code || '').toLowerCase().includes(suchText)) return false;
-        const bestand = gibKistenBestand(o.id), entnahmen = ermittleAlleKistenEntnahmen(o.id);
-        return Boolean(entnahmen.length || bestand.some(b => Number(b.soll_menge) > 0 && Number(b.ist_menge) < Number(b.soll_menge)));
-    });
-
-    let html = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
-            <div class="kombiniert-subtitel" style="margin:0;">👤 Aktive Entleiher &amp; Resortleiter (${userMap.size})</div>
-            <div style="display:flex; align-items:center; gap:8px;">
-                <span style="font-size:0.8em; color:#27ae60; font-weight:bold;">● Live-Aktualisierung (15s)</span>
-                <button type="button" class="btn" style="background:#34495e; padding:4px 10px; font-size:0.8em; width:auto; min-height:30px;" onclick="manuelleAktualisierungUnterwegs()">🔄 Jetzt aktualisieren</button>
-            </div>
-        </div>`;
-
-    if (!userMap.size) {
-        html += `<div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px; margin-bottom:18px;"><p style="margin:0; color:#1f7a37; font-weight:bold;">🎉 Aktuell keine offenen Personen-Entnahmen vermerkt.</p></div>`;
-    } else {
-        userMap.forEach(u => {
-            const artikelMap = new Map();
-            u.entnahmen.forEach(ent => {
-                extrahiereEntnahmePositionen(ent).forEach(pos => {
-                    const k = `${pos.kisteId || 'null'}_${pos.bestandId || pos.artikelId || pos.name}`;
-                    if (!artikelMap.has(k)) artikelMap.set(k, { name: pos.name, kisteName: pos.kisteName, ganzeKiste: pos.ganzeKiste, menge: 0 });
-                    artikelMap.get(k).menge += pos.menge;
-                });
-            });
-
-            const itemsHtml = Array.from(artikelMap.values()).map(item => item.ganzeKiste 
-                ? `<li><strong>📦 ${escapeHtml(item.kisteName || 'Kiste')}</strong> (Kiste komplett entnommen)</li>`
-                : `<li><strong>${item.menge}x</strong> ${escapeHtml(item.name)} <span style="color:#7f8c8d; font-size:0.88em;">(aus 📦 ${escapeHtml(item.kisteName || 'Kiste')})</span></li>`
-            ).join('');
-
-            html += `
-                <div class="entnahme-card">
-                    <div class="entnahme-card-header">
-                        <div>
-                            <strong style="font-size:1.1em; color:#2c3e50;">👤 ${escapeHtml(u.name)}</strong>
-                            <div style="font-size:0.85em; color:#7f8c8d; margin-top:2px;">📅 Letzte Entnahme am: ${u.neuestesDatum.toLocaleString('de-DE')} ${u.kontakt ? `&bull; 📞 ${escapeHtml(u.kontakt)}` : ''}</div>
-                        </div>
-                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                            <button class="btn" style="background:#f39c12; padding:6px 12px; font-size:0.85em; width:auto;" onclick="oeffneTeilrueckgabeModal('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">🔄 Teilrückgabe</button>
-                            <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:0.85em; width:auto;" onclick="schliesseAlleEntnahmenFuerBenutzer('${escapeHtml(u.userKey).replace(/'/g, "\\'")}')">✅ Vollständig zurückgebucht</button>
-                        </div>
-                    </div>
-                    <div style="font-size:0.9em; color:#444;"><ul style="margin:6px 0; padding-left:20px;">${itemsHtml}</ul></div>
-                </div>`;
-        });
-    }
-
-    html += `<div class="kombiniert-subtitel" style="margin-top:24px;">📦 Fehlende oder unvollständige Kisten (${kistenGefiltert.length})</div>`;
-    if (!kistenGefiltert.length) {
-        html += `<div style="background:#edf8f0; border:1px solid #8fd0a3; padding:16px; border-radius:10px;"><p style="margin:0; color:#1f7a37; font-weight:bold;">✔️ Alle Kisten stehen vollständig im Lager.</p></div>`;
-    } else {
-        html += `
-            <div class="table-responsive"><table>
-                <thead style="background-color: #2c3e50;"><tr><th>Kiste / Lagerort</th><th>Positionen</th><th>Status / Entleiher</th><th>Aktionen</th></tr></thead>
-                <tbody>${kistenGefiltert.map(o => `
-                    <tr>
-                        <td><strong>${escapeHtml(o.name)}</strong><br><small style="color:#7f8c8d;">${escapeHtml(o.nfc_code || 'Kein Code')}</small></td>
-                        <td>${gibKistenBestand(o.id).length} Artikel</td>
-                        <td>${ermittleKistenStatusCell(o.id, gibKistenBestand(o.id))}</td>
-                        <td><button class="btn" style="background:#16a085; padding:8px 12px; width:auto;" onclick="oeffneKistenCheck(${o.id})">📦 Inhalt / Prüfen</button></td>
-                    </tr>`).join('')}</tbody>
-            </table></div>`;
-    }
-    ziel.innerHTML = html;
-}
-
-// -------------------------------------------------------------------------
-// TEILRÜCKGABE MODAL & SPEICHERN
 // -------------------------------------------------------------------------
 function oeffneTeilrueckgabeModal(userKey) {
     aktiverTeilrueckgabeUserKey = userKey;
@@ -2188,7 +2114,7 @@ function ortSelectChanged() {
     const ort = alleLagerorte.find(o => String(o.id) === String(selId));
     if (ort) $('manage-ort-name').value = ort.name;
     const statusEl = $('manage-ort-code-status'), delBtn = $('manage-ort-nfc-entfernen-btn');
-    if (statusEl) statusEl.textContent = ort?.nfc_code ? `Aktueller Code: ${ort.nfc_code}` : 'Noch kein Code hinterlegt (wird beim ersten NFC-Schreiben oder QR-Erstellen automatisch generiert).';
+    if (statusEl) statusEl.textContent = ort ? `Kisten-ID: #${ort.id} ${ort.nfc_code ? `• NFC: ${ort.nfc_code}` : '• Noch kein NFC-Tag beschrieben'}` : '';
     if (delBtn) delBtn.style.display = ort?.nfc_code ? 'block' : 'none';
     if ($('manage-ort-qr-box')) $('manage-ort-qr-box').style.display = 'none';
 }
@@ -2205,7 +2131,7 @@ async function speichereOrt() {
 async function entferneNfcVonOrt() {
     const oId = $('manage-ort-select').value;
     await dbClient.from('lagerorte').update({ nfc_code: null }).eq('id', oId);
-    showToast('Code-Zuordnung entfernt.');
+    showToast('NFC-Code-Zuordnung entfernt.');
     await ladeAlles();
     ortSelectChanged();
 }
@@ -2214,13 +2140,12 @@ async function zeigeEinzelKisteQr() {
     const selId = $('manage-ort-select').value;
     const ort = alleLagerorte.find(o => String(o.id) === String(selId));
     if (!ort) return showToast('Bitte zuerst Lagerort auswählen.', 'warning');
-    const code = await holeOderErzeugeOrtCode(ort);
     ortSelectChanged();
 
     const qrBox = $('manage-ort-qr-box'), preview = $('manage-ort-qr-preview');
     if (!qrBox || !preview) return;
     preview.innerHTML = '';
-    new QRCode(preview, { text: `https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}`, width: 140, height: 140 });
+    new QRCode(preview, { text: `https://trilager.pius-s.de?kistencheck=${ort.id}`, width: 140, height: 140 });
     qrBox.style.display = 'block';
 }
 
@@ -2230,7 +2155,7 @@ function downloadEinzelKistenQr() {
     if (!canvas || !ort) return;
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
-    a.download = `QR_${ort.name.replace(/[^a-z0-9]/gi, '_')}.png`;
+    a.download = `QR_Kiste_${ort.id}.png`;
     a.click();
 }
 
@@ -2251,7 +2176,7 @@ function renderKistenEtikettenListe() {
     const ziel = $('kisten-etiketten-liste');
     if (!ziel) return;
     const filter = ($('kisten-etiketten-suche')?.value || '').toLowerCase().trim();
-    const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
+    const liste = alleLagerorte.filter(o => !filter || o.name.toLowerCase().includes(filter) || String(o.id).includes(filter) || (o.nfc_code || '').toLowerCase().includes(filter));
 
     if (!liste.length) { ziel.innerHTML = '<p style="text-align:center; color:#7f8c8d; padding:15px;">Keine Kisten gefunden.</p>'; return; }
     ziel.innerHTML = liste.map(ort => {
@@ -2260,8 +2185,8 @@ function renderKistenEtikettenListe() {
             <label class="kiste-etikett-zeile" style="cursor:pointer;">
                 <input type="checkbox" style="width:18px; height:18px;" ${isChk ? 'checked' : ''} onchange="toggleKistenEtikettAuswahl('${ort.id}', this.checked)">
                 <div style="flex:1;">
-                    <strong>📦 ${escapeHtml(ort.name)}</strong>
-                    <div style="font-size:0.8em; color:#7f8c8d;">${escapeHtml(ort.nfc_code || 'Code wird beim Druck automatisch vergeben')}</div>
+                    <strong>📦 #${ort.id} ${escapeHtml(ort.name)}</strong>
+                    <div style="font-size:0.8em; color:#7f8c8d;">QR-ID: #${ort.id} ${ort.nfc_code ? `&bull; NFC: ${escapeHtml(ort.nfc_code)}` : ''}</div>
                 </div>
             </label>`;
     }).join('');
@@ -2284,22 +2209,20 @@ function toggleAlleKistenEtiketten(chk) {
 async function druckeAusgewaehlteKistenEtiketten() {
     const ausgewaehlt = alleLagerorte.filter(o => kistenEtikettenAuswahlIds.has(String(o.id)));
     if (!ausgewaehlt.length) return;
-    for (const ort of ausgewaehlt) await holeOderErzeugeOrtCode(ort);
-    await ladeLagerorte();
     druckeKistenEtiketten(ausgewaehlt);
 }
 
 function druckeKistenEtiketten(liste) {
     const win = window.open('', '_blank');
     const itemsHtml = (liste || []).map(o => {
-        const code = o.nfc_code || `kiste-${o.id}`;
+        const link = `https://trilager.pius-s.de?kistencheck=${o.id}`;
         return `
             <div class="kiste-label-card">
-                <div class="kiste-label-qr" data-link="https://trilager.pius-s.de?kistencheck=${encodeURIComponent(code)}"></div>
+                <div class="kiste-label-qr" data-link="${link}"></div>
                 <div class="kiste-label-info">
                     <div class="kiste-label-title">${escapeHtml(o.name)}</div>
                     <div class="kiste-label-sub">📦 TRISPORT LAGER</div>
-                    <div class="kiste-label-code">${escapeHtml(code)}</div>
+                    <div class="kiste-label-code">Kisten-ID: #${o.id}</div>
                 </div>
             </div>`;
     }).join('');
@@ -2317,7 +2240,7 @@ function druckeKistenEtiketten(liste) {
             .kiste-label-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
             .kiste-label-title { font-size: 11.5px; font-weight: bold; color: #111; line-height: 1.25; word-break: break-word; max-height: 21mm; overflow: hidden; }
             .kiste-label-sub { font-size: 7.5px; font-weight: bold; color: #e3000f; margin-top: 3px; letter-spacing: 0.4px; }
-            .kiste-label-code { font-size: 7px; color: #666; font-family: monospace; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .kiste-label-code { font-size: 7.5px; color: #333; font-weight: bold; font-family: monospace; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .no-p { position: fixed; top: 10px; right: 10px; padding: 10px 18px; background: #e3000f; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
             @media print { .no-p { display: none; } .kiste-label-card { border: 1px dashed transparent; } }
         </style>
@@ -2577,7 +2500,7 @@ function toggleEventEditMode() {
 
 function openPackItemModal(posId = null) {
     if (!$('packlisten-auswahl')?.value) return showToast('Bitte wähle zuerst eine Packliste aus.', 'warning');
-    const idInp = $('pack-pos-id'), titleEl = $('pack-modal-title'), btnEl = $('pack-modal-save-btn');
+    const idInp = $('pack-pos-id'), titleEl = $('pack-modal-title'), btnEl =$('pack-modal-save-btn');
 
     if (posId) {
         const pos = packlistenPositionen.find(p => p.id === posId);
@@ -2587,16 +2510,13 @@ function openPackItemModal(posId = null) {
         if (btnEl) btnEl.innerText = 'Speichern';
         $('pack-typ').value = pos.artikel_id ? 'lager' : 'custom';
         $('pack-artikel-input').value = pos.artikel?.name || '';
-        $('pack-eigener-name').value = pos.eigener_name || '';
-        $('pack-menge').value = pos.menge;
+        $('pack-eigener-name').value = pos.eigener_name \vert{}\vert{} '';$('pack-menge').value = pos.menge;
     } else {
         if (idInp) idInp.value = '';
         if (titleEl) titleEl.innerText = 'Packliste ergänzen';
         if (btnEl) btnEl.innerText = 'Hinzufügen';
-        $('pack-typ').value = 'lager';
-        $('pack-artikel-input').value = '';
-        $('pack-eigener-name').value = '';
-        $('pack-menge').value = '1';
+        $('pack-typ').value = 'lager';$('pack-artikel-input').value = '';
+        $('pack-eigener-name').value = '';$('pack-menge').value = '1';
     }
     togglePackTyp();
     openModalById('packItemModal');
@@ -2604,13 +2524,12 @@ function openPackItemModal(posId = null) {
 
 function togglePackTyp() {
     const t = $('pack-typ').value;
-    $('div-pack-lager').style.display = t === 'lager' ? 'block' : 'none';
-    $('div-pack-custom').style.display = t === 'custom' ? 'block' : 'none';
+    $('div-pack-lager').style.display = t === 'lager' ? 'block' : 'none';$('div-pack-custom').style.display = t === 'custom' ? 'block' : 'none';
 }
 
 async function packPositionSpeichern() {
-    const plId = $('packlisten-auswahl').value, typ = $('pack-typ').value;
-    const menge = werteMengeAus($('pack-menge').value) || 1, editId = $('pack-pos-id')?.value;
+    const plId = $('packlisten-auswahl').value, typ =$('pack-typ').value;
+    const menge = werteMengeAus($('pack-menge').value) \vert{}\vert{} 1, editId =$('pack-pos-id')?.value;
     let artikelId = null, eigenerName = null;
 
     if (typ === 'lager') {
@@ -2712,20 +2631,18 @@ function startEinkaufsliste() {
         else if (bedarf > bestand) autoFehlbestandListe.push({ artikel: art.name, menge: bedarf - bestand, grund: 'Fehlt im Lager für Packliste' });
     });
 
-    if ($('auto-kauf-liste')) {
-        $('auto-kauf-liste').innerHTML = autoFehlbestandListe.length 
+    if ($('auto-kauf-liste')) {$('auto-kauf-liste').innerHTML = autoFehlbestandListe.length 
             ? autoFehlbestandListe.map(i => `<li><strong>${i.menge}x</strong> ${escapeHtml(i.artikel)} <small style="color:#7f8c8d;">(${i.grund})</small></li>`).join('')
             : '<li style="color:#27ae60;">Alles grün! Keine Fehlbestände.</li>';
     }
 
-    if ($('eigene-kauf-liste')) {
-        $('eigene-kauf-liste').innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
+    if ($('eigene-kauf-liste')) {$('eigene-kauf-liste').innerHTML = Object.entries(eigeneMap).map(([name, m], idx) => {
             eigeneVorschlaegeListe.push({ artikel: name, menge: m, grund: 'Sonderposten Packliste' });
             return `<li style="margin-bottom:6px;"><label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="eigene-kauf-check" data-index="${idx}" checked onchange="aktualisiereEinkaufslisteAuswahl()"><span>${m}x ${escapeHtml(name)}</span></label></li>`;
         }).join('') || '<li style="color:#7f8c8d;">Keine Sonderposten in Packlisten.</li>';
     }
 
-    if ($('manuell-kauf-liste')) $('manuell-kauf-liste').innerHTML = '';
+    if ($('manuell-kauf-liste'))$('manuell-kauf-liste').innerHTML = '';
     aktualisiereEinkaufslisteAuswahl();
     openModalById('kauflisteModal');
 }
@@ -2740,9 +2657,9 @@ function manuellAufZettel() {
     if (!n || m <= 0) return;
     manuelleEintraegeListe.push({ artikel: n, menge: m, grund: 'Manuell hinzugefügt' });
     aktualisiereEinkaufslisteAuswahl();
-    if ($('manuell-kauf-liste')) $('manuell-kauf-liste').innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
-    if ($('manuell-kauf-name')) $('manuell-kauf-name').value = '';
-    if ($('manuell-kauf-menge')) $('manuell-kauf-menge').value = '1';
+    if ($('manuell-kauf-liste'))$('manuell-kauf-liste').innerHTML += `<li>${m}x ${escapeHtml(n)}</li>`;
+    if ($('manuell-kauf-name'))$('manuell-kauf-name').value = '';
+    if ($('manuell-kauf-menge'))$('manuell-kauf-menge').value = '1';
 }
 
 async function downloadExcel() {
@@ -2771,7 +2688,7 @@ function oeffneQrGeneratorFenster() { window.open('?qrgen=1', '_blank'); }
 
 function aktualisiereRegalQrVorschau() {
     const val = $('regal-qr-input')?.value.trim();
-    const prev = $('regal-qr-preview'), link = $('regal-qr-link');
+    const prev = $('regal-qr-preview'), link =$('regal-qr-link');
     if (!val) { if (prev) prev.innerHTML = ''; if (link) link.innerText = ''; return; }
     const url = `https://trilager.pius-s.de?regal=${encodeURIComponent(extrahiereRegalName(val))}`;
     prev.innerHTML = '';
@@ -2790,11 +2707,11 @@ function downloadRegalQrDatei(fmt = 'png') {
 
 async function formularAntwortSpeichern() {
     const name = $('formular-name')?.value.trim() || 'Anonym';
-    const frage1 = $('formular-frage1')?.value.trim() || '', frage2 = $('formular-frage2')?.value.trim() || '';
+    const frage1 = $('formular-frage1')?.value.trim() \vert{}\vert{} '', frage2 =$('formular-frage2')?.value.trim() || '';
     if (!frage1 && !frage2) return showToast('Bitte mindestens eine Frage beantworten.', 'warning');
     await dbClient.from(TABLES.FORMULAR).insert([{ name, frage1, frage2 }]);
     showToast('Danke für dein Feedback!');
-    $('formular-frage1').value = ''; $('formular-frage2').value = '';
+    $('formular-frage1').value = '';$('formular-frage2').value = '';
 }
 
 async function formularAntwortenLaden() {
@@ -2824,14 +2741,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('qrgen') === '1') {
-        $('qrgen-ansicht').style.display = 'block';
-        $('login-overlay').style.display = 'none';
+        $('qrgen-ansicht').style.display = 'block';$('login-overlay').style.display = 'none';
         document.querySelector('.container').style.display = 'none';
         return;
     }
     if (urlParams.get('formular') === '1') {
-        $('formular-ansicht').style.display = 'block';
-        $('login-overlay').style.display = 'none';
+        $('formular-ansicht').style.display = 'block';$('login-overlay').style.display = 'none';
         document.querySelector('.container').style.display = 'none';
         return;
     }
