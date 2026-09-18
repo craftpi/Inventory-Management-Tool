@@ -1340,7 +1340,7 @@ function stoppeHubKamera() {
 }
 
 // =========================================================================
-// 7. LAGER-MODUS (TABELLE & FILTER)
+// 7. Inventar-MODUS (TABELLE & FILTER)
 // =========================================================================
 function wendeFilterAn() {
     const katFilter = $('kategorie-filter')?.value || 'ALLE';
@@ -2831,7 +2831,21 @@ async function downloadExcel() {
 // =========================================================================
 // 11. REGAL-QR & FEEDBACK
 // =========================================================================
-function oeffneQrGeneratorFenster() { window.open('?qrgen=1', '_blank'); }
+function oeffneQrGeneratorFenster() {
+    $('qrgen-ansicht').style.display = 'block';
+    $('formular-ansicht').style.display = 'none';
+    const mainContainer = document.querySelector('.container');
+    if (mainContainer) mainContainer.style.display = 'none';
+    window.scrollTo(0, 0);
+}
+
+function oeffneFeedbackFenster() {
+    $('formular-ansicht').style.display = 'block';
+    $('qrgen-ansicht').style.display = 'none';
+    const mainContainer = document.querySelector('.container');
+    if (mainContainer) mainContainer.style.display = 'none';
+    window.scrollTo(0, 0);
+}
 
 function aktualisiereRegalQrVorschau() {
     const val = $('regal-qr-input')?.value.trim();
@@ -2875,9 +2889,20 @@ async function formularAntwortenLaden() {
 }
 
 function zurueckZurHauptseite() {
-    const url = new URL(window.location.href);
-    url.search = '';
-    window.location.href = url.toString();
+    const urlParams = new URLSearchParams(window.location.search);
+    // Falls die Unterseite direkt per URL-Link aufgerufen wurde: URL säubern
+    if (urlParams.get('qrgen') === '1' || urlParams.get('formular') === '1') {
+        const url = new URL(window.location.href);
+        url.search = '';
+        window.location.href = url.toString();
+    } else {
+        // Wurde aus der App aufgerufen: Ansicht sofort umschalten ohne Neuladen
+        $('qrgen-ansicht').style.display = 'none';
+        $('formular-ansicht').style.display = 'none';
+        const mainContainer = document.querySelector('.container');
+        if (mainContainer) mainContainer.style.display = 'block';
+        window.scrollTo(0, 0);
+    }
 }
 
 // =========================================================================

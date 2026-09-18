@@ -323,7 +323,7 @@
         <div class="onboarding-step">
             <div class="onboarding-icon" style="background:#fdecea;">📦</div>
             <div class="onboarding-text">
-                <h4>Lager-Modus</h4>
+                <h4>Inventar-Modus</h4>
                 <p>Hier siehst du auf einen Blick, was im Lager vorhanden ist. Die Zahl ist automatisch der <strong>Soll-Gesamtbestand</strong> des Vereins.</p>
             </div>
         </div>
@@ -366,11 +366,11 @@
 
     <div style="display:flex; gap:8px; justify-content:center; margin-bottom:16px; flex-wrap:wrap;">
         <button class="btn" style="background:#1f5f8b; font-size:0.85em; padding:6px 12px; width:auto;" onclick="oeffneQrGeneratorFenster()">🏷️ Regal-QR erzeugen</button>
-        <button class="btn" style="background:#d29c09; font-size:0.85em; padding:6px 12px; width:auto;" onclick="window.open('?formular=1', '_blank')">📝 Feedback</button>
+        <button class="btn" style="background:#d29c09; font-size:0.85em; padding:6px 12px; width:auto;" onclick="oeffneFeedbackFenster()">📝 Feedback</button>
     </div>
 
     <div class="modus-switch">
-        <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Lager-Modus</button>
+        <button class="btn btn-modus active" id="tab-lager" onclick="wechsleModus('lager')">📦 Inventar-Modus</button>
         <button class="btn btn-modus" id="tab-kisten" onclick="wechsleModus('kisten')">🧰 Kisten &amp; Verleih</button>
         <button class="btn btn-modus" id="tab-event" onclick="wechsleModus('event')">📅 Event-Packlisten</button>
     </div>
@@ -430,7 +430,8 @@
     <!-- KISTEN & VERLEIH (MIT AKTIVEM BENUTZER-BANNER & SCHNELLWAHL) -->
     <div id="ansicht-kisten" style="display: none;">
         <p class="subtitle">
-            Kisten und deren Inhalte im Überblick. Scanne Code/NFC oder erfasse Entnahmen an Resortleiter.
+            Kisten und deren Inhalte im Überblick. Scanne Code/NFC oder erfasse Entnahmen für Resortleiter.
+            Materialien die mit - gekenzeichnet sind nicht abgezählt und müssen nicht protokoliert werden. Jedoch ist in Fällen von zu wenig Verfügbarkeit auf der Artikel auf Nachkaufen zu setzen!
         </p>
 
         <!-- AKTIVER BENUTZER BANNER -->
