@@ -350,6 +350,12 @@ async function handleLogin() {
         ladeKistenBenutzerSession();
         await ladeAlles();
         if (!window.localStorage.getItem(STORAGE_KEYS.ONBOARDING)) openModalById('onboardingModal');
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const kistenCode = urlParams.get('kistencheck');
+        if (kistenCode) verarbeiteUniversalScan('kistencheck=' + kistenCode);
+        const regalParam = urlParams.get('regal');
+        if (regalParam) setzeRegalFilter(regalParam);
     }
 }
 
@@ -1197,19 +1203,29 @@ async function verarbeiteUniversalScan(rawCode) {
     setTimeout(() => { scanSperre.kisten = false; }, 1500);
 
     const raw = String(rawCode || '').trim();
+
+    // 1. NEU: Prüfung auf Regal-QR-Codes (URL-Parameter ?regal= oder direktes Präfix)
+    const mRegalUrl = /regal=([^&\s]+)/i.exec(raw);
+    const mRegalPref = /^regal:(.+)$/i.exec(raw);
+    if (mRegalUrl || mRegalPref) {
+        const regalName = mRegalUrl ? mRegalUrl[1] : mRegalPref[1];
+        if (navigator.vibrate) navigator.vibrate(120);
+        setzeRegalFilter(regalName);
+        return;
+    }
+
+    // 2. Kisten-Prüfung wie bisher
     let ortCode = null;
     const mUrl = /kistencheck=([^&\s]+)/i.exec(raw), mPref = /^(?:ort|behaelter):(.+)$/i.exec(raw);
     if (mUrl) ortCode = decodeURIComponent(mUrl[1]);
     else if (mPref) ortCode = mPref[1].trim();
     else ortCode = raw;
 
-    // 1. Direkte Treffer: Entweder über hinterlegten nfc_code oder direkt über die ID
     let ort = alleLagerorte.find(o => 
         (o.nfc_code && String(o.nfc_code).toLowerCase() === ortCode.toLowerCase()) ||
         String(o.id) === ortCode
     );
 
-    // 2. Abwärtskompatibilität: Falls ein altes Etikett (z.B. "kiste-ausschank-42" oder "kiste-42") gescannt wird
     if (!ort) {
         const mId = ortCode.match(/(?:^kiste-.*-|^kiste-)?(\d+)$/i);
         if (mId) {
@@ -1350,6 +1366,28 @@ function ortComboChanged() {
     const val = $('ort-filter-combo')?.value || '';
     aktiverRegalFilter = val.startsWith('regal:') ? val.substring(6) : '';
     wendeFilterAn();
+}
+
+function setzeRegalFilter(regalName) {
+    if (!regalName) return;
+    const saubererName = extrahiereRegalName(decodeURIComponent(regalName));
+    wechsleModus('lager');
+
+    const combo = $('ort-filter-combo');
+    const regalVal = 'regal:' + saubererName;
+
+    if (combo) {
+        // Option im Dropdown auswählen oder temporär anlegen, falls noch nicht gelistet
+        const existiert = Array.from(combo.options).some(o => o.value.toLowerCase() === regalVal.toLowerCase());
+        if (!existiert) {
+            combo.add(new Option('🏷️ Regal: ' + saubererName, regalVal));
+        }
+        combo.value = regalVal;
+    }
+
+    aktiverRegalFilter = saubererName;
+    wendeFilterAn();
+    showToast(`🏷️ Gefiltert nach: ${saubererName}`);
 }
 
 function toggleSortierung() {
@@ -2875,4 +2913,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
         $('login-overlay').style.display = 'flex';
     }
+
+    // NEU: Kisten-Parameter beim Seitenstart anwenden
+    const kistenCode = urlParams.get('kistencheck');
+        if (kistenCode) verarbeiteUniversalScan('kistencheck=' + kistenCode);
+
+        // NEU: Regal-Parameter beim Seitenstart anwenden
+        const regalParam = urlParams.get('regal');
+        if (regalParam) setzeRegalFilter(regalParam);
 });
